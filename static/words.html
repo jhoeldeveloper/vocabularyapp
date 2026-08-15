@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Live Editable Word Grid</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <style>
+    :root {
+        --bg-page:        #f4f4f9;
+        --bg-card:        #fff;
+        --bg-hover:       #f9f9f9;
+        --bg-meta:        #f7f7f7;
+        --bg-editable:    #f9f9f9;
+        --bg-editable-focus: #eef4ff;
+        --bg-sort-btn:    #e0e0e0;
+        --bg-word-count:  #e9ecef;
+
+        --border-card:    #ddd;
+        --border-input:   #ccc;
+        --border-details: #eee;
+
+        --text-primary:   #333;
+        --text-secondary: #555;
+        --text-meta:      #666;
+        --text-heading:   #0056b3;
+
+        --color-primary:  #007bff;
+        --color-success:  #28a745;
+        --color-success-hover: #218838;
+        --color-success-disabled: #94d3a2;
+        --color-danger:   #dc3545;
+
+        --shadow-card:    rgba(0,0,0,0.07);
+        --shadow-btn:     rgba(0,0,0,0.1);
+        --shadow-search:  rgba(0,123,255,0.15);
+        --shadow-add:     rgba(40,167,69,0.15);
+    }
+
+    [data-theme="dark"] {
+        --bg-page:        #191D24; /* black0 */
+        --bg-card:        #1E222A; /* black1 */
+        --bg-hover:       #222630; /* black2 */
+        --bg-meta:        #191D24; /* black0 */
+        --bg-editable:    #222630; /* black2 */
+        --bg-editable-focus: #242933; /* gray0 */
+        --bg-sort-btn:    #2E3440; /* gray1 */
+        --bg-word-count:  #2E3440; /* gray1 */
+
+        --border-card:    #3B4252; /* gray2 */
+        --border-input:   #434C5E; /* gray3 */
+        --border-details: #2E3440; /* gray1 */
+
+        --text-primary:   #D8DEE9; /* white1 */
+        --text-secondary: #C0C8D8; /* white_alt */
+        --text-meta:      #60728A; /* gray5 */
+        --text-heading:   #81A1C1; /* blue1 */
+
+        --shadow-card:    rgba(0,0,0,0.3);
+        --shadow-btn:     rgba(0,0,0,0.3);
+        --shadow-search:  rgba(129,161,193,0.2); /* blue1 */
+        --shadow-add:     rgba(163,190,140,0.2); /* green */
+    }
+
+    body {
+        font-family: 'Inter', sans-serif;
+        margin: 0; /* Reset default browser margin */
+        padding: 20px; /* Add padding for spacing from screen edges */
+        background-color: var(--bg-page);
+        color: var(--text-primary);
+    }
+
+    /* --- Controls at the top --- */
+    .controls-container {
+        margin-bottom: 20px; /* Space between controls and grid */
+    }
+    #sortControls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .sort-btn {
+        background: linear-gradient(#7c3aed, #7c3aed) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: #fff;
+    }
+    .sort-btn.active {
+        background: linear-gradient(#6d28d9, #6d28d9) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: #fff;
+        box-shadow: 0 2px 4px var(--shadow-btn);
+    }
+    [data-theme="dark"] .sort-btn {
+        background: linear-gradient(#3b0764, #3b0764) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    [data-theme="dark"] .sort-btn.active {
+        background: linear-gradient(#2e1065, #2e1065) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    #wordCount {
+        display: inline-block;
+        background-color: var(--bg-sort-btn);
+        color: var(--text-primary);
+        font-size: 0.8em;
+        font-weight: 500;
+        padding: 8px 12px;
+        border-radius: 4px;
+        align-self: center;
+        white-space: nowrap;
+        margin-left: auto;
+    }
+    #searchInput {
+        padding: 7px 12px;
+        border: 1px solid var(--border-input);
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-family: inherit;
+        outline: none;
+        min-width: 200px;
+        transition: border-color 0.15s;
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+    }
+    #searchInput:focus {
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 2px var(--shadow-search);
+    }
+    .add-word-group {
+        display: flex;
+        gap: 0;
+    }
+    #newWordInput {
+        padding: 7px 12px;
+        border: 1px solid var(--border-input);
+        border-right: none;
+        border-radius: 4px 0 0 4px;
+        font-size: 0.8em;
+        font-family: inherit;
+        outline: none;
+        min-width: 160px;
+        transition: border-color 0.15s;
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+    }
+    #newWordInput:focus {
+        border-color: var(--color-success);
+        box-shadow: 0 0 0 2px var(--shadow-add);
+    }
+    #addWordBtn {
+        background: linear-gradient(#7c3aed, #7c3aed) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: white;
+        border-radius: 0 4px 4px 0;
+        padding: 7px 14px;
+        font-size: 0.8em;
+    }
+    #addWordBtn:hover:not(:disabled) {
+        background: linear-gradient(#6d28d9, #6d28d9) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    #addWordBtn:disabled {
+        background: linear-gradient(#a78bfa, #a78bfa) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        cursor: not-allowed;
+    }
+    [data-theme="dark"] #addWordBtn {
+        background: linear-gradient(#3b0764, #3b0764) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    [data-theme="dark"] #addWordBtn:hover:not(:disabled) {
+        background: linear-gradient(#2e1065, #2e1065) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    [data-theme="dark"] #addWordBtn:disabled {
+        background: linear-gradient(#4c1d95, #4c1d95) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+
+    #addWordToast {
+        position: fixed;
+        top: 24px;
+        right: 24px;
+        left: auto;
+        transform: translateX(20px);
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+        border: 2px solid var(--color-primary);
+        border-radius: 8px;
+        padding: 12px 20px;
+        font-size: 0.9em;
+        font-weight: 500;
+        box-shadow: 0 6px 20px var(--shadow-card);
+        opacity: 0;
+        transition: opacity 0.3s, transform 0.3s;
+        pointer-events: none;
+        z-index: 1000;
+        white-space: nowrap;
+    }
+    #addWordToast.show {
+        opacity: 1;
+        transform: translateX(0);
+    }
+
+    /* Grid Container and Columns - Now Full Width */
+    #wordGridContainer {
+        display: flex;
+        gap: 15px;
+        align-items: flex-start;
+    }
+    .grid-column {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    /* Word Item Styling (Card) */
+    .word-item {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border-card);
+        border-radius: 8px;
+        box-shadow: 0 2px 5px var(--shadow-card);
+        overflow: hidden;
+    }
+    .word-header {
+        padding: 15px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1em;
+        font-weight: 600;
+        user-select: none;
+    }
+    .word-header:hover { background-color: var(--bg-hover); }
+    .word-header .word-title { flex-grow: 0; user-select: text; cursor: text; margin-right: 4px; padding-right: 4px; margin-left: 6px; }
+    .word-header .indicator { font-size: 1.2em; line-height: 1; color: var(--color-primary); width: 1em; text-align: center; flex-shrink: 0; }
+    .freq-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: linear-gradient(#fff, #fff) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        border: 2px solid transparent;
+        color: #7c3aed;
+        font-size: 0.72em;
+        font-weight: 700;
+        padding: 0 5px;
+        margin-right: 8px;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+    [data-theme="dark"] .freq-badge {
+        background: linear-gradient(#1a0533, #1a0533) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: #c084fc;
+    }
+    .word-details {
+        display: none;
+        padding: 0 15px 15px 15px;
+        border-top: 1px solid var(--border-details);
+    }
+    .detail-section { margin-bottom: 12px; }
+    .detail-section .metadata {
+        font-size: 0.75em;
+        color: var(--text-meta);
+        padding: 8px;
+        background: var(--bg-meta);
+        border-radius: 4px;
+    }
+
+    /* Editable and Rendered Content */
+    .editable-content {
+        padding: 8px;
+        border: 1px solid var(--border-input);
+        border-radius: 4px;
+        background-color: var(--bg-editable);
+        color: var(--text-primary);
+        min-height: 40px;
+        font-size: 0.8em;
+    }
+    .editable-content[contenteditable] {
+        outline: 2px solid var(--color-primary);
+        background-color: var(--bg-editable-focus);
+    }
+    .rendered p, .rendered ul, .rendered ol { margin-top: 0; margin-bottom: 0.5em; }
+    .rendered ul, .rendered ol { padding-left: 20px; }
+
+    /* Buttons */
+    button {
+        padding: 8px 12px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: 500;
+        background: linear-gradient(#7c3aed, #7c3aed) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: #fff;
+    }
+    [data-theme="dark"] button {
+        background: linear-gradient(#3b0764, #3b0764) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+    .delete-button {
+        background: linear-gradient(#7c3aed, #7c3aed) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: white;
+        margin-top: 10px;
+    }
+    [data-theme="dark"] .delete-button {
+        background: linear-gradient(#3b0764, #3b0764) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
+
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 15px 0 5px 0;
+    }
+    .section-header h4 {
+        margin: 0;
+        color: var(--text-heading);
+        padding-bottom: 4px;
+        font-size: 0.9em;
+    }
+    .listen-btn {
+        background: none;
+        border: none;
+        padding: 0 4px;
+        font-size: 0.85em;
+        cursor: pointer;
+        opacity: 0.5;
+        color: var(--color-primary);
+        line-height: 1;
+    }
+    .listen-btn:hover { opacity: 1; }
+
+    .speak-btn {
+        background: none;
+        border: none;
+        padding: 0 4px;
+        font-size: 1em;
+        cursor: pointer;
+        line-height: 1;
+        opacity: 0.55;
+        flex-shrink: 0;
+        color: var(--color-success);
+    }
+    .speak-btn:hover { opacity: 1; }
+
+    .volume-control {
+        position: relative;
+    }
+    #volumePopup {
+        display: none;
+        position: absolute;
+        top: calc(100% + 8px);
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: var(--bg-card);
+        border: 1px solid var(--border-card);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px var(--shadow-card);
+        padding: 12px 10px;
+        z-index: 100;
+    }
+    #volumePopup.open { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    #volumeSlider {
+        writing-mode: vertical-lr;
+        direction: rtl;
+        height: 90px;
+        accent-color: var(--color-success);
+        cursor: pointer;
+    }
+    #volumeLabel {
+        font-size: 0.75em;
+        color: var(--text-meta);
+    }
+
+    /* Responsive Design */
+    @media (max-width: 650px) {
+        body { padding: 10px; } /* Less padding on small screens */
+        #wordGridContainer { flex-direction: column; }
+        .grid-column { width:100%; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="controls-container">
+    <div id="sortControls">
+        <input type="text" id="searchInput" placeholder="Search words..." autocomplete="off">
+        <button id="sortByDateBtn" class="sort-btn active">Updated</button>
+        <button id="sortByCreatedBtn" class="sort-btn">Created</button>
+        <button id="sortByEncountersBtn" class="sort-btn">Encounters</button>
+        <button id="sortByIdBtn" class="sort-btn">ID</button>
+        <div class="add-word-group">
+            <input type="text" id="newWordInput" placeholder="Add new word..." autocomplete="off">
+            <button id="addWordBtn" onclick="addWord()">Add</button>
+        </div>
+        <span id="wordCount"></span>
+        <div class="volume-control">
+            <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
+            <div id="volumePopup">
+                <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="1">
+                <span id="volumeLabel">100%</span>
+            </div>
+        </div>
+        <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
+    </div>
+</div>
+
+<div id="wordGridContainer"></div>
+<div id="addWordToast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
+
+<script>
+let currentlyEditing = null;
+let toastTimer = null;
+function showToast(msg) {
+    const toast = document.getElementById('addWordToast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 5000);
+}
+const turndownService = new TurndownService();
+let socket = null;
+let currentSort = 'updatedAt';
+let allWords = [];
+let pendingAutoPlay = null;
+
+async function addWord() {
+  const input = document.getElementById('newWordInput');
+  const btn = document.getElementById('addWordBtn');
+  const word = input.value.trim();
+  if (!word) return;
+
+  btn.disabled = true;
+  btn.textContent = '...';
+
+  try {
+    pendingAutoPlay = word;
+    const res = await fetch('/api/word', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      input.value = '';
+      showToast(data.message);
+      await fetchData(currentSort);
+      autoPlayMeaning(word);
+      pendingAutoPlay = null;
+    } else {
+      alert('Failed to add word');
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Add';
+  }
+}
+
+function connectWebSocket() {
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    socket = new WebSocket(wsUrl);
+    socket.onopen = () => console.log("WebSocket connection established.");
+    socket.onmessage = async (event) => {
+        if (event.data.startsWith("update_words")) {
+            let wordToPlay = null;
+            const colonIndex = event.data.indexOf(':');
+            if (colonIndex !== -1) {
+                const message = event.data.substring(colonIndex + 1);
+                showToast(message);
+                const match = message.match(/'([^']+)'/);
+                if (match) wordToPlay = match[1];
+            }
+            await fetchData(currentSort);
+            // Skip if this is the local tab's own word (already handled by addWord)
+            if (wordToPlay && wordToPlay !== pendingAutoPlay) {
+                autoPlayMeaning(wordToPlay);
+            }
+        }
+    };
+    socket.onclose = () => setTimeout(connectWebSocket, 5000);
+    socket.onerror = (error) => console.error("WebSocket error:", error);
+}
+
+async function saveCellChanges(cell) {
+  if (!cell.hasAttribute('contenteditable') || currentlyEditing !== cell) {
+    if (currentlyEditing === cell) currentlyEditing = null; return;
+  }
+  cell.removeAttribute('contenteditable');
+  const originalCurrentlyEditing = currentlyEditing;
+  currentlyEditing = null;
+  const wordItem = cell.closest('.word-item');
+  const id = parseInt(wordItem.dataset.id);
+  const word = wordItem.dataset.word;
+  const encounters = parseInt(wordItem.dataset.encounters);
+  const meaningDiv = wordItem.querySelector('.meaning-content');
+  const examplesDiv = wordItem.querySelector('.examples-content');
+  const synonymsDiv = wordItem.querySelector('.synonyms-content');
+  const editedMarkdownValue = cell.innerText.trim();
+  let meaningMarkdown = (cell === meaningDiv) ? editedMarkdownValue : (meaningDiv.dataset.raw || '');
+  let examplesMarkdown = (cell === examplesDiv) ? editedMarkdownValue : (examplesDiv.dataset.raw || '');
+  let synonymsMarkdown = (cell === synonymsDiv) ? editedMarkdownValue : (synonymsDiv.dataset.raw || '');
+  try {
+    const response = await fetch('/api/words', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, word, meaning: meaningMarkdown, sentences: examplesMarkdown, synonyms: synonymsMarkdown, encounters })
+    });
+    if (!response.ok) throw new Error(`Update failed: ${response.status} ${await response.text()}`);
+    cell.dataset.raw = editedMarkdownValue;
+    cell.innerHTML = `<div class="rendered">${marked.parse(editedMarkdownValue || "")}</div>`;
+  } catch (err) {
+    console.error('Update failed on client:', err);
+    alert(`Failed to save changes: ${err.message}`);
+    const originalRaw = originalCurrentlyEditing.dataset.raw || '';
+    originalCurrentlyEditing.innerHTML = `<div class="rendered">${marked.parse(originalRaw)}</div>`;
+    originalCurrentlyEditing.removeAttribute('contenteditable');
+  }
+}
+
+function makeEditable(cell) {
+  if (currentlyEditing) { alert("Another cell is already being edited."); return; }
+  currentlyEditing = cell;
+  const rawMarkdown = cell.dataset.raw || "";
+  cell.innerText = rawMarkdown;
+  cell.setAttribute('contenteditable', 'true');
+  cell.focus();
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  cell.onpaste = (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData('text/html');
+    const plain = e.clipboardData.getData('text/plain');
+    let markdownToInsert = plain;
+    if (html) { try { markdownToInsert = turndownService.turndown(html); } catch (tdError) { console.error("Turndown error:", tdError); } }
+    document.execCommand('insertText', false, markdownToInsert);
+  };
+  cell.onkeydown = async (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); await saveCellChanges(cell); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      cell.removeAttribute('contenteditable');
+      const originalRaw = cell.dataset.raw || '';
+      cell.innerHTML = `<div class="rendered">${marked.parse(originalRaw)}</div>`;
+      currentlyEditing = null;
+    }
+  };
+  cell.onblur = () => { setTimeout(async () => { if (cell.hasAttribute('contenteditable') && currentlyEditing === cell) { await saveCellChanges(cell); } else if (currentlyEditing === cell) { currentlyEditing = null; } }, 100); };
+}
+
+function stripMarkdown(md) {
+    return md
+        .replace(/#{1,6}\s+/g, '')
+        .replace(/\*\*_(.+?)_\*\*/g, '$1')
+        .replace(/___(.+?)___/g, '$1')
+        .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/__(.+?)__/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/_(.+?)_/g, '$1')
+        .replace(/`(.+?)`/g, '$1')
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+        .replace(/^[-*+]\s+/gm, '')
+        .replace(/^\d+\.\s+/gm, '')
+        .trim();
+}
+
+let currentAudio = null;
+let currentBtn = null;
+
+function stopAudio() {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    if (currentBtn) { currentBtn.innerHTML = currentBtn.dataset.icon; currentBtn = null; }
+}
+
+async function playTTS(text, btn) {
+    if (btn && currentBtn === btn) { stopAudio(); return; }
+    stopAudio();
+    if (btn) { btn.innerHTML = '<i class="fa-solid fa-circle-stop"></i>'; currentBtn = btn; }
+    const volume = parseFloat(document.getElementById('volumeSlider').value);
+    try {
+        const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        if (!res.ok) throw new Error('TTS failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.volume = volume;
+        currentAudio = audio;
+        audio.play();
+        audio.onended = () => { URL.revokeObjectURL(url); if (btn && currentBtn === btn) stopAudio(); };
+    } catch (e) {
+        console.error('TTS error:', e);
+        if (btn && currentBtn === btn) stopAudio();
+    }
+}
+
+function autoPlayMeaning(wordName) {
+    if (!wordName) return;
+    const item = allWords.find(w => w.word === wordName);
+    if (!item || !item.meaning) return;
+    const text = stripMarkdown(item.meaning);
+    if (!text) return;
+    stopAudio();
+    playTTS(text, null);
+}
+
+function pronounceWord(btn, event) {
+    event.stopPropagation();
+    const word = btn.closest('.word-item').dataset.word;
+    playTTS(word, btn);
+}
+
+function speakSection(btn, event) {
+    event.stopPropagation();
+    const content = btn.closest('.detail-section').querySelector('.editable-content');
+    const text = stripMarkdown(content.dataset.raw || '');
+    if (!text) return;
+    playTTS(text, btn);
+}
+
+function deleteItem(button) {
+  const wordItem = button.closest('.word-item');
+  const id = wordItem.dataset.id;
+  const word = wordItem.dataset.word;
+  if (confirm(`Are you sure you want to delete "${word}" (ID ${id})?`)) {
+    fetch(`/api/words/${id}`, { method: 'DELETE' })
+    .then(response => { if (!response.ok) response.text().then(text => alert(`Failed to delete word: ${text}`)); })
+    .catch(err => alert(`Error while deleting word: ${err.message}`));
+  }
+}
+
+function renderGrid(data) {
+  const container = document.getElementById('wordGridContainer');
+  if (currentlyEditing) {
+    console.log("Skipping render because a cell is being edited.");
+    return;
+  }
+  const total = allWords.length;
+  const filtered = data.length;
+  const countEl = document.getElementById('wordCount');
+  countEl.textContent = (filtered < total && total > 0)
+    ? `${filtered} / ${total} words`
+    : `${total} word${total !== 1 ? 's' : ''}`;
+  container.innerHTML = '';
+  const numColumns = 3;
+  let columns = [];
+  var dateOptions = {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false, // change to true if you prefer AM/PM
+  }
+  for (let i = 0; i < numColumns; i++) {
+    const columnDiv = document.createElement('div');
+    columnDiv.className = 'grid-column';
+    container.appendChild(columnDiv);
+    columns.push(columnDiv);
+  }
+  const columnHTMLs = Array(numColumns).fill('');
+  data.forEach((item, index) => {
+    const wordItemHTML = `
+      <div class="word-item"
+           data-id="${item.id}"
+           data-word="${item.word}"
+           data-encounters="${item.encounters}"
+           data-meaning="${encodeURIComponent(item.meaning || '')}"
+           data-sentences="${encodeURIComponent(item.sentences || '')}"
+           data-synonyms="${encodeURIComponent(item.synonyms || '')}"
+           data-createdat="${item.createdAt || ''}"
+           data-updatedat="${item.updatedAt || ''}">
+        <div class="word-header">
+          <button class="speak-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="pronounceWord(this, event)" title="Pronounce"><i class="fa-solid fa-headphones"></i></button>
+          <span class="word-title">${item.word}</span>
+          <span class="freq-badge">${item.encounters}</span>
+          <span class="indicator">+</span>
+        </div>
+        <div class="word-details"></div>
+      </div>
+    `;
+    columnHTMLs[index % numColumns] += wordItemHTML;
+  });
+  columns.forEach((col, i) => col.innerHTML = columnHTMLs[i]);
+  container.querySelectorAll('.word-header').forEach(header => {
+      header.querySelector('.word-title').addEventListener('click', e => e.stopPropagation());
+      header.addEventListener('click', () => {
+          const wordItem = header.closest('.word-item');
+          const details = header.nextElementSibling;
+          const indicator = header.querySelector('.indicator');
+          const isVisible = details.style.display === 'block';
+          if (!isVisible && !details.dataset.rendered) {
+              const meaningMarkdown = decodeURIComponent(wordItem.dataset.meaning || '');
+              const sentencesMarkdown = decodeURIComponent(wordItem.dataset.sentences || '');
+              const synonymsMarkdown = decodeURIComponent(wordItem.dataset.synonyms || '');
+              const escAttr = s => s.replace(/"/g, '&quot;');
+              const createdAt = wordItem.dataset.createdat || '';
+              const updatedAt = wordItem.dataset.updatedat || '';
+              const createdDate = createdAt ? new Date(createdAt.replace(' ', 'T') + 'Z').toLocaleString('en-US', dateOptions) : 'N/A';
+              const updatedDate = updatedAt ? new Date(updatedAt.replace(' ', 'T') + 'Z').toLocaleString('en-US', dateOptions) : 'N/A';
+              details.innerHTML = `
+                <div class="detail-section">
+                    <div class="section-header">
+                        <h4>Meaning</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to meaning"><i class="fa-solid fa-headphones"></i></button>
+                    </div>
+                    <div class="editable-content meaning-content" data-raw="${escAttr(meaningMarkdown)}" ondblclick="makeEditable(this)">
+                         <div class="rendered">${marked.parse(meaningMarkdown)}</div>
+                    </div>
+                </div>
+                <div class="detail-section">
+                    <div class="section-header">
+                        <h4>Synonyms</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to synonyms"><i class="fa-solid fa-headphones"></i></button>
+                    </div>
+                    <div class="editable-content synonyms-content" data-raw="${escAttr(synonymsMarkdown)}" ondblclick="makeEditable(this)">
+                         <div class="rendered">${marked.parse(synonymsMarkdown)}</div>
+                    </div>
+                </div>
+                <div class="detail-section">
+                    <div class="section-header">
+                        <h4>Examples</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to examples"><i class="fa-solid fa-headphones"></i></button>
+                    </div>
+                    <div class="editable-content examples-content" data-raw="${escAttr(sentencesMarkdown)}" ondblclick="makeEditable(this)">
+                         <div class="rendered">${marked.parse(sentencesMarkdown)}</div>
+                    </div>
+                </div>
+                <div class="detail-section">
+                    <h4>Metadata</h4>
+                    <div class="metadata">
+                        ID: ${wordItem.dataset.id} | Created: ${createdDate} | Updated: ${updatedDate}
+                    </div>
+                </div>
+                <button class="delete-button" onclick="deleteItem(this)"><i class="fa-solid fa-trash-can"></i> Delete Word</button>
+              `;
+              details.dataset.rendered = 'true';
+          }
+          details.style.display = isVisible ? 'none' : 'block';
+          indicator.innerHTML = isVisible ? '+' : '−';
+      });
+  });
+}
+
+function applySearch() {
+  const query = document.getElementById('searchInput').value.trim().toLowerCase();
+  const filtered = query ? allWords.filter(w => w.word.toLowerCase().includes(query)) : allWords;
+  renderGrid(filtered);
+}
+
+function fetchData(sortBy = 'updatedAt') {
+  if (currentlyEditing) {
+    console.log("Skipping fetch because a cell is being edited.");
+    return Promise.resolve();
+  }
+  currentSort = sortBy;
+  console.log(`Fetching data, sorting by: ${sortBy}`);
+  return fetch(`/api/words?sort_by=${sortBy}`)
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      return res.json();
+    })
+    .then(data => {
+        console.log("Data received, rendering grid:", data.length, "items");
+        allWords = data;
+        applySearch();
+    })
+    .catch(err => console.error('Fetch error:', err));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    marked.setOptions({ breaks: true, gfm: true, sanitize: false });
+
+    // Apply saved theme on load
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    document.getElementById('themeToggle').innerHTML = savedTheme === 'dark' ? '<i class="fa-solid fa-moon"></i>' : '<i class="fa-solid fa-sun"></i>';
+
+    // Toggle handler
+    document.getElementById('themeToggle').addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        document.getElementById('themeToggle').innerHTML = next === 'dark' ? '<i class="fa-solid fa-moon"></i>' : '<i class="fa-solid fa-sun"></i>';
+    });
+
+    const sortByDateBtn = document.getElementById('sortByDateBtn');
+    const sortByCreatedBtn = document.getElementById('sortByCreatedBtn');
+    const sortByEncountersBtn = document.getElementById('sortByEncountersBtn');
+    const sortByIdBtn = document.getElementById('sortByIdBtn');
+    const sortButtons = [sortByDateBtn, sortByCreatedBtn, sortByEncountersBtn, sortByIdBtn];
+
+    function setActiveSortButton(activeButton) {
+        sortButtons.forEach(button => button.classList.remove('active'));
+        activeButton.classList.add('active');
+    }
+
+    sortByDateBtn.onclick = () => {
+        setActiveSortButton(sortByDateBtn);
+        fetchData('updatedAt');
+    };
+    sortByCreatedBtn.onclick = () => {
+        setActiveSortButton(sortByCreatedBtn);
+        fetchData('createdAt');
+    };
+    sortByEncountersBtn.onclick = () => {
+        setActiveSortButton(sortByEncountersBtn);
+        fetchData('encounters');
+    };
+    sortByIdBtn.onclick = () => {
+        setActiveSortButton(sortByIdBtn);
+        fetchData('id');
+    };
+
+    const volumeToggle = document.getElementById('volumeToggle');
+    const volumePopup = document.getElementById('volumePopup');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const volumeLabel = document.getElementById('volumeLabel');
+
+    const savedVolume = localStorage.getItem('ttsVolume');
+    if (savedVolume !== null) {
+        volumeSlider.value = savedVolume;
+        const pct = Math.round(savedVolume * 100);
+        volumeLabel.textContent = `${pct}%`;
+        volumeToggle.innerHTML = pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+    }
+
+    volumeToggle.addEventListener('click', () => volumePopup.classList.toggle('open'));
+    volumeSlider.addEventListener('input', () => {
+        const pct = Math.round(volumeSlider.value * 100);
+        volumeLabel.textContent = `${pct}%`;
+        volumeToggle.innerHTML = pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+        localStorage.setItem('ttsVolume', volumeSlider.value);
+    });
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.volume-control')) volumePopup.classList.remove('open');
+    });
+
+    document.getElementById('searchInput').addEventListener('input', applySearch);
+    document.getElementById('newWordInput').addEventListener('keydown', e => { if (e.key === 'Enter') addWord(); });
+
+    fetchData(currentSort);
+    connectWebSocket();
+});
+</script>
+
+</body>
+</html>

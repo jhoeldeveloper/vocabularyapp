@@ -1,0 +1,8 @@
+fastapi
+pydantic
+pydantic-settings
+python-dotenv
+google-generativeai
+uvicorn[standard]
+edge-tts
+groq
