@@ -130,6 +130,32 @@
         display: flex;
         gap: 0;
     }
+    .export-group {
+        display: flex;
+        gap: 0;
+        align-items: center;
+    }
+    #csvLimitInput {
+        padding: 7px 12px;
+        border: 1px solid var(--border-input);
+        border-radius: 4px 0 0 4px;
+        border-right: none;
+        font-size: 0.8em;
+        font-family: inherit;
+        outline: none;
+        width: 64px;
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+    }
+    #csvLimitInput:focus {
+        border-color: var(--color-primary);
+    }
+    #copyCsvBtn {
+        border-radius: 0 4px 4px 0;
+        padding: 7px 12px;
+        font-size: 0.8em;
+        margin-left: 0;
+    }
     #newWordInput {
         padding: 7px 12px;
         border: 1px solid var(--border-input);
@@ -390,6 +416,87 @@
         #wordGridContainer { flex-direction: column; }
         .grid-column { width:100%; }
     }
+
+    /* Read Aloud Modal */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background-color: rgba(0, 0, 0, 0.45);
+        z-index: 2000;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+        border: 1px solid var(--border-card);
+        border-radius: 10px;
+        box-shadow: 0 10px 30px var(--shadow-card);
+        width: 90vw;
+        height: 88vh;
+        max-width: none;
+        max-height: none;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border-details);
+    }
+    .modal-header h3 { margin: 0; font-size: 1em; color: var(--text-heading); }
+    .modal-close {
+        background: none;
+        border: none;
+        color: var(--text-meta);
+        font-size: 1.4em;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 4px;
+    }
+    .modal-close:hover { color: var(--text-primary); }
+    #pasteText {
+        flex: 1;
+        min-height: 200px;
+        margin: 16px 16px 0 16px;
+        padding: 12px;
+        resize: none;
+        border: 1px solid var(--border-input);
+        border-radius: 6px;
+        background-color: var(--bg-editable);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 0.9em;
+        outline: none;
+    }
+    #pasteText:focus { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--shadow-search); }
+    #readPreview {
+        flex: 1;
+        min-height: 200px;
+        margin: 16px 16px 0 16px;
+        padding: 12px;
+        overflow-y: auto;
+        border: 1px solid var(--border-input);
+        border-radius: 6px;
+        background-color: var(--bg-editable);
+        color: var(--text-primary);
+        font-size: 0.9em;
+    }
+    #readPreview .rendered p, #readPreview .rendered ul, #readPreview .rendered ol { margin-top: 0; margin-bottom: 0.5em; }
+    #readPreview .rendered ul, #readPreview .rendered ol { padding-left: 20px; }
+    .modal-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px 16px 16px;
+    }
+    .modal-actions .modal-left { display: flex; gap: 8px; }
   </style>
 </head>
 <body>
@@ -406,6 +513,10 @@
             <button id="addWordBtn" onclick="addWord()">Add</button>
         </div>
         <span id="wordCount"></span>
+        <div class="export-group">
+            <input type="number" id="csvLimitInput" min="1" step="1" value="20" title="Number of top words to copy">
+            <button id="copyCsvBtn" title="Copy top words as CSV"><i class="fa-solid fa-copy"></i> Copy</button>
+        </div>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
             <div id="volumePopup">
@@ -414,6 +525,24 @@
             </div>
         </div>
         <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
+        <button id="openReadModalBtn" class="sort-btn" title="Read pasted text aloud"><i class="fa-solid fa-microphone-lines"></i></button>
+    </div>
+</div>
+
+<div id="readModalOverlay" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Read text aloud</h3>
+            <button id="closeReadModalBtn" class="modal-close" title="Close">&times;</button>
+        </div>
+        <textarea id="pasteText" placeholder="Paste or type text here to read aloud (Markdown supported)..."></textarea>
+        <div id="readPreview" class="rendered" style="display:none;"></div>
+        <div class="modal-actions">
+            <div class="modal-left">
+                <button id="readModeToggle" class="sort-btn"><i class="fa-solid fa-eye"></i> Preview</button>
+            </div>
+            <button id="readPastedBtn" data-icon='<i class="fa-solid fa-volume-high"></i> Read'><i class="fa-solid fa-volume-high"></i> Read</button>
+        </div>
     </div>
 </div>
 
@@ -587,6 +716,8 @@ function stripMarkdown(md) {
 
 let currentAudio = null;
 let currentBtn = null;
+const ttsCache = new Map();      // text -> object URL (in-memory audio cache)
+const TTS_CACHE_MAX = 100;
 
 function stopAudio() {
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
@@ -599,19 +730,30 @@ async function playTTS(text, btn) {
     if (btn) { btn.innerHTML = '<i class="fa-solid fa-circle-stop"></i>'; currentBtn = btn; }
     const volume = parseFloat(document.getElementById('volumeSlider').value);
     try {
-        const res = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text })
-        });
-        if (!res.ok) throw new Error('TTS failed');
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        let url;
+        if (ttsCache.has(text)) {
+            url = ttsCache.get(text);
+        } else {
+            const res = await fetch('/api/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (!res.ok) throw new Error('TTS failed');
+            const blob = await res.blob();
+            url = URL.createObjectURL(blob);
+            ttsCache.set(text, url);
+            if (ttsCache.size > TTS_CACHE_MAX) {
+                const oldest = ttsCache.keys().next().value;
+                URL.revokeObjectURL(ttsCache.get(oldest));
+                ttsCache.delete(oldest);
+            }
+        }
         const audio = new Audio(url);
         audio.volume = volume;
         currentAudio = audio;
         audio.play();
-        audio.onended = () => { URL.revokeObjectURL(url); if (btn && currentBtn === btn) stopAudio(); };
+        audio.onended = () => { if (btn && currentBtn === btn) stopAudio(); };
     } catch (e) {
         console.error('TTS error:', e);
         if (btn && currentBtn === btn) stopAudio();
@@ -794,6 +936,62 @@ function fetchData(sortBy = 'updatedAt') {
     .catch(err => console.error('Fetch error:', err));
 }
 
+async function copyTopWordsCSV() {
+    if (!allWords.length) { showToast('No words to copy'); return; }
+    const raw = parseInt(document.getElementById('csvLimitInput').value, 10);
+    const limit = Math.max(1, isNaN(raw) ? allWords.length : raw);
+    const topWords = allWords.slice(0, limit).map(w => w.word);
+    const csv = ['word', ...topWords].join('\n');
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(csv);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = csv;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        showToast(`Copied ${topWords.length} word${topWords.length !== 1 ? 's' : ''} as CSV`);
+    } catch (e) {
+        console.error('Clipboard copy failed:', e);
+        alert('Failed to copy to clipboard: ' + e.message);
+    }
+}
+
+let readEditMode = 'edit';
+
+function setReadMode(mode) {
+    readEditMode = mode;
+    const textarea = document.getElementById('pasteText');
+    const preview = document.getElementById('readPreview');
+    const toggle = document.getElementById('readModeToggle');
+    if (mode === 'preview') {
+        preview.innerHTML = `<div class="rendered">${marked.parse(textarea.value)}</div>`;
+        textarea.style.display = 'none';
+        preview.style.display = 'block';
+        toggle.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+    } else {
+        textarea.style.display = 'block';
+        preview.style.display = 'none';
+        toggle.innerHTML = '<i class="fa-solid fa-eye"></i> Preview';
+    }
+}
+
+function openReadModal() {
+    setReadMode('edit');
+    document.getElementById('readModalOverlay').classList.add('open');
+    document.getElementById('pasteText').focus();
+}
+
+function closeReadModal() {
+    document.getElementById('readModalOverlay').classList.remove('open');
+    stopAudio();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     marked.setOptions({ breaks: true, gfm: true, sanitize: false });
 
@@ -865,6 +1063,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('searchInput').addEventListener('input', applySearch);
     document.getElementById('newWordInput').addEventListener('keydown', e => { if (e.key === 'Enter') addWord(); });
+
+    const csvLimitInput = document.getElementById('csvLimitInput');
+    const savedCsvLimit = localStorage.getItem('csvLimit');
+    if (savedCsvLimit !== null) csvLimitInput.value = savedCsvLimit;
+    csvLimitInput.addEventListener('input', () => {
+        if (csvLimitInput.value) localStorage.setItem('csvLimit', csvLimitInput.value);
+    });
+    document.getElementById('copyCsvBtn').addEventListener('click', copyTopWordsCSV);
+
+    document.getElementById('openReadModalBtn').addEventListener('click', openReadModal);
+    document.getElementById('closeReadModalBtn').addEventListener('click', closeReadModal);
+    document.getElementById('readModeToggle').addEventListener('click', () => {
+        setReadMode(readEditMode === 'edit' ? 'preview' : 'edit');
+    });
+    document.getElementById('readModalOverlay').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('readModalOverlay')) closeReadModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('readModalOverlay').classList.contains('open')) closeReadModal();
+    });
+    document.getElementById('readPastedBtn').addEventListener('click', (e) => {
+        const text = document.getElementById('pasteText').value.trim();
+        if (!text) { showToast('Nothing to read'); return; }
+        playTTS(stripMarkdown(text), e.currentTarget);
+    });
 
     fetchData(currentSort);
     connectWebSocket();
