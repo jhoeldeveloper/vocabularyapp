@@ -342,6 +342,16 @@
         background: linear-gradient(#3b0764, #3b0764) padding-box,
                     linear-gradient(135deg, #06b6d4, #a855f7) border-box;
     }
+    .story-button {
+        background: linear-gradient(#0e7490, #0e7490) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        color: white;
+        margin-top: 10px;
+    }
+    [data-theme="dark"] .story-button {
+        background: linear-gradient(#164e63, #164e63) padding-box,
+                    linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+    }
 
 
     .section-header {
@@ -460,35 +470,6 @@
         padding: 0 4px;
     }
     .modal-close:hover { color: var(--text-primary); }
-    #pasteText {
-        flex: 1;
-        min-height: 200px;
-        margin: 16px 16px 0 16px;
-        padding: 12px;
-        resize: none;
-        border: 1px solid var(--border-input);
-        border-radius: 6px;
-        background-color: var(--bg-editable);
-        color: var(--text-primary);
-        font-family: inherit;
-        font-size: 0.9em;
-        outline: none;
-    }
-    #pasteText:focus { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--shadow-search); }
-    #readPreview {
-        flex: 1;
-        min-height: 200px;
-        margin: 16px 16px 0 16px;
-        padding: 12px;
-        overflow-y: auto;
-        border: 1px solid var(--border-input);
-        border-radius: 6px;
-        background-color: var(--bg-editable);
-        color: var(--text-primary);
-        font-size: 0.9em;
-    }
-    #readPreview .rendered p, #readPreview .rendered ul, #readPreview .rendered ol { margin-top: 0; margin-bottom: 0.5em; }
-    #readPreview .rendered ul, #readPreview .rendered ol { padding-left: 20px; }
     .modal-actions {
         display: flex;
         justify-content: space-between;
@@ -497,6 +478,107 @@
         padding: 12px 16px 16px 16px;
     }
     .modal-actions .modal-left { display: flex; gap: 8px; }
+    #storyModalBody { padding: 0; }
+    .modal-header, .modal-actions { flex-shrink: 0; }
+    .modal-tabs { display: flex; gap: 4px; padding: 10px 16px 0 16px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
+    .modal-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; color: var(--text-meta); font: inherit; font-size: 0.9em; }
+    .modal-tab.active { color: var(--text-heading); border-bottom-color: var(--color-primary); }
+    .modal-tab-panel { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
+    .story-word-chip { cursor: pointer; }
+    .story-word-chip:hover { border-color: var(--color-primary); }
+    mark.story-hl { background-color: #ffe066; color: inherit; border-radius: 3px; padding: 0 2px; }
+    .story-meta { font-size: 0.75em; color: var(--text-meta); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-details); }
+    .story-player { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
+    .story-seek { flex: 1; min-width: 80px; }
+    .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; }
+    .story-speed select { padding: 4px 6px; border: 1px solid var(--border-input); border-radius: 4px; background-color: var(--bg-card); color: var(--text-primary); font: inherit; }
+
+    /* --- Stories Panel --- */
+    #storiesPanel { display: none; }
+    .panel-section {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border-card);
+        border-radius: 10px;
+        box-shadow: 0 2px 5px var(--shadow-card);
+        padding: 18px;
+        margin-bottom: 20px;
+    }
+    .panel-section h3 { margin: 0 0 14px 0; color: var(--text-heading); font-size: 1.05em; }
+    .gen-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .gen-filter select, .gen-filter input {
+        padding: 7px 10px; border: 1px solid var(--border-input); border-radius: 4px;
+        font-size: 0.8em; font-family: inherit; background-color: var(--bg-card); color: var(--text-primary);
+        outline: none;
+    }
+    .gen-filter input { min-width: 90px; }
+    .gen-filter select:focus, .gen-filter input:focus { border-color: var(--color-primary); }
+    .filter-results {
+        max-height: 220px; overflow-y: auto; border: 1px solid var(--border-card);
+        border-radius: 6px; padding: 8px; background-color: var(--bg-editable); margin-bottom: 12px;
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 12px;
+    }
+    .filter-item { display: flex; align-items: center; gap: 6px; font-size: 0.82em; cursor: pointer; padding: 2px 0; }
+    .filter-item input { accent-color: var(--color-primary); }
+    .filter-item .filter-meta { display: inline-flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+    .filter-item .filter-meta strong { color: var(--color-primary); min-width: 1.4em; }
+    .filter-item .filter-sub { font-size: 0.82em; color: var(--text-meta); font-weight: 400; }
+    .gen-selected { margin-bottom: 12px; font-size: 0.85em; }
+    .gen-selected .sel-label { font-weight: 600; margin-right: 6px; color: var(--text-secondary); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .chip {
+        display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 14px;
+        background: linear-gradient(#fff, #fff) padding-box, linear-gradient(135deg, #06b6d4, #a855f7) border-box;
+        border: 2px solid transparent; color: #7c3aed; font-size: 0.78em; font-weight: 600;
+    }
+    [data-theme="dark"] .chip { background: linear-gradient(#1a0533, #1a0533) padding-box, linear-gradient(135deg, #06b6d4, #a855f7) border-box; color: #c084fc; }
+    .chip.word-chip { cursor: pointer; }
+    .chip.word-chip:hover { opacity: 0.8; }
+    .gen-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .gen-actions input, .gen-actions select {
+        box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-input); border-radius: 4px;
+        font-size: 0.8em; font-family: inherit; background-color: var(--bg-card); color: var(--text-primary); outline: none;
+    }
+    .gen-actions select:focus, .gen-actions input:focus { border-color: var(--color-primary); }
+    #storyTitle { min-width: 160px; }
+    #generateStoryBtn { flex-shrink: 0; }
+    .model-ac { position: relative; flex: 0 1 340px; min-width: 200px; max-width: 360px; }
+    .model-ac-input {
+        box-sizing: border-box; width: 100%; padding: 7px 10px; border: 1px solid var(--border-input); border-radius: 4px;
+        font-size: 0.8em; font-family: inherit; background-color: var(--bg-card); color: var(--text-primary); outline: none;
+    }
+    .model-ac-input:focus { border-color: var(--color-primary); }
+    .model-ac-list {
+        position: absolute; z-index: 50; top: calc(100% + 4px); left: 0; right: auto;
+        min-width: 100%; width: 460px; max-width: 90vw;
+        max-height: 280px; overflow-y: auto; border: 1px solid var(--border-input); border-radius: 6px;
+        background-color: var(--bg-card); box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 4px;
+    }
+    .model-ac-item {
+        padding: 7px 9px; border-radius: 4px; font-size: 0.8em; cursor: pointer; color: var(--text-primary);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .model-ac-item.kb-active, .model-ac-item:hover { background-color: var(--bg-editable); }
+    .model-ac-item.selected { font-weight: 600; color: var(--color-primary); }
+    .gen-status { margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.9em;
+        background-color: var(--bg-editable); color: var(--color-success); border: 1px solid var(--border-input); }
+    .story-list-item { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+        padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px;
+        background-color: var(--bg-card); cursor: pointer; margin-bottom: 10px; }
+    .story-list-item:hover { border-color: var(--color-primary); }
+    .story-list-title { font-weight: 600; color: var(--text-heading); }
+    .story-list-title-box { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .story-list-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .story-list-meta-line { font-size: 0.72em; color: var(--text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .story-list-right { display: flex; align-items: center; gap: 10px; }
+    .story-list-date { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; }
+    .story-list-del { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
+    .story-list-del:hover { color: #dc2626; background-color: rgba(220,38,38,0.1); }
+    .story-card { margin-bottom: 16px; }
+    .story-card .word-details { display: block; }
+
+    /* In Stories view, hide the word-mode controls but keep the view toggle. */
+    body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
   </style>
 </head>
 <body>
@@ -525,29 +607,93 @@
             </div>
         </div>
         <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
-        <button id="openReadModalBtn" class="sort-btn" title="Read pasted text aloud"><i class="fa-solid fa-microphone-lines"></i></button>
+        <button id="viewToggleBtn" class="sort-btn" title="Toggle Words / Stories view"><i class="fa-solid fa-book-open"></i> Stories</button>
     </div>
 </div>
 
-<div id="readModalOverlay" class="modal-overlay">
+<div id="storyModalOverlay" class="modal-overlay">
     <div class="modal">
         <div class="modal-header">
-            <h3>Read text aloud</h3>
-            <button id="closeReadModalBtn" class="modal-close" title="Close">&times;</button>
+            <h3 id="storyModalTitle">Story</h3>
+            <button id="closeStoryModalBtn" class="modal-close" title="Close">&times;</button>
         </div>
-        <textarea id="pasteText" placeholder="Paste or type text here to read aloud (Markdown supported)..."></textarea>
-        <div id="readPreview" class="rendered" style="display:none;"></div>
+        <div class="modal-tabs">
+            <button class="modal-tab active" data-tab="story">Story</button>
+            <button class="modal-tab" data-tab="built">Built from</button>
+        </div>
+        <div id="storyTabPanel" class="modal-tab-panel">
+            <div class="story-meta" id="storyModalMeta" style="display:none;"></div>
+            <div id="storyModalBody" class="rendered"></div>
+        </div>
+        <div id="builtTabPanel" class="modal-tab-panel" style="display:none;">
+            <div class="section-header"><h4>Words used in this story</h4></div>
+            <div class="chips" id="storyModalWordsChips"></div>
+        </div>
+        <div class="story-player" id="storyPlayer" style="display:none;">
+            <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-pause"></i></button>
+            <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0">
+            <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
+            <label class="story-speed">Speed
+                <select id="storyModalSpeed">
+                    <option value="1">1x</option>
+                    <option value="1.25">1.25x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                </select>
+            </label>
+            <button id="storyModalStop" class="sort-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
+        </div>
         <div class="modal-actions">
-            <div class="modal-left">
-                <button id="readModeToggle" class="sort-btn"><i class="fa-solid fa-eye"></i> Preview</button>
-            </div>
-            <button id="readPastedBtn" data-icon='<i class="fa-solid fa-volume-high"></i> Read'><i class="fa-solid fa-volume-high"></i> Read</button>
+            <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Read Aloud"><i class="fa-solid fa-volume-high"></i> Read Aloud</button>
         </div>
     </div>
 </div>
 
 <div id="wordGridContainer"></div>
 <div id="addWordToast"></div>
+
+<div id="storiesPanel">
+  <div class="panel-section">
+    <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Generate a Story</h3>
+    <div class="gen-filter">
+      <select id="filterField" title="Sort by">
+        <option value="id">ID</option>
+        <option value="encounters">Encounters</option>
+        <option value="createdAt">Created</option>
+        <option value="updatedAt">Updated</option>
+      </select>
+      <select id="filterDirection" title="Sort direction">
+        <option value="desc">Descending</option>
+        <option value="asc">Ascending</option>
+      </select>
+      <input type="text" id="filterMin" placeholder="from (#)" title="Result start (1-based), e.g. 1">
+      <input type="text" id="filterMax" placeholder="to (#)" title="Result end, e.g. 100">
+      <button id="applyFilterBtn" class="sort-btn">Show</button>
+      <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
+    </div>
+    <div id="filterResults" class="filter-results"></div>
+    <div class="gen-selected">
+      <span class="sel-label">Selected (<span id="selCount">0</span>):</span>
+      <button id="clearSelBtn" class="sort-btn">Clear</button>
+      <div id="selectedChips" class="chips"></div>
+    </div>
+    <div class="gen-actions">
+      <input type="text" id="storyTitle" placeholder="Optional title">
+      <div class="model-ac">
+        <input type="text" id="storyModelInput" class="model-ac-input" placeholder="Search or pick a model…" autocomplete="off" title="OpenRouter model (free or paid)">
+        <div id="storyModelList" class="model-ac-list" style="display:none;"></div>
+      </div>
+      <input type="text" id="storyModelCustom" class="model-custom" placeholder="custom model id (e.g. deepseek/deepseek-v4-flash-0731)" style="display:none;">
+      <button id="generateStoryBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
+    </div>
+    <div id="genStatus" class="gen-status" style="display:none;"></div>
+  </div>
+
+  <div class="panel-section">
+    <h3><i class="fa-solid fa-book"></i> Saved Stories</h3>
+    <div id="storiesList"></div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
@@ -622,6 +768,13 @@ function connectWebSocket() {
             if (wordToPlay && wordToPlay !== pendingAutoPlay) {
                 autoPlayMeaning(wordToPlay);
             }
+        } else if (event.data.startsWith("update_stories")) {
+            const panel = document.getElementById('storiesPanel');
+            if (panel.style.display !== 'none') {
+                loadStories();
+            }
+            // Refresh word badges too (story links may have changed).
+            fetch('/api/story_counts').then(r => r.json()).then(c => { wordStoryCounts = c; applySearch(); }).catch(() => {});
         }
     };
     socket.onclose = () => setTimeout(connectWebSocket, 5000);
@@ -900,6 +1053,7 @@ function renderGrid(data) {
                         ID: ${wordItem.dataset.id} | Created: ${createdDate} | Updated: ${updatedDate}
                     </div>
                 </div>
+                <button class="story-button" data-id="${wordItem.dataset.id}" title="View stories for this word"><i class="fa-solid fa-book"></i> Stories${wordStoryCounts[wordItem.dataset.id] ? ` (${wordStoryCounts[wordItem.dataset.id]})` : ''}</button>
                 <button class="delete-button" onclick="deleteItem(this)"><i class="fa-solid fa-trash-can"></i> Delete Word</button>
               `;
               details.dataset.rendered = 'true';
@@ -931,8 +1085,12 @@ function fetchData(sortBy = 'updatedAt') {
     .then(data => {
         console.log("Data received, rendering grid:", data.length, "items");
         allWords = data;
-        applySearch();
+        return fetch('/api/story_counts')
+            .then(r => r.json())
+            .then(c => { wordStoryCounts = c; })
+            .catch(() => {});
     })
+    .then(() => applySearch())
     .catch(err => console.error('Fetch error:', err));
 }
 
@@ -962,34 +1120,539 @@ async function copyTopWordsCSV() {
     }
 }
 
-let readEditMode = 'edit';
+// --- Story modal ---
+let currentModalStoryId = null;
 
-function setReadMode(mode) {
-    readEditMode = mode;
-    const textarea = document.getElementById('pasteText');
-    const preview = document.getElementById('readPreview');
-    const toggle = document.getElementById('readModeToggle');
-    if (mode === 'preview') {
-        preview.innerHTML = `<div class="rendered">${marked.parse(textarea.value)}</div>`;
-        textarea.style.display = 'none';
-        preview.style.display = 'block';
-        toggle.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+function formatDate(ts) {
+  if (!ts) return '';
+  const d = new Date(String(ts).replace(' ', 'T') + 'Z');
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleString();
+}
+
+function formatDuration(ms) {
+  if (ms == null || isNaN(ms)) return '';
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function stripStoryLabels(text) {
+  if (!text) return '';
+  let t = text.replace(/^\s*Title:\s*[^\n]*/i, '');
+  t = t.replace(/^\s*Story:\s*/i, '');
+  return t.trim();
+}
+
+async function openStoryModal(id) {
+  currentModalStoryId = id;
+  stopAudio();
+  hideStoryPlayer();
+  try {
+    const res = await fetch(`/api/stories/${id}`);
+    if (!res.ok) return;
+    const s = await res.json();
+    document.getElementById('storyModalTitle').textContent = s.title || 'Untitled';
+    document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
+    const metaEl = document.getElementById('storyModalMeta');
+    const metaParts = [];
+    if (s.model) metaParts.push(s.model.replace(/^.*\//, ''));
+    const dur = formatDuration(s.duration_ms);
+    if (dur) metaParts.push(dur);
+    if (s.cost != null) metaParts.push(s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
+    if (metaParts.length) {
+      metaEl.textContent = metaParts.join(' · ');
+      metaEl.style.display = '';
     } else {
-        textarea.style.display = 'block';
-        preview.style.display = 'none';
-        toggle.innerHTML = '<i class="fa-solid fa-eye"></i> Preview';
+      metaEl.style.display = 'none';
     }
+    const chipsBox = document.getElementById('storyModalWordsChips');
+    chipsBox.innerHTML = '';
+    (s.words || []).forEach(w => {
+      const span = document.createElement('span');
+      span.className = 'chip story-word-chip';
+      span.textContent = w.word;
+      span.title = 'Find "' + w.word + '" in the story';
+      span.onclick = () => { switchStoryTab(); highlightWordInStory(w.word); };
+      chipsBox.appendChild(span);
+    });
+    switchStoryTab();
+    document.getElementById('storyModalOverlay').classList.add('open');
+  } catch (e) { /* ignore */ }
 }
 
-function openReadModal() {
-    setReadMode('edit');
-    document.getElementById('readModalOverlay').classList.add('open');
-    document.getElementById('pasteText').focus();
+function closeStoryModal() {
+  document.getElementById('storyModalOverlay').classList.remove('open');
+  stopAudio();
+  hideStoryPlayer();
 }
 
-function closeReadModal() {
-    document.getElementById('readModalOverlay').classList.remove('open');
-    stopAudio();
+function formatTime(sec) {
+  if (!sec || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function showStoryPlayer() {
+  document.getElementById('storyPlayer').style.display = 'flex';
+  document.getElementById('storyModalReadBtn').style.display = 'none';
+  document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-pause"></i>';
+}
+
+function hideStoryPlayer() {
+  document.getElementById('storyPlayer').style.display = 'none';
+  const rb = document.getElementById('storyModalReadBtn');
+  rb.style.display = '';
+  rb.disabled = false;
+  rb.innerHTML = rb.dataset.icon;
+  document.getElementById('storyModalSeek').value = 0;
+  document.getElementById('storyModalTime').textContent = '0:00 / 0:00';
+}
+
+function switchStoryTab() {
+  document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'story'));
+  document.getElementById('storyTabPanel').style.display = 'block';
+  document.getElementById('builtTabPanel').style.display = 'none';
+}
+
+function clearStoryHighlights() {
+  document.querySelectorAll('#storyModalBody mark.story-hl').forEach(m => {
+    const parent = m.parentNode;
+    if (!parent) return;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+}
+
+function highlightWordInStory(word) {
+  clearStoryHighlights();
+  const body = document.getElementById('storyModalBody');
+  if (!body || !word) return;
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('\\b(' + escaped + ')\\b', 'gi');
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+  let firstMark = null;
+  nodes.forEach(node => {
+    const text = node.nodeValue;
+    re.lastIndex = 0;
+    let m, last = 0, matched = false;
+    const frag = document.createDocumentFragment();
+    while ((m = re.exec(text)) !== null) {
+      matched = true;
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const mark = document.createElement('mark');
+      mark.className = 'story-hl';
+      mark.textContent = m[0];
+      frag.appendChild(mark);
+      if (!firstMark) firstMark = mark;
+      last = m.index + m[0].length;
+    }
+    if (matched) {
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  });
+  if (firstMark) firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// --- Stories feature ---
+let selectedWords = new Set();
+let currentStoryId = null;
+let wordStoryCounts = {};
+
+async function applyFilter() {
+  const field = document.getElementById('filterField').value;
+  const direction = document.getElementById('filterDirection').value;
+  const min = document.getElementById('filterMin').value.trim();
+  const max = document.getElementById('filterMax').value.trim();
+  const qs = new URLSearchParams({ field, direction });
+  if (min) qs.set('min', min);
+  if (max) qs.set('max', max);
+  const res = await fetch(`/api/words/filter?${qs}`);
+  const data = await res.json();
+  renderFilterResults(data);
+}
+
+function renderFilterResults(data) {
+  const box = document.getElementById('filterResults');
+  box.innerHTML = '';
+  if (!data.length) {
+    box.innerHTML = '<span style="font-size:0.8em;color:var(--text-meta);">No words match this filter.</span>';
+    return;
+  }
+  // Absolute position is tied to the from/to config (1-based).
+  const minRaw = document.getElementById('filterMin').value.trim();
+  const start = minRaw ? Math.max(1, parseInt(minRaw, 10) || 1) : 1;
+  data.forEach((w, idx) => {
+    const pos = start + idx;
+    const label = document.createElement('label');
+    label.className = 'filter-item';
+    label.dataset.word = w.word;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selectedWords.has(w.word);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedWords.add(w.word); else selectedWords.delete(w.word);
+      renderChips();
+    });
+    const meta = document.createElement('span');
+    meta.className = 'filter-meta';
+    const updated = (w.updatedAt || w.createdAt || '').split(' ')[0];
+    meta.innerHTML = `<strong>${pos}.</strong> ${w.word} <span class="filter-sub">enc: ${w.encounters} · ${updated}</span>`;
+    label.appendChild(cb);
+    label.appendChild(meta);
+    box.appendChild(label);
+  });
+}
+
+function renderChips() {
+  const box = document.getElementById('selectedChips');
+  box.innerHTML = '';
+  document.getElementById('selCount').textContent = selectedWords.size;
+  selectedWords.forEach(word => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = word + ' ×';
+    chip.title = 'Remove';
+    chip.onclick = () => {
+      selectedWords.delete(word);
+      // uncheck in results if visible
+      document.querySelectorAll('#filterResults .filter-item').forEach(li => {
+        if (li.textContent.trim().replace('×','').trim().endsWith(word) || li.textContent.includes(word)) {}
+      });
+      renderFilterResultsFromDom();
+      renderChips();
+    };
+    box.appendChild(chip);
+  });
+}
+
+// Re-render result checkboxes to reflect current selection (after chip removal).
+function renderFilterResultsFromDom() {
+  document.querySelectorAll('#filterResults .filter-item').forEach(li => {
+    li.querySelector('input').checked = selectedWords.has(li.dataset.word);
+  });
+}
+
+// --- OpenRouter model picker (free + paid, price-sorted). Last choice persisted in localStorage. ---
+let ALL_MODELS = [];
+const STATIC_MODELS = [
+  { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "Nemotron 3 Super 120B", rec: true },
+  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731", pIn: 0.0786, pOut: 0.1572 },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra 550B" },
+  { id: "nvidia/nemotron-3-nano-30b-a3b:free", name: "Nemotron 3 Nano 30B" },
+  { id: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron 3.5 Lightning" },
+  { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B" },
+  { id: "google/gemma-4-26b-a4b-it:free", name: "Gemma 4 26B" },
+  { id: "dots-studio/dots-3-note-preview:free", name: "Dots 3 Note Preview" },
+  { id: "liquid/lfm-2.5-2.6b:free", name: "LFM 2.5 2.6B" },
+  { id: "poolside/laguna-s-2.1:free", name: "Poolside Laguna S 2.1" },
+];
+
+let storyModelSelection = "";  // committed id: "" = Default, "__custom__", or a model id
+
+async function populateModelSelect() {
+  let apiList = [];
+  // Best-effort live refresh from OpenRouter's public models list (free + paid).
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/models', { headers: { 'Accept': 'application/json' } });
+    if (res.ok) {
+      const data = await res.json();
+      apiList = data.data || [];
+    }
+  } catch (e) { /* offline: keep curated list */ }
+
+  ALL_MODELS = buildModelMaster(STATIC_MODELS, apiList);
+  restoreStoryModel();
+}
+
+// Build the master list of selectable models from curated + live API, with price tags.
+function buildModelMaster(staticList, apiList) {
+  const seen = new Set();
+  const out = [];
+  staticList.forEach(m => {
+    seen.add(m.id);
+    out.push(makeModel(m.id, m.name, m.pIn || 0, m.pOut || 0, m.rec));
+  });
+  (apiList || []).forEach(m => {
+    if (!seen.has(m.id)) {
+      seen.add(m.id);
+      const p = m.pricing || {};
+      const pIn = parseFloat(p.prompt || '0') * 1e6;
+      const pOut = parseFloat(p.completion || '0') * 1e6;
+      out.push(makeModel(m.id, m.name || m.id, pIn, pOut, false));
+    }
+  });
+  // Cheapest first (free = 0).
+  return out.sort((a, b) => a.price - b.price);
+}
+
+// Normalize a model entry into { id, label, price } with a human-readable price tag.
+function makeModel(id, name, pIn, pOut, rec) {
+  const free = pIn <= 0 && pOut <= 0;
+  const tags = [];
+  if (free) tags.push('free'); else tags.push('paid');
+  if (rec) tags.push('recommended');
+  let label = name;
+  if (tags.length) label += ` (${tags.join(', ')})`;
+  if (!free) label += ` · $${pIn.toFixed(3)}/$${pOut.toFixed(3)} per 1M`;
+  return { id, label, price: pIn + pOut };
+}
+
+// Render the autocomplete dropdown filtered by query.
+function renderModelAC(query) {
+  const list = document.getElementById('storyModelList');
+  const q = (query || '').trim().toLowerCase();
+  const matches = ALL_MODELS.filter(m =>
+    !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+  ).slice(0, 60);
+  const items = [{ id: '', label: 'Default model' }, ...matches, { id: '__custom__', label: 'Custom…' }];
+  list.innerHTML = '';
+  items.forEach(it => {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item' + (it.id === storyModelSelection ? ' selected' : '');
+    div.textContent = it.label;
+    div.dataset.id = it.id;
+    div.addEventListener('mousedown', (e) => { e.preventDefault(); selectModelAC(it.id); });
+    div.addEventListener('mouseenter', () => {
+      list.querySelectorAll('.model-ac-item').forEach(x => x.classList.remove('kb-active'));
+      div.classList.add('kb-active');
+    });
+    list.appendChild(div);
+  });
+  list.style.display = items.length ? 'block' : 'none';
+}
+
+function selectModelAC(id) {
+  storyModelSelection = id;
+  localStorage.setItem('lastStoryModel', id);
+  const custom = document.getElementById('storyModelCustom');
+  if (id === '__custom__') {
+    custom.value = localStorage.getItem('lastStoryModelCustom') || '';
+    custom.style.display = '';
+  } else {
+    custom.style.display = 'none';
+  }
+  syncModelInputToSelection();
+  document.getElementById('storyModelList').style.display = 'none';
+}
+
+function syncModelInputToSelection() {
+  const input = document.getElementById('storyModelInput');
+  const custom = document.getElementById('storyModelCustom');
+  if (storyModelSelection === '__custom__') {
+    input.value = 'Custom…';
+    custom.style.display = '';
+  } else if (storyModelSelection === '') {
+    input.value = 'Default model';
+    custom.style.display = 'none';
+  } else {
+    const m = ALL_MODELS.find(x => x.id === storyModelSelection);
+    input.value = m ? m.label : storyModelSelection;
+    custom.style.display = 'none';
+  }
+}
+
+function resolveStoryModel() {
+  if (storyModelSelection === '__custom__') {
+    return document.getElementById('storyModelCustom').value.trim() || null;
+  }
+  return storyModelSelection || null;
+}
+
+function restoreStoryModel() {
+  const saved = localStorage.getItem('lastStoryModel');
+  if (saved) storyModelSelection = saved;
+  if (storyModelSelection === '__custom__') {
+    document.getElementById('storyModelCustom').value = localStorage.getItem('lastStoryModelCustom') || '';
+  }
+  syncModelInputToSelection();
+}
+
+async function generateStory() {
+  const words = Array.from(selectedWords);
+  if (!words.length) { showToast('Select at least one word first'); return; }
+  const btn = document.getElementById('generateStoryBtn');
+  const status = document.getElementById('genStatus');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
+  status.style.display = 'none';
+  try {
+    const res = await fetch('/api/story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        words,
+        title: document.getElementById('storyTitle').value.trim() || null,
+        model: resolveStoryModel()
+      })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Failed to generate story');
+    }
+    const story = await res.json();
+    currentStoryId = story.id;
+    status.style.display = 'block';
+    const parts = [];
+    const dur = formatDuration(story.duration_ms);
+    if (dur) parts.push(dur);
+    if (story.cost != null) parts.push(story.cost > 0 ? `$${story.cost.toFixed(5)}` : 'free');
+    const meta = parts.length ? ` (${parts.join(' · ')})` : '';
+    status.textContent = `Story generated and saved: "${story.title}"${meta}. Find it in Saved Stories below.`;
+    loadStories();
+    document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story';
+  }
+}
+
+async function readStoryById(id, btn) {
+  if (!btn) return;
+  if (currentBtn === btn) { stopAudio(); hideStoryPlayer(); return; }
+  const icon = btn.dataset.icon || btn.innerHTML;
+  btn.dataset.icon = icon;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading audio...';
+  try {
+    const res = await fetch(`/api/stories/${id}`);
+    const story = await res.json();
+    let filename = story.audio_path;
+    if (!filename) {
+      const saveRes = await fetch('/api/tts/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: stripMarkdown(stripStoryLabels(story.content)), story_id: id })
+      });
+      if (!saveRes.ok) throw new Error('TTS failed');
+      ({ filename } = await saveRes.json());
+    }
+    btn.disabled = false;
+    playAudioFile('/audio/' + filename, btn, () => { loadStories(); hideStoryPlayer(); });
+    showStoryPlayer();
+    const audio = currentAudio;
+    if (audio) {
+      audio.playbackRate = parseFloat(document.getElementById('storyModalSpeed').value) || 1;
+      const tick = () => {
+        const seek = document.getElementById('storyModalSeek');
+        const dur = audio.duration || 0;
+        seek.max = dur;
+        seek.value = audio.currentTime || 0;
+        document.getElementById('storyModalTime').textContent = `${formatTime(audio.currentTime)} / ${formatTime(dur)}`;
+      };
+      audio.ontimeupdate = tick;
+      audio.onloadedmetadata = tick;
+      audio.onplay = () => { document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-pause"></i>'; };
+      audio.onpause = () => { document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-play"></i>'; };
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = icon;
+    alert('TTS error: ' + e.message);
+  }
+}
+
+async function playAudioFile(url, btn, onEnd) {
+  stopAudio();
+  const volume = parseFloat(document.getElementById('volumeSlider').value);
+  const audio = new Audio(url);
+  audio.volume = volume;
+  currentAudio = audio;
+  if (btn) { btn.innerHTML = '<i class="fa-solid fa-circle-stop"></i>'; currentBtn = btn; }
+  audio.play();
+  audio.onended = () => { if (!btn || currentBtn === btn) { stopAudio(); if (onEnd) onEnd(); } };
+}
+
+async function deleteStory(id) {
+  if (!confirm('Delete this story? This also removes its saved audio.')) return;
+  await fetch(`/api/stories/${id}`, { method: 'DELETE' });
+  if (currentStoryId === id) {
+    currentStoryId = null;
+  }
+  loadStories();
+}
+
+async function loadStories(wordId) {
+  let url = '/api/stories';
+  if (wordId) url += `?word_id=${wordId}`;
+  const res = await fetch(url);
+  const stories = await res.json();
+  const box = document.getElementById('storiesList');
+  box.innerHTML = '';
+  if (!stories.length) {
+    box.innerHTML = '<p style="color:var(--text-meta);font-size:0.85em;">No stories yet. Use the generator above to create one.</p>';
+    return;
+  }
+  stories.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'story-list-item';
+    item.dataset.id = s.id;
+    const titleBox = document.createElement('span');
+    titleBox.className = 'story-list-title-box';
+    const title = document.createElement('span');
+    title.className = 'story-list-title';
+    title.textContent = s.title || 'Untitled';
+    titleBox.appendChild(title);
+    if (s.model || s.cost != null || s.duration_ms != null) {
+      const metaBox = document.createElement('span');
+      metaBox.className = 'story-list-meta';
+      const add = (text) => {
+        const span = document.createElement('span');
+        span.className = 'story-list-meta-line';
+        span.textContent = text;
+        metaBox.appendChild(span);
+      };
+      if (s.model) add(s.model.replace(/^.*\//, ''));
+      if (s.cost != null) add(s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
+      const dur = formatDuration(s.duration_ms);
+      if (dur) add(dur);
+      titleBox.appendChild(metaBox);
+    }
+    const right = document.createElement('span');
+    right.className = 'story-list-right';
+    const date = document.createElement('span');
+    date.className = 'story-list-date';
+    date.textContent = formatDate(s.createdAt);
+    const del = document.createElement('button');
+    del.className = 'story-list-del';
+    del.title = 'Delete story';
+    del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+    del.onclick = (e) => { e.stopPropagation(); deleteStory(s.id); };
+    right.appendChild(date);
+    right.appendChild(del);
+    item.appendChild(titleBox);
+    item.appendChild(right);
+    item.onclick = () => openStoryModal(s.id);
+    box.appendChild(item);
+  });
+}
+
+function switchToWordsView(word) {
+  document.getElementById('storiesPanel').style.display = 'none';
+  document.getElementById('wordGridContainer').style.display = '';
+  document.body.classList.remove('stories-view');
+  document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book-open"></i> Stories';
+  if (word) {
+    document.getElementById('searchInput').value = word;
+    applySearch();
+  }
+}
+
+function openStoriesForWord(wordId) {
+  document.getElementById('wordGridContainer').style.display = 'none';
+  document.getElementById('storiesPanel').style.display = 'block';
+  document.body.classList.add('stories-view');
+  document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book"></i> Words';
+  loadStories(wordId);
+  populateModelSelect();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1056,6 +1719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         volumeLabel.textContent = `${pct}%`;
         volumeToggle.innerHTML = pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
         localStorage.setItem('ttsVolume', volumeSlider.value);
+        if (currentAudio) currentAudio.volume = parseFloat(volumeSlider.value);
     });
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.volume-control')) volumePopup.classList.remove('open');
@@ -1072,21 +1736,116 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('copyCsvBtn').addEventListener('click', copyTopWordsCSV);
 
-    document.getElementById('openReadModalBtn').addEventListener('click', openReadModal);
-    document.getElementById('closeReadModalBtn').addEventListener('click', closeReadModal);
-    document.getElementById('readModeToggle').addEventListener('click', () => {
-        setReadMode(readEditMode === 'edit' ? 'preview' : 'edit');
+    document.getElementById('closeStoryModalBtn').addEventListener('click', closeStoryModal);
+    document.querySelectorAll('.modal-tab').forEach(t => t.onclick = () => {
+      const tab = t.dataset.tab;
+      document.querySelectorAll('.modal-tab').forEach(x => x.classList.toggle('active', x === t));
+      document.getElementById('storyTabPanel').style.display = (tab === 'story') ? 'block' : 'none';
+      document.getElementById('builtTabPanel').style.display = (tab === 'built') ? 'block' : 'none';
     });
-    document.getElementById('readModalOverlay').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('readModalOverlay')) closeReadModal();
+    document.getElementById('storyModalOverlay').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('storyModalOverlay')) closeStoryModal();
     });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && document.getElementById('readModalOverlay').classList.contains('open')) closeReadModal();
+        if (e.key === 'Escape' && document.getElementById('storyModalOverlay').classList.contains('open')) closeStoryModal();
     });
-    document.getElementById('readPastedBtn').addEventListener('click', (e) => {
-        const text = document.getElementById('pasteText').value.trim();
-        if (!text) { showToast('Nothing to read'); return; }
-        playTTS(stripMarkdown(text), e.currentTarget);
+    document.getElementById('storyModalReadBtn').addEventListener('click', (e) => {
+        readStoryById(currentModalStoryId, e.currentTarget);
+    });
+    document.getElementById('storyModalPlayPause').addEventListener('click', () => {
+        const a = currentAudio;
+        if (!a) return;
+        if (a.paused) a.play(); else a.pause();
+    });
+    document.getElementById('storyModalSeek').addEventListener('input', (e) => {
+        if (currentAudio) currentAudio.currentTime = parseFloat(e.target.value);
+    });
+    document.getElementById('storyModalSpeed').addEventListener('change', (e) => {
+        if (currentAudio) currentAudio.playbackRate = parseFloat(e.target.value);
+    });
+    document.getElementById('storyModalStop').addEventListener('click', () => {
+        stopAudio();
+        hideStoryPlayer();
+    });
+
+    // --- Stories feature wiring ---
+    document.getElementById('viewToggleBtn').addEventListener('click', () => {
+        const panel = document.getElementById('storiesPanel');
+        const grid = document.getElementById('wordGridContainer');
+        const btn = document.getElementById('viewToggleBtn');
+        if (panel.style.display === 'none' || panel.style.display === '') {
+            panel.style.display = 'block';
+            grid.style.display = 'none';
+            document.body.classList.add('stories-view');
+            btn.innerHTML = '<i class="fa-solid fa-book"></i> Words';
+            loadStories();
+            populateModelSelect();
+        } else {
+            panel.style.display = 'none';
+            grid.style.display = '';
+            document.body.classList.remove('stories-view');
+            btn.innerHTML = '<i class="fa-solid fa-book-open"></i> Stories';
+        }
+    });
+    document.getElementById('applyFilterBtn').addEventListener('click', applyFilter);
+    document.getElementById('storyModelCustom').addEventListener('input', (e) => {
+        localStorage.setItem('lastStoryModelCustom', e.target.value.trim());
+    });
+    const acInput = document.getElementById('storyModelInput');
+    acInput.addEventListener('focus', () => { acInput.select(); renderModelAC(''); });
+    acInput.addEventListener('input', () => renderModelAC(acInput.value));
+    acInput.addEventListener('blur', () => {
+        setTimeout(() => {
+            document.getElementById('storyModelList').style.display = 'none';
+            syncModelInputToSelection();
+        }, 150);
+    });
+    acInput.addEventListener('keydown', (e) => {
+        const list = document.getElementById('storyModelList');
+        const items = Array.from(list.querySelectorAll('.model-ac-item'));
+        let active = items.findIndex(i => i.classList.contains('kb-active'));
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (list.style.display === 'none') { renderModelAC(acInput.value); return; }
+            const next = (active + 1) % items.length;
+            items.forEach(i => i.classList.remove('kb-active'));
+            items[next].classList.add('kb-active');
+            acInput.value = items[next].textContent;
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prev = (active <= 0 ? items.length - 1 : active - 1);
+            items.forEach(i => i.classList.remove('kb-active'));
+            items[prev].classList.add('kb-active');
+            acInput.value = items[prev].textContent;
+        } else if (e.key === 'Enter') {
+            if (list.style.display !== 'none' && items.length) {
+                e.preventDefault();
+                selectModelAC((active >= 0 ? items[active] : items[0]).dataset.id);
+            }
+        } else if (e.key === 'Escape') {
+            list.style.display = 'none';
+            syncModelInputToSelection();
+        }
+    });
+    populateModelSelect();
+    document.getElementById('selectAllBtn').addEventListener('click', () => {
+        document.querySelectorAll('#filterResults .filter-item').forEach(li => {
+            selectedWords.add(li.dataset.word);
+            li.querySelector('input').checked = true;
+        });
+        renderChips();
+    });
+    document.getElementById('clearSelBtn').addEventListener('click', () => {
+        selectedWords.clear();
+        renderFilterResultsFromDom();
+        renderChips();
+    });
+    document.getElementById('generateStoryBtn').addEventListener('click', generateStory);
+
+    // Story button on word cards -> open Stories panel filtered by that word.
+    document.getElementById('wordGridContainer').addEventListener('click', (e) => {
+        const btn = e.target.closest('.story-button');
+        if (btn) openStoriesForWord(parseInt(btn.dataset.id));
     });
 
     fetchData(currentSort);

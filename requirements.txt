@@ -6,3 +6,4 @@ google-generativeai
 uvicorn[standard]
 edge-tts
 groq
+requests

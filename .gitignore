@@ -12,6 +12,9 @@ venv/
 # Database
 *.db
 
+# Generated story audio
+audio/
+
 # Zone identifiers (Windows artifacts)
 *:Zone.Identifier
 
