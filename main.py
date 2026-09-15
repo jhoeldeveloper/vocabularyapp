@@ -1,12 +1,14 @@
 import os
+import sys
 import asyncio
+import threading
 import sqlite3
 import uuid
 from typing import List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Body, WebSocket, WebSocketDisconnect, Query
-import edge_tts
 from fastapi.responses import HTMLResponse, FileResponse, Response
+from tts_engine import synth_wav
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -17,10 +19,14 @@ DATABASE_URL = "dictionary.db"
 
 # --- AI Provider Selection ---
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
-TTS_VOICE = os.getenv("TTS_VOICE", "en-US-AvaMultilingualNeural")
+TTS_VOICE = os.getenv("TTS_VOICE", "af_heart")
 
 if AI_PROVIDER == "groq":
     from groq_agent import sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready
+elif AI_PROVIDER == "openrouter":
+    from openrouter_agent import (
+        sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready,
+    )
 else:
     from gemini_agent import sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready
 
@@ -37,6 +43,28 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Audio files generated for stories (read-aloud) are persisted here.
 os.makedirs("audio", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="audio"), name="audio")
+
+
+# --- TTS model warm-up (background) ---
+# Loads the Kokoro pipeline + voice and downloads the model once, in a daemon
+# thread, so the first real TTS request isn't hit with the one-time cost.
+@app.on_event("startup")
+def warm_up_tts():
+    # Capture the running loop so broadcast_from_sync works from worker threads.
+    try:
+        manager._loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    def _warm():
+        try:
+            synth_wav("warm up", TTS_VOICE)
+            print("[TTS] warm-up complete", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[TTS] warm-up skipped: {e}", file=sys.stderr, flush=True)
+
+    threading.Thread(target=_warm, daemon=True).start()
+
 
 
 # --- Database Setup (FIXED) ---
@@ -139,6 +167,8 @@ def init_db():
         model TEXT,
         duration_ms INTEGER,
         cost REAL,
+        status TEXT DEFAULT 'ready',
+        error TEXT,
         createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
         updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
     )
@@ -162,10 +192,24 @@ def init_db():
     # Migrate: add story metadata columns if they don't exist yet.
     _cur.execute("PRAGMA table_info(stories)")
     _story_cols = [col[1] for col in _cur.fetchall()]
-    for col, ddl in (("model", "TEXT"), ("duration_ms", "INTEGER"), ("cost", "REAL")):
+    for col, ddl in (("model", "TEXT"), ("duration_ms", "INTEGER"), ("cost", "REAL"), ("status", "TEXT DEFAULT 'ready'"), ("error", "TEXT")):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
             print(f"MIGRATION: Added stories.{col} column.")
+
+    # Stories left in 'generating' belong to jobs that died with a previous
+    # process (e.g. server restart). Mark them so the UI doesn't spin forever.
+    _cur.execute(
+        "UPDATE stories SET status = 'failed', error = ? WHERE status = 'generating'",
+        ("Interrupted by server restart",),
+    )
+    if _cur.rowcount:
+        print(f"MIGRATION: Marked {_cur.rowcount} stale 'generating' story(ies) as failed.")
+
+    # Cleanup legacy model setting keys (now stored as 'meanings_model' / 'story_model').
+    _cur.execute("DELETE FROM settings WHERE key IN ('openrouter_last_meanings_model', 'openrouter_last_model')")
+    if _cur.rowcount:
+        print(f"MIGRATION: Removed {_cur.rowcount} legacy model setting(s).")
 
     _conn.commit()
     _conn.close()
@@ -227,7 +271,10 @@ class WordEntry(BaseModel):
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
-        # No loop stored here — grab it lazily when needed
+        # Event loop used to schedule broadcasts from worker threads.
+        # Captured from an async context; falls back to this if a sync
+        # (worker-thread) call happens first.
+        self._loop = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -242,8 +289,14 @@ class ConnectionManager:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def broadcast_from_sync(self, message: str):
-        # Grab the running loop at call time, not at init time
-        loop = asyncio.get_running_loop()
+        # Prefer the running loop (async context); otherwise reuse the loop
+        # captured from an async call. This keeps the method safe to call
+        # from worker threads (e.g. TTS progress callbacks).
+        try:
+            loop = asyncio.get_running_loop()
+            self._loop = loop
+        except RuntimeError:
+            loop = self._loop
         asyncio.run_coroutine_threadsafe(self.broadcast(message), loop)
 
 manager = ConnectionManager()
@@ -272,19 +325,27 @@ async def get_words_html_page():
 
 
 @app.get("/api/words")
-def api_get_words(sort_by: str = Query('updatedAt', enum=['id', 'encounters', 'createdAt', 'updatedAt'])):
-    valid_sort_keys = {"id", "encounters", "createdAt", "updatedAt"}
+def api_get_words(
+    sort_by: str = Query('updatedAt', enum=['id', 'encounters', 'createdAt', 'updatedAt', 'word']),
+    order: str = Query('desc', enum=['asc', 'desc']),
+):
+    valid_sort_keys = {"id", "encounters", "createdAt", "updatedAt", "word"}
     if sort_by not in valid_sort_keys:
         raise HTTPException(status_code=400, detail="Invalid sort key.")
+    if order not in ("asc", "desc"):
+        order = "desc"
+    sql_dir = "ASC" if order == "asc" else "DESC"
 
     if sort_by == 'updatedAt':
-        order_clause = "ORDER BY COALESCE(updatedAt, createdAt) DESC, id DESC"
+        order_clause = f"ORDER BY COALESCE(updatedAt, createdAt) {sql_dir}, id {sql_dir}"
     elif sort_by == 'createdAt':
-        order_clause = "ORDER BY createdAt DESC, id DESC"
+        order_clause = f"ORDER BY createdAt {sql_dir}, id {sql_dir}"
     elif sort_by == 'encounters':
-        order_clause = "ORDER BY encounters DESC, id DESC"
+        order_clause = f"ORDER BY encounters {sql_dir}, id {sql_dir}"
+    elif sort_by == 'word':
+        order_clause = f"ORDER BY word COLLATE NOCASE {sql_dir}, id {sql_dir}"
     else:
-        order_clause = "ORDER BY id DESC"
+        order_clause = f"ORDER BY id {sql_dir}"
 
     query = f"SELECT id, word, meaning, sentences, synonyms, encounters, createdAt, updatedAt FROM dictionary {order_clause}"
     conn = sqlite3.connect(DATABASE_URL)
@@ -297,17 +358,42 @@ def api_get_words(sort_by: str = Query('updatedAt', enum=['id', 'encounters', 'c
 
 
 @app.post("/api/word")
-async def add_word(word: str = Body(..., embed=True)):
+async def add_word(
+    word: str = Body(..., embed=True),
+    meanings_model: Optional[str] = Body(None, embed=True),
+):
     if not ai_ready:
          raise HTTPException(status_code=503, detail="AI service is not available.")
 
     word = word.lower()
-    meanings, sentences, synonyms = await asyncio.gather(
-        run_in_threadpool(sync_get_meanings_of, word),
-        run_in_threadpool(sync_get_sentences_with, word),
-        run_in_threadpool(sync_get_synonyms_of, word)
-    )
 
+    # Provider from backend (AI_PROVIDER), model from client or DB fallback.
+    # meanings_model may be None (Default) or explicit id from picker.
+    if meanings_model is None and AI_PROVIDER == "openrouter":
+        meanings_model = get_setting("meanings_model") or "openrouter/free"
+    resolved_model = meanings_model if AI_PROVIDER == "openrouter" else None
+    lookup_args = (word, resolved_model) if AI_PROVIDER == "openrouter" else (word,)
+
+    MAX_ATTEMPTS = 2
+    err = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        print(f"[add_word] Attempt {attempt}/{MAX_ATTEMPTS} for '{word}'", flush=True)
+        meanings, sentences, synonyms = await asyncio.gather(
+            run_in_threadpool(sync_get_meanings_of, *lookup_args),
+            run_in_threadpool(sync_get_sentences_with, *lookup_args),
+            run_in_threadpool(sync_get_synonyms_of, *lookup_args)
+        )
+        if not any(s.startswith("Error fetching") for s in (meanings, sentences, synonyms)):
+            print(f"[add_word] Success on attempt {attempt} for '{word}'", flush=True)
+            break
+        err = next(s for s in (meanings, sentences, synonyms) if s.startswith("Error fetching"))
+        print(f"[add_word] Attempt {attempt} failed for '{word}': {err}", flush=True)
+        if attempt < MAX_ATTEMPTS:
+            await asyncio.sleep(5)
+
+    # Fail-closed: do not mutate DB if all attempts failed
+    if err and any(s.startswith("Error fetching") for s in (meanings, sentences, synonyms)):
+        raise HTTPException(status_code=502, detail=err)
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -462,64 +548,120 @@ async def create_story(data: StoryCreate):
     if not words:
         raise HTTPException(status_code=400, detail="No words provided.")
 
-    # Resolve model: explicit request -> persisted last free -> env default.
-    persisted = get_setting("openrouter_last_model")
-    actual_model = data.model or persisted or os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
-
-    result = await run_in_threadpool(openrouter_agent.sync_generate_story, words, data.title, actual_model)
-    if not result.get("ok"):
-        raise HTTPException(status_code=502, detail=result.get("error", "Story generation failed"))
-    content = result["content"]
-    duration_ms = int(result.get("elapsed", 0.0) * 1000)
-    cost = result.get("cost", 0.0)
-
-    title = _extract_title(content, data.title)
+    # Model from localStorage (client), fallback hardcoded openrouter/free (same as meanings).
+    actual_model = data.model or "openrouter/free"
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
         cursor = conn.cursor()
         placeholders = ",".join("?" * len(words))
-        cursor.execute(f"SELECT id, word FROM dictionary WHERE word IN ({placeholders})", words)
-        word_map = {row[0]: row[1] for row in cursor.fetchall()}  # word -> id
-        # Map back to id by word
-        id_by_word = {w: wid for wid, w in word_map.items()}
+        cursor.execute(f"SELECT id FROM dictionary WHERE word IN ({placeholders})", words)
+        word_ids = [row[0] for row in cursor.fetchall()]
         cursor.execute(
-            "INSERT INTO stories (title, content, audio_path, model, duration_ms, cost) VALUES (?, ?, NULL, ?, ?, ?)",
-            (title, content, actual_model, duration_ms, cost),
+            "INSERT INTO stories (title, content, audio_path, model, duration_ms, cost, status) "
+            "VALUES (?, NULL, NULL, ?, NULL, NULL, 'generating')",
+            (data.title or "Generating story...", actual_model),
         )
         story_id = cursor.lastrowid
-        for w in words:
-            wid = id_by_word.get(w)
-            if wid:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO story_words (story_id, word_id) VALUES (?, ?)",
-                    (story_id, wid),
-                )
+        for wid in word_ids:
+            cursor.execute(
+                "INSERT OR IGNORE INTO story_words (story_id, word_id) VALUES (?, ?)",
+                (story_id, wid),
+            )
         conn.commit()
         conn.close()
         return story_id
 
     story_id = await run_in_threadpool(db_operation)
 
-    # Persist the last-used model (free or paid) for default resolution.
-    if actual_model:
-        set_setting("openrouter_last_model", actual_model)
-
+    # Heavy AI generation runs as a background task so a page refresh or
+    # dropped connection can't lose the result — it is written to the DB
+    # and announced over the WebSocket when done.
+    asyncio.create_task(generate_story_job(story_id, words, data.title, actual_model))
     manager.broadcast_from_sync("update_stories")
-    return {
-        "id": story_id,
-        "title": title,
-        "content": content,
-        "audio_path": None,
-        "model": actual_model,
-        "duration_ms": duration_ms,
-        "cost": cost,
-    }
+    return {"id": story_id, "status": "generating"}
+
+
+async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str):
+    """Generate story content in the background and persist it when done."""
+    try:
+        result = await run_in_threadpool(openrouter_agent.sync_generate_story, words, title_hint, model)
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "Story generation failed"))
+
+        content = result["content"]
+        duration_ms = int(result.get("elapsed", 0.0) * 1000)
+        cost = result.get("cost", 0.0)
+        title = _extract_title(content, title_hint)
+
+        def db_operation():
+            conn = sqlite3.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            # Row may have been deleted by the user while generating; the
+            # UPDATE is then simply a no-op.
+            cursor.execute(
+                "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
+                "status = 'ready', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (title, content, model, duration_ms, cost, story_id),
+            )
+            conn.commit()
+            conn.close()
+
+        await run_in_threadpool(db_operation)
+        manager.broadcast_from_sync(f"story_ready:{story_id}")
+    except Exception as e:
+        print(f"[STORY] background generation failed for story {story_id}: {e}")
+
+        def fail_operation():
+            conn = sqlite3.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE stories SET status = 'failed', error = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (str(e)[:500], story_id),
+            )
+            conn.commit()
+            conn.close()
+
+        await run_in_threadpool(fail_operation)
+        manager.broadcast_from_sync(f"story_error:{story_id}")
 
 
 @app.get("/api/story_counts")
 def api_story_counts():
     return get_story_counts()
+
+
+@app.get("/api/openrouter/models")
+def api_openrouter_models():
+    """Full OpenRouter model catalogue (server-side cached ~10 min)."""
+    result = openrouter_agent.sync_list_models()
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Failed to fetch models"))
+    return {"models": result["models"]}
+
+
+@app.get("/api/config")
+def api_config():
+    """Small public config the frontend needs to render provider-specific UI."""
+    return {
+        "ai_provider": AI_PROVIDER,
+        "openrouter_ready": openrouter_agent.is_ready(),
+        "meanings_model": get_setting("meanings_model") or "openrouter/free",
+        "story_model": get_setting("story_model") or "openrouter/free",
+    }
+
+
+@app.post("/api/config")
+def update_config(
+    meanings_model: Optional[str] = Body(None),
+    story_model: Optional[str] = Body(None),
+):
+    """Save model selections to DB (single source of truth for all clients)."""
+    if meanings_model is not None:
+        set_setting("meanings_model", meanings_model)
+    if story_model is not None:
+        set_setting("story_model", story_model)
+    return {"ok": True}
 
 
 @app.get("/api/stories")
@@ -530,14 +672,14 @@ def api_list_stories(word_id: Optional[int] = Query(None)):
 
     if word_id is not None:
         cursor.execute(
-            "SELECT s.id, s.title, s.content, s.audio_path, s.model, s.duration_ms, s.cost, s.createdAt, s.updatedAt "
+            "SELECT s.id, s.title, s.content, s.audio_path, s.model, s.duration_ms, s.cost, s.status, s.error, s.createdAt, s.updatedAt "
             "FROM stories s JOIN story_words sw ON sw.story_id = s.id "
             "WHERE sw.word_id = ? ORDER BY s.createdAt DESC, s.id DESC",
             (word_id,),
         )
     else:
         cursor.execute(
-            "SELECT id, title, content, audio_path, model, duration_ms, cost, createdAt, updatedAt "
+            "SELECT id, title, content, audio_path, model, duration_ms, cost, status, error, createdAt, updatedAt "
             "FROM stories ORDER BY createdAt DESC, id DESC"
         )
     stories = [dict(row) for row in cursor.fetchall()]
@@ -560,7 +702,7 @@ def api_get_story(story_id: int):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, title, content, audio_path, model, duration_ms, cost, createdAt, updatedAt "
+        "SELECT id, title, content, audio_path, model, duration_ms, cost, status, error, createdAt, updatedAt "
         "FROM stories WHERE id = ?",
         (story_id,),
     )
@@ -577,6 +719,62 @@ def api_get_story(story_id: int):
     story["words"] = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return story
+
+
+@app.post("/api/stories/{story_id}/retry")
+async def retry_story(story_id: int):
+    """Re-run background generation for a failed story (same words + model)."""
+    def fetch_and_reset():
+        conn = sqlite3.connect(DATABASE_URL)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, model, status FROM stories WHERE id = ?", (story_id,))
+        story = cursor.fetchone()
+        if not story:
+            conn.close()
+            return None, None, None
+        if story["status"] != "failed":
+            conn.close()
+            return "not_failed", None, None
+        cursor.execute(
+            "SELECT LOWER(d.word) FROM story_words sw "
+            "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ? ORDER BY d.id",
+            (story_id,),
+        )
+        words = [row[0] for row in cursor.fetchall()]
+        if not words:
+            conn.close()
+            return "no_words", None, None
+        cursor.execute(
+            "UPDATE stories SET status = 'generating', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+            (story_id,),
+        )
+        conn.commit()
+        conn.close()
+        return "ok", words, story["model"]
+
+    outcome, words, model = await run_in_threadpool(fetch_and_reset)
+    if outcome is None:
+        raise HTTPException(status_code=404, detail="Story not found")
+    if outcome == "not_failed":
+        raise HTTPException(status_code=400, detail="Only failed stories can be retried")
+    if outcome == "no_words":
+        raise HTTPException(status_code=400, detail="Story has no linked words to regenerate from")
+
+    actual_model = model or "openrouter/free"
+
+    # Fresh title: let the AI invent one unless the user supplied a custom one
+    # (placeholder titles like 'Generating story...' are treated as no hint).
+    title_hint = None
+    conn = sqlite3.connect(DATABASE_URL)
+    row = conn.execute("SELECT title FROM stories WHERE id = ?", (story_id,)).fetchone()
+    conn.close()
+    if row and row[0] and row[0] != "Generating story...":
+        title_hint = row[0]
+
+    asyncio.create_task(generate_story_job(story_id, words, title_hint, actual_model))
+    manager.broadcast_from_sync("update_stories")
+    return {"id": story_id, "status": "generating"}
 
 
 @app.put("/api/stories/{story_id}")
@@ -638,12 +836,8 @@ async def delete_story(story_id: int):
 
 @app.post("/api/tts")
 async def text_to_speech(text: str = Body(..., embed=True)):
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    audio_chunks = []
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_chunks.append(chunk["data"])
-    return Response(b"".join(audio_chunks), media_type="audio/mpeg")
+    wav = await run_in_threadpool(synth_wav, text, TTS_VOICE)
+    return Response(wav, media_type="audio/wav")
 
 
 @app.post("/api/tts/save")
@@ -651,20 +845,39 @@ async def text_to_speech_save(
     text: str = Body(..., embed=True),
     story_id: Optional[int] = Body(None, embed=True),
 ):
-    """Generate audio with edge-tts, persist it to disk, and return the filename."""
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    audio_chunks = []
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_chunks.append(chunk["data"])
-    audio_bytes = b"".join(audio_chunks)
+    """Generate audio with Kokoro and persist it.
 
-    os.makedirs("audio", exist_ok=True)
-    filename = f"{uuid.uuid4().hex}.mp3"
-    with open(os.path.join("audio", filename), "wb") as f:
-        f.write(audio_bytes)
-
+    - With a `story_id`: the (heavy) generation runs in the background. The
+      client gets an immediate `{"status": "generating"}` and is notified over
+      the WebSocket (`story_audio_progress:<id>:<pct>` / `story_audio_ready:<id>`)
+      when done. This prevents a multi-minute blocking HTTP request.
+    - Without a `story_id`: generates synchronously and returns the filename.
+    """
     if story_id is not None:
+        asyncio.create_task(generate_story_audio(story_id, text))
+        return {"status": "generating", "story_id": story_id}
+
+    wav = await run_in_threadpool(synth_wav, text, TTS_VOICE)
+    os.makedirs("audio", exist_ok=True)
+    filename = f"{uuid.uuid4().hex}.wav"
+    with open(os.path.join("audio", filename), "wb") as f:
+        f.write(wav)
+    return {"filename": filename}
+
+
+async def generate_story_audio(story_id: int, text: str):
+    """Background worker: synthesize, save to disk, update DB, notify clients."""
+    try:
+        def on_progress(pct: float):
+            manager.broadcast_from_sync(f"story_audio_progress:{story_id}:{int(pct)}")
+
+        wav = await run_in_threadpool(synth_wav, text, TTS_VOICE, on_progress)
+
+        os.makedirs("audio", exist_ok=True)
+        filename = f"{uuid.uuid4().hex}.wav"
+        with open(os.path.join("audio", filename), "wb") as f:
+            f.write(wav)
+
         def db_operation():
             conn = sqlite3.connect(DATABASE_URL)
             cursor = conn.cursor()
@@ -674,10 +887,17 @@ async def text_to_speech_save(
             )
             conn.commit()
             conn.close()
-        await run_in_threadpool(db_operation)
-        manager.broadcast_from_sync("update_stories")
 
-    return {"filename": filename}
+        await run_in_threadpool(db_operation)
+        manager.broadcast_from_sync(f"story_audio_ready:{story_id}")
+        manager.broadcast_from_sync("update_stories")
+    except Exception as e:
+        print(
+            f"[TTS] background generation failed for story {story_id}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+        manager.broadcast_from_sync(f"story_audio_error:{story_id}")
 
 
 

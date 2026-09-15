@@ -1,9 +1,17 @@
+# NOTE: This project must run on Python 3.12 (kokoro-onnx / misaki require python <3.13).
+# Creating the venv with `python3.12 -m venv venv` is required; on 3.13/3.14 the
+# kokoro/spacy build will fail.
 fastapi
 pydantic
 pydantic-settings
 python-dotenv
 google-generativeai
 uvicorn[standard]
-edge-tts
+# TTS: kokoro-onnx runs the Kokoro-82M weights on ONNX Runtime (CPU) instead of
+# the heavy CUDA-enabled PyTorch `kokoro` package. `onnxruntime` pulls the CPU
+# build; install `onnxruntime-gpu` only if you have a CUDA GPU.
+kokoro-onnx
+onnxruntime
+soundfile
 groq
 requests

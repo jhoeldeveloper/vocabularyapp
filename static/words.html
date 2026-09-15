@@ -126,35 +126,21 @@
         border-color: var(--color-primary);
         box-shadow: 0 0 0 2px var(--shadow-search);
     }
+    .sort-select {
+        padding: 7px 8px;
+        border: 1px solid var(--border-input);
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-family: inherit;
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+        outline: none;
+        cursor: pointer;
+    }
+    .sort-select:focus { border-color: var(--color-primary); }
     .add-word-group {
         display: flex;
         gap: 0;
-    }
-    .export-group {
-        display: flex;
-        gap: 0;
-        align-items: center;
-    }
-    #csvLimitInput {
-        padding: 7px 12px;
-        border: 1px solid var(--border-input);
-        border-radius: 4px 0 0 4px;
-        border-right: none;
-        font-size: 0.8em;
-        font-family: inherit;
-        outline: none;
-        width: 64px;
-        background-color: var(--bg-card);
-        color: var(--text-primary);
-    }
-    #csvLimitInput:focus {
-        border-color: var(--color-primary);
-    }
-    #copyCsvBtn {
-        border-radius: 0 4px 4px 0;
-        padding: 7px 12px;
-        font-size: 0.8em;
-        margin-left: 0;
     }
     #newWordInput {
         padding: 7px 12px;
@@ -297,6 +283,10 @@
         padding: 8px;
         background: var(--bg-meta);
         border-radius: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: flex-start;
     }
 
     /* Editable and Rendered Content */
@@ -493,6 +483,9 @@
     .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
     .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; }
     .story-speed select { padding: 4px 6px; border: 1px solid var(--border-input); border-radius: 4px; background-color: var(--bg-card); color: var(--text-primary); font: inherit; }
+    .story-volume { display: flex; align-items: center; gap: 6px; font-size: 0.8em; color: var(--text-meta); }
+    .story-volume input[type="range"] { width: 80px; accent-color: var(--color-success); cursor: pointer; }
+    .story-volume span { min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
     /* --- Stories Panel --- */
     #storiesPanel { display: none; }
@@ -550,16 +543,71 @@
     .model-ac-input:focus { border-color: var(--color-primary); }
     .model-ac-list {
         position: absolute; z-index: 50; top: calc(100% + 4px); left: 0; right: auto;
-        min-width: 100%; width: 460px; max-width: 90vw;
+        width: max-content; max-width: 90vw;
         max-height: 280px; overflow-y: auto; border: 1px solid var(--border-input); border-radius: 6px;
         background-color: var(--bg-card); box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 4px;
     }
     .model-ac-item {
         padding: 7px 9px; border-radius: 4px; font-size: 0.8em; cursor: pointer; color: var(--text-primary);
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap;
+        display: flex; align-items: center; gap: 8px;
     }
     .model-ac-item.kb-active, .model-ac-item:hover { background-color: var(--bg-editable); }
     .model-ac-item.selected { font-weight: 600; color: var(--color-primary); }
+    .model-ac-item.model-ac-pseudo { color: var(--text-meta); font-style: italic; cursor: default; }
+    .model-ac-item .model-ac-name { font-weight: 500; }
+    .model-ac-item .model-ac-id { font-size: 0.85em; color: var(--text-meta); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .model-ac-item .model-ac-tags { margin-left: auto; display: inline-flex; gap: 4px; flex-shrink: 0; }
+    .model-ac-item .model-ac-tag {
+        font-size: 0.7em; padding: 1px 6px; border-radius: 999px;
+        background: var(--bg-editable); color: var(--text-meta);
+    }
+    .model-ac-item .model-ac-tag.free { color: var(--color-success); background: rgba(22,163,74,0.12); }
+    .model-ac-item .model-ac-tag.recommended { color: var(--color-primary); background: rgba(59,130,246,0.12); }
+
+    .model-picker-modal { width: min(720px, 92vw); height: min(640px, 85vh); max-height: 85vh; display: flex; flex-direction: column; }
+    .model-picker-body { padding: 14px 16px; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .model-picker-ac { flex: 0 0 auto; }
+    .model-picker-current {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 10px 12px; margin-bottom: 10px; flex: 0 0 auto;
+        background: var(--bg-editable); border: 1px solid var(--border-input);
+        border-radius: 6px;
+    }
+    .model-picker-current-label { font-size: 0.8em; color: var(--text-meta); text-transform: uppercase; letter-spacing: 0.04em; }
+    .model-picker-current-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 10px; border-radius: 999px;
+        background: rgba(22,163,74,0.12); color: var(--color-success);
+        font-weight: 600; font-size: 0.9em;
+    }
+    .model-picker-current-chip i { font-size: 0.95em; }
+    .model-picker-current-id { font-size: 0.78em; color: var(--text-meta); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .model-picker-default-row {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        padding: 8px 10px; border-radius: 6px; cursor: pointer; user-select: none;
+        background: var(--bg-editable); border: 1px solid var(--border-input);
+        margin-bottom: 10px; flex: 0 0 auto;
+    }
+    .model-picker-default-row:hover { border-color: var(--color-primary); }
+    .model-picker-default-row.selected { border-color: var(--color-primary); background: rgba(59,130,246,0.10); }
+    .model-picker-default-icon { color: var(--text-meta); font-size: 1em; width: 20px; text-align: center; flex-shrink: 0; }
+    .model-picker-default-row.selected .model-picker-default-icon { color: var(--color-primary); }
+    .model-picker-default-name { font-weight: 500; color: var(--text-primary); }
+    .model-picker-default-row.selected .model-picker-default-name { color: var(--color-primary); font-weight: 600; }
+    .model-picker-default-id { font-size: 0.85em; color: var(--text-meta); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .model-picker-default-tag { margin-left: auto; display: inline-flex; gap: 4px; flex-shrink: 0; }
+    .model-picker-default-tag .model-ac-tag { font-size: 0.7em; padding: 1px 6px; border-radius: 999px; background: var(--bg-card); color: var(--text-meta); }
+    .model-picker-default-tag .model-ac-tag.free { color: var(--color-success); background: rgba(22,163,74,0.12); }
+    .model-picker-default-tag .model-ac-tag.recommended { color: var(--color-primary); background: rgba(59,130,246,0.12); }
+    .model-picker-list-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 6px; border: 1px solid var(--border-input); border-radius: 6px; }
+    .model-picker-list { position: static; width: 100%; min-width: 0; max-width: none; max-height: none; padding: 4px; border: none; box-shadow: none; }
+    .model-picker-list .model-ac-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; }
+    .model-picker-list .model-ac-item:hover { background-color: var(--bg-editable); }
+    .model-picker-list .model-ac-item.selected { background-color: rgba(59,130,246,0.10); color: var(--text-primary); font-weight: 500; }
+    .model-picker-list .model-ac-item.selected .model-ac-name { color: var(--color-primary); }
+    .model-picker-empty { padding: 16px; text-align: center; color: var(--text-meta); font-size: 0.85em; }
+    .modal-footer { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border-details); background-color: var(--bg-card); flex: 0 0 auto; }
     .gen-status { margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.9em;
         background-color: var(--bg-editable); color: var(--color-success); border: 1px solid var(--border-input); }
     .story-list-item { display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -568,12 +616,26 @@
     .story-list-item:hover { border-color: var(--color-primary); }
     .story-list-title { font-weight: 600; color: var(--text-heading); }
     .story-list-title-box { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .story-list-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-    .story-list-meta-line { font-size: 0.72em; color: var(--text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .story-list-meta { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; min-width: 0; margin-top: 2px; }
+    .story-list-meta-line {
+        font-size: 0.7em; color: var(--text-meta); white-space: nowrap;
+        background: var(--bg-editable); padding: 2px 8px; border-radius: 999px;
+        display: inline-flex; align-items: center; gap: 4px;
+    }
+    .story-list-meta-line i { font-size: 0.95em; opacity: 0.7; }
     .story-list-right { display: flex; align-items: center; gap: 10px; }
     .story-list-date { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; }
     .story-list-del { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
     .story-list-del:hover { color: #dc2626; background-color: rgba(220,38,38,0.1); }
+    .story-list-retry { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
+    .story-list-retry:hover { color: #16a34a; background-color: rgba(22,163,74,0.1); }
+    .story-list-item.is-generating, .story-list-item.is-failed { cursor: default; }
+    .story-list-item.is-generating:hover, .story-list-item.is-failed:hover { border-color: var(--border-input); }
+    .story-list-item.is-generating { opacity: 0.75; }
+    .story-list-status-line { font-size: 0.72em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .story-list-item.is-generating .story-list-status-line { color: var(--color-success); }
+    .story-list-item.is-failed { border-style: dashed; opacity: 0.8; }
+    .story-list-item.is-failed .story-list-status-line { color: #dc2626; }
     .story-card { margin-bottom: 16px; }
     .story-card .word-details { display: block; }
 
@@ -586,19 +648,24 @@
 <div class="controls-container">
     <div id="sortControls">
         <input type="text" id="searchInput" placeholder="Search words..." autocomplete="off">
-        <button id="sortByDateBtn" class="sort-btn active">Updated</button>
-        <button id="sortByCreatedBtn" class="sort-btn">Created</button>
-        <button id="sortByEncountersBtn" class="sort-btn">Encounters</button>
-        <button id="sortByIdBtn" class="sort-btn">ID</button>
+        <select id="sortSelect" class="sort-select" title="Sort by">
+            <option value="updatedAt">Updated</option>
+            <option value="createdAt">Created</option>
+            <option value="encounters">Encounters</option>
+            <option value="word">Word (A-Z)</option>
+            <option value="id">ID</option>
+        </select>
+        <button id="sortOrderBtn" class="sort-btn" title="Toggle ascending/descending"><i class="fa-solid fa-arrow-down-wide-short"></i></button>
         <div class="add-word-group">
             <input type="text" id="newWordInput" placeholder="Add new word..." autocomplete="off">
             <button id="addWordBtn" onclick="addWord()">Add</button>
         </div>
         <span id="wordCount"></span>
-        <div class="export-group">
-            <input type="number" id="csvLimitInput" min="1" step="1" value="20" title="Number of top words to copy">
-            <button id="copyCsvBtn" title="Copy top words as CSV"><i class="fa-solid fa-copy"></i> Copy</button>
-        </div>
+        <button id="meaningsModelToolbarBtn" class="sort-btn" title="Meanings model: Default"
+                onclick="openMeaningsModelModal()" style="display:none;">
+            <i class="fa-solid fa-robot"></i>
+            <span id="meaningsModelToolbarLabel">Model</span>
+        </button>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
             <div id="volumePopup">
@@ -608,6 +675,42 @@
         </div>
         <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
         <button id="viewToggleBtn" class="sort-btn" title="Toggle Words / Stories view"><i class="fa-solid fa-book-open"></i> Stories</button>
+    </div>
+</div>
+
+<div id="modelPickerModalOverlay" class="modal-overlay">
+    <div class="modal model-picker-modal">
+        <div class="modal-header">
+            <h3>Meanings model (OpenRouter)</h3>
+            <button id="closeModelPickerBtn" class="modal-close" title="Close">&times;</button>
+        </div>
+        <div class="model-picker-body">
+            <div class="model-picker-current" id="meaningsCurrentBar">
+                <span class="model-picker-current-label">Currently using</span>
+                <span class="model-picker-current-chip" id="meaningsCurrentChip">
+                    <i class="fa-solid fa-circle-check"></i>
+                    <span id="meaningsCurrentName">Default</span>
+                </span>
+                <span class="model-picker-current-id" id="meaningsCurrentId"></span>
+            </div>
+            <div class="model-picker-default-row" id="meaningsDefaultRow" title="Click to use the default model">
+                <span class="model-picker-default-icon"><i class="fa-solid fa-circle-half-stroke"></i></span>
+                <span class="model-picker-default-name" id="meaningsDefaultName">Default model</span>
+                <span class="model-picker-default-id" id="meaningsDefaultId"></span>
+                <span class="model-picker-default-tag" id="meaningsDefaultTag"></span>
+            </div>
+            <div class="model-ac model-picker-ac">
+                <input type="text" id="meaningsModelInput" class="model-ac-input" placeholder="Filter by name or id…" autocomplete="off" title="Filter models">
+            </div>
+            <div id="meaningsModelListWrap" class="model-picker-list-wrap">
+                <div id="meaningsModelList" class="model-ac-list model-picker-list"></div>
+            </div>
+            <div class="model-picker-empty" id="meaningsModelEmpty" style="display:none;">No models match your filter.</div>
+            <input type="text" id="meaningsModelCustom" class="model-custom" placeholder="custom model id (e.g. deepseek/deepseek-v4-flash-0731)" style="display:none; margin-top:8px;">
+        </div>
+        <div class="modal-footer model-picker-actions">
+            <button id="meaningsModelDoneBtn" class="sort-btn">Done</button>
+        </div>
     </div>
 </div>
 
@@ -641,6 +744,11 @@
                     <option value="2">2x</option>
                 </select>
             </label>
+            <div class="story-volume" title="Volume">
+                <button id="storyModalVolBtn" class="sort-btn" title="Mute/Unmute"><i class="fa-solid fa-volume-high"></i></button>
+                <input type="range" id="storyModalVolume" min="0" max="1" step="0.05" value="1" title="Volume">
+                <span id="storyModalVolLabel">100%</span>
+            </div>
             <button id="storyModalStop" class="sort-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
         </div>
         <div class="modal-actions">
@@ -670,13 +778,11 @@
       <input type="text" id="filterMax" placeholder="to (#)" title="Result end, e.g. 100">
       <button id="applyFilterBtn" class="sort-btn">Show</button>
       <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
+      <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" style="display:none;">Unselect all</button>
+      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results">Clear results</button>
+      <span id="selCount" class="sel-count" style="margin-left: 8px; font-size: 0.8em; color: var(--text-meta);"></span>
     </div>
     <div id="filterResults" class="filter-results"></div>
-    <div class="gen-selected">
-      <span class="sel-label">Selected (<span id="selCount">0</span>):</span>
-      <button id="clearSelBtn" class="sort-btn">Clear</button>
-      <div id="selectedChips" class="chips"></div>
-    </div>
     <div class="gen-actions">
       <input type="text" id="storyTitle" placeholder="Optional title">
       <div class="model-ac">
@@ -710,7 +816,8 @@ function showToast(msg) {
 }
 const turndownService = new TurndownService();
 let socket = null;
-let currentSort = 'updatedAt';
+let currentSort = localStorage.getItem('wordSortBy') || 'updatedAt';
+let currentOrder = localStorage.getItem('wordSortOrder') || 'desc';
 let allWords = [];
 let pendingAutoPlay = null;
 
@@ -725,16 +832,21 @@ async function addWord() {
 
   try {
     pendingAutoPlay = word;
+    const body = { word };
+    if (typeof window.isOpenRouter !== 'undefined' ? window.isOpenRouter : true) {
+      const m = resolveModelFor(meaningsCtx) || null;
+      if (m) body.meanings_model = m;
+    }
     const res = await fetch('/api/word', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word })
+      body: JSON.stringify(body)
     });
     if (res.ok) {
       const data = await res.json();
       input.value = '';
       showToast(data.message);
-      await fetchData(currentSort);
+      await fetchData(currentSort, currentOrder);
       autoPlayMeaning(word);
       pendingAutoPlay = null;
     } else {
@@ -763,7 +875,7 @@ function connectWebSocket() {
                 const match = message.match(/'([^']+)'/);
                 if (match) wordToPlay = match[1];
             }
-            await fetchData(currentSort);
+            await fetchData(currentSort, currentOrder);
             // Skip if this is the local tab's own word (already handled by addWord)
             if (wordToPlay && wordToPlay !== pendingAutoPlay) {
                 autoPlayMeaning(wordToPlay);
@@ -775,6 +887,38 @@ function connectWebSocket() {
             }
             // Refresh word badges too (story links may have changed).
             fetch('/api/story_counts').then(r => r.json()).then(c => { wordStoryCounts = c; applySearch(); }).catch(() => {});
+        } else if (event.data.startsWith("story_audio_progress")) {
+            const body = event.data.slice("story_audio_progress:".length);
+            const [sid, pct] = body.split(':');
+            if (pendingStoryAudio && String(pendingStoryAudio.id) === sid && pendingStoryAudio.btn) {
+                pendingStoryAudio.btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating ${pct}%`;
+            }
+        } else if (event.data.startsWith("story_audio_ready")) {
+            const sid = event.data.slice("story_audio_ready:".length);
+            if (pendingStoryAudio && String(pendingStoryAudio.id) === sid) {
+                const btn = pendingStoryAudio.btn;
+                pendingStoryAudio = null;
+                readStoryById(parseInt(sid, 10), btn);
+            }
+        } else if (event.data.startsWith("story_audio_error")) {
+            const sid = event.data.slice("story_audio_error:".length);
+            if (pendingStoryAudio && String(pendingStoryAudio.id) === sid) {
+                const btn = pendingStoryAudio.btn;
+                pendingStoryAudio = null;
+                btn.disabled = false;
+                if (btn.dataset.icon) btn.innerHTML = btn.dataset.icon;
+                else btn.innerHTML = '<i class="fa-solid fa-volume-up"></i>';
+                alert('Audio generation failed. Check the server logs.');
+            }
+        } else if (event.data.startsWith("story_ready") || event.data.startsWith("story_error")) {
+            // Background story generation finished (or failed). Refresh the
+            // list so the placeholder swaps for the real story. This also
+            // covers clients that reconnected after a page refresh.
+            const panel = document.getElementById('storiesPanel');
+            if (panel.style.display !== 'none') {
+                loadStories();
+            }
+            if (event.data.startsWith("story_error")) showToast('A story failed to generate.');
         }
     };
     socket.onclose = () => setTimeout(connectWebSocket, 5000);
@@ -869,6 +1013,7 @@ function stripMarkdown(md) {
 
 let currentAudio = null;
 let currentBtn = null;
+let pendingStoryAudio = null;    // { id, btn } while background TTS is generating
 const ttsCache = new Map();      // text -> object URL (in-memory audio cache)
 const TTS_CACHE_MAX = 100;
 
@@ -1017,8 +1162,8 @@ function renderGrid(data) {
               const escAttr = s => s.replace(/"/g, '&quot;');
               const createdAt = wordItem.dataset.createdat || '';
               const updatedAt = wordItem.dataset.updatedat || '';
-              const createdDate = createdAt ? new Date(createdAt.replace(' ', 'T') + 'Z').toLocaleString('en-US', dateOptions) : 'N/A';
-              const updatedDate = updatedAt ? new Date(updatedAt.replace(' ', 'T') + 'Z').toLocaleString('en-US', dateOptions) : 'N/A';
+              const createdDate = createdAt ? formatDateTime(createdAt) : 'N/A';
+              const updatedDate = updatedAt ? formatDateTime(updatedAt) : 'N/A';
               details.innerHTML = `
                 <div class="detail-section">
                     <div class="section-header">
@@ -1050,7 +1195,9 @@ function renderGrid(data) {
                 <div class="detail-section">
                     <h4>Metadata</h4>
                     <div class="metadata">
-                        ID: ${wordItem.dataset.id} | Created: ${createdDate} | Updated: ${updatedDate}
+                        <span><strong>ID:</strong> ${wordItem.dataset.id}</span>
+                        <span><strong>Created:</strong> ${createdDate}</span>
+                        <span><strong>Updated:</strong> ${updatedDate}</span>
                     </div>
                 </div>
                 <button class="story-button" data-id="${wordItem.dataset.id}" title="View stories for this word"><i class="fa-solid fa-book"></i> Stories${wordStoryCounts[wordItem.dataset.id] ? ` (${wordStoryCounts[wordItem.dataset.id]})` : ''}</button>
@@ -1064,20 +1211,34 @@ function renderGrid(data) {
   });
 }
 
+function updateSortOrderBtn() {
+    const btn = document.getElementById('sortOrderBtn');
+    if (!btn) return;
+    const isAsc = currentOrder === 'asc';
+    btn.innerHTML = isAsc
+        ? '<i class="fa-solid fa-arrow-up-wide-short"></i>'
+        : '<i class="fa-solid fa-arrow-down-wide-short"></i>';
+    btn.title = isAsc ? 'Ascending — click for descending' : 'Descending — click for ascending';
+}
+
 function applySearch() {
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
   const filtered = query ? allWords.filter(w => w.word.toLowerCase().includes(query)) : allWords;
   renderGrid(filtered);
 }
 
-function fetchData(sortBy = 'updatedAt') {
+function fetchData(sortBy = currentSort, order = currentOrder) {
   if (currentlyEditing) {
     console.log("Skipping fetch because a cell is being edited.");
     return Promise.resolve();
   }
   currentSort = sortBy;
-  console.log(`Fetching data, sorting by: ${sortBy}`);
-  return fetch(`/api/words?sort_by=${sortBy}`)
+  currentOrder = order;
+  localStorage.setItem('wordSortBy', sortBy);
+  localStorage.setItem('wordSortOrder', order);
+  updateSortOrderBtn();
+  console.log(`Fetching data, sorting by: ${sortBy} ${order}`);
+  return fetch(`/api/words?sort_by=${sortBy}&order=${order}`)
     .then(res => {
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return res.json();
@@ -1094,32 +1255,6 @@ function fetchData(sortBy = 'updatedAt') {
     .catch(err => console.error('Fetch error:', err));
 }
 
-async function copyTopWordsCSV() {
-    if (!allWords.length) { showToast('No words to copy'); return; }
-    const raw = parseInt(document.getElementById('csvLimitInput').value, 10);
-    const limit = Math.max(1, isNaN(raw) ? allWords.length : raw);
-    const topWords = allWords.slice(0, limit).map(w => w.word);
-    const csv = ['word', ...topWords].join('\n');
-    try {
-        if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(csv);
-        } else {
-            const ta = document.createElement('textarea');
-            ta.value = csv;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-        }
-        showToast(`Copied ${topWords.length} word${topWords.length !== 1 ? 's' : ''} as CSV`);
-    } catch (e) {
-        console.error('Clipboard copy failed:', e);
-        alert('Failed to copy to clipboard: ' + e.message);
-    }
-}
-
 // --- Story modal ---
 let currentModalStoryId = null;
 
@@ -1127,7 +1262,25 @@ function formatDate(ts) {
   if (!ts) return '';
   const d = new Date(String(ts).replace(' ', 'T') + 'Z');
   if (isNaN(d.getTime())) return ts;
-  return d.toLocaleString();
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
+}
+
+function formatDateTime(ts) {
+  if (!ts) return '';
+  const d = new Date(String(ts).replace(' ', 'T') + 'Z');
+  if (isNaN(d.getTime())) return ts;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 }
 
 function formatDuration(ms) {
@@ -1145,6 +1298,12 @@ function stripStoryLabels(text) {
   return t.trim();
 }
 
+function countStoryChars(content) {
+  // Count the actual story prose (excluding the "Title:"/"Story:" labels),
+  // including spaces — a standard character count.
+  return stripStoryLabels(content || '').length;
+}
+
 async function openStoryModal(id) {
   currentModalStoryId = id;
   stopAudio();
@@ -1156,13 +1315,31 @@ async function openStoryModal(id) {
     document.getElementById('storyModalTitle').textContent = s.title || 'Untitled';
     document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
     const metaEl = document.getElementById('storyModalMeta');
-    const metaParts = [];
-    if (s.model) metaParts.push(s.model.replace(/^.*\//, ''));
+    metaEl.className = 'story-list-meta';
+    metaEl.style.borderBottom = '1px solid var(--border-details)';
+    metaEl.style.paddingBottom = '6px';
+    metaEl.style.marginBottom = '8px';
+    metaEl.innerHTML = '';
+    const addMeta = (icon, text) => {
+      const span = document.createElement('span');
+      span.className = 'story-list-meta-line';
+      if (icon) {
+        const i = document.createElement('i');
+        i.className = icon;
+        span.appendChild(i);
+      }
+      span.appendChild(document.createTextNode(' ' + text));
+      metaEl.appendChild(span);
+    };
+    const chars = countStoryChars(s.content);
+    if (chars > 0) addMeta('fa-solid fa-font', `${chars.toLocaleString()} chars`);
+    if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
+    if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
     const dur = formatDuration(s.duration_ms);
-    if (dur) metaParts.push(dur);
-    if (s.cost != null) metaParts.push(s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
-    if (metaParts.length) {
-      metaEl.textContent = metaParts.join(' · ');
+    if (dur) addMeta('fa-solid fa-stopwatch', dur);
+    const dateStr = formatDate(s.createdAt);
+    if (dateStr) addMeta('fa-solid fa-calendar', dateStr);
+    if (metaEl.childElementCount) {
       metaEl.style.display = '';
     } else {
       metaEl.style.display = 'none';
@@ -1186,6 +1363,23 @@ function closeStoryModal() {
   document.getElementById('storyModalOverlay').classList.remove('open');
   stopAudio();
   hideStoryPlayer();
+}
+
+// --- Meanings model picker modal ---
+function openMeaningsModelModal() {
+  // Reset filter so the user sees the full catalogue, then render.
+  const input = document.getElementById(meaningsCtx.inputId);
+  if (input) input.value = '';
+  renderModelListFor(meaningsCtx, '');
+  updateMeaningsDefaultRow();
+  updateMeaningsCurrentBar();
+  document.getElementById('modelPickerModalOverlay').classList.add('open');
+  // Focus the filter so the user can start typing immediately.
+  if (input) setTimeout(() => input.focus(), 0);
+}
+
+function closeMeaningsModelModal() {
+  document.getElementById('modelPickerModalOverlay').classList.remove('open');
 }
 
 function formatTime(sec) {
@@ -1299,6 +1493,7 @@ function renderFilterResults(data) {
     cb.addEventListener('change', () => {
       if (cb.checked) selectedWords.add(w.word); else selectedWords.delete(w.word);
       renderChips();
+      updateSelectToggleUI();
     });
     const meta = document.createElement('span');
     meta.className = 'filter-meta';
@@ -1308,88 +1503,87 @@ function renderFilterResults(data) {
     label.appendChild(meta);
     box.appendChild(label);
   });
+  updateSelectToggleUI();
 }
 
 function renderChips() {
-  const box = document.getElementById('selectedChips');
-  box.innerHTML = '';
-  document.getElementById('selCount').textContent = selectedWords.size;
-  selectedWords.forEach(word => {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.textContent = word + ' ×';
-    chip.title = 'Remove';
-    chip.onclick = () => {
-      selectedWords.delete(word);
-      // uncheck in results if visible
-      document.querySelectorAll('#filterResults .filter-item').forEach(li => {
-        if (li.textContent.trim().replace('×','').trim().endsWith(word) || li.textContent.includes(word)) {}
-      });
-      renderFilterResultsFromDom();
-      renderChips();
-    };
-    box.appendChild(chip);
-  });
+  // Just update the count; deselect by unchecking items in filter results.
+  document.getElementById('selCount').textContent =
+    selectedWords.size ? `Selected: ${selectedWords.size}` : '';
 }
 
-// Re-render result checkboxes to reflect current selection (after chip removal).
-function renderFilterResultsFromDom() {
-  document.querySelectorAll('#filterResults .filter-item').forEach(li => {
-    li.querySelector('input').checked = selectedWords.has(li.dataset.word);
-  });
-}
-
-// --- OpenRouter model picker (free + paid, price-sorted). Last choice persisted in localStorage. ---
+// --- OpenRouter model picker (full live catalogue via backend proxy). Last choice persisted in localStorage. ---
 let ALL_MODELS = [];
-const STATIC_MODELS = [
-  { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "Nemotron 3 Super 120B", rec: true },
-  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731", pIn: 0.0786, pOut: 0.1572 },
-  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra 550B" },
-  { id: "nvidia/nemotron-3-nano-30b-a3b:free", name: "Nemotron 3 Nano 30B" },
-  { id: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron 3.5 Lightning" },
-  { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B" },
-  { id: "google/gemma-4-26b-a4b-it:free", name: "Gemma 4 26B" },
-  { id: "dots-studio/dots-3-note-preview:free", name: "Dots 3 Note Preview" },
-  { id: "liquid/lfm-2.5-2.6b:free", name: "LFM 2.5 2.6B" },
-  { id: "poolside/laguna-s-2.1:free", name: "Poolside Laguna S 2.1" },
-];
+let modelsLoading = false;
+let modelsError = null;
 
 let storyModelSelection = "";  // committed id: "" = Default, "__custom__", or a model id
+let _serverConfig = {};  // from GET /api/config — DB-backed model selections
 
 async function populateModelSelect() {
-  let apiList = [];
-  // Best-effort live refresh from OpenRouter's public models list (free + paid).
+  if (modelsLoading) return;
+  modelsLoading = true;
+  modelsError = null;
+  refreshModelACIfOpen();
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/models', { headers: { 'Accept': 'application/json' } });
-    if (res.ok) {
-      const data = await res.json();
-      apiList = data.data || [];
+    const res = await fetch('/api/openrouter/models');
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${res.status}`);
     }
-  } catch (e) { /* offline: keep curated list */ }
-
-  ALL_MODELS = buildModelMaster(STATIC_MODELS, apiList);
-  restoreStoryModel();
+    const data = await res.json();
+    const list = (data.models || []).map(m => makeModel(
+      m.id,
+      m.name || m.id,
+      ((m.pricing && m.pricing.prompt) || 0) * 1e6,
+      ((m.pricing && m.pricing.completion) || 0) * 1e6
+    ));
+    // Cheapest first (free = 0).
+    list.sort((a, b) => a.price - b.price);
+    ALL_MODELS = list;
+  } catch (e) {
+    modelsError = e.message || 'Failed to load models';
+  } finally {
+    modelsLoading = false;
+    restoreStoryModel();
+    refreshModelACIfOpen();
+    // Also restore the new meanings picker (defined below) once the
+    // catalogue is ready. Done after restoreStoryModel to keep the
+    // existing call order intact.
+    if (typeof restoreModelFor === 'function') {
+      for (const ctx of (typeof modelPickers !== 'undefined' ? modelPickers : [])) {
+        restoreModelFor(ctx);
+        _refreshACIfOpen(ctx);
+      }
+    }
+    // Now that ALL_MODELS is populated, refresh the Default model row so
+    // the human name + free/paid tag appear.
+    if (typeof _fillDefaultModelInfo === 'function') {
+      _fillDefaultModelInfo();
+      if (typeof updateMeaningsDefaultRow === 'function') updateMeaningsDefaultRow();
+      if (typeof updateMeaningsCurrentBar === 'function') updateMeaningsCurrentBar();
+    }
+  }
 }
 
-// Build the master list of selectable models from curated + live API, with price tags.
-function buildModelMaster(staticList, apiList) {
-  const seen = new Set();
-  const out = [];
-  staticList.forEach(m => {
-    seen.add(m.id);
-    out.push(makeModel(m.id, m.name, m.pIn || 0, m.pOut || 0, m.rec));
-  });
-  (apiList || []).forEach(m => {
-    if (!seen.has(m.id)) {
-      seen.add(m.id);
-      const p = m.pricing || {};
-      const pIn = parseFloat(p.prompt || '0') * 1e6;
-      const pOut = parseFloat(p.completion || '0') * 1e6;
-      out.push(makeModel(m.id, m.name || m.id, pIn, pOut, false));
-    }
-  });
-  // Cheapest first (free = 0).
-  return out.sort((a, b) => a.price - b.price);
+function retryLoadModels() { populateModelSelect(); }
+
+// Re-render the dropdown if it is currently visible.
+function refreshModelACIfOpen() {
+  const list = document.getElementById('storyModelList');
+  if (list && list.style.display !== 'none') {
+    renderModelAC(document.getElementById('storyModelInput').value);
+  }
+}
+
+// Display label for a dropdown row when navigating with the keyboard.
+// Uses the human-readable name (or the first child textContent) and falls back
+// to the raw textContent for single-line rows.
+function _rowLabel(row) {
+  if (!row) return '';
+  const nameEl = row.querySelector('.model-ac-name');
+  if (nameEl) return nameEl.textContent;
+  return row.textContent;
 }
 
 // Normalize a model entry into { id, label, price } with a human-readable price tag.
@@ -1401,24 +1595,67 @@ function makeModel(id, name, pIn, pOut, rec) {
   let label = name;
   if (tags.length) label += ` (${tags.join(', ')})`;
   if (!free) label += ` · $${pIn.toFixed(3)}/$${pOut.toFixed(3)} per 1M`;
-  return { id, label, price: pIn + pOut };
+  return { id, label, price: pIn + pOut, pIn, pOut };
 }
 
 // Render the autocomplete dropdown filtered by query.
 function renderModelAC(query) {
   const list = document.getElementById('storyModelList');
   const q = (query || '').trim().toLowerCase();
+  let statusItems = [];
+  if (modelsLoading) {
+    statusItems = [{ id: '__loading__', label: 'Loading models…', pseudo: true }];
+  } else if (modelsError && !ALL_MODELS.length) {
+    statusItems = [{ id: '__retry__', label: '\u26a0 Failed to load models \u2014 click to retry', pseudo: true }];
+  }
   const matches = ALL_MODELS.filter(m =>
     !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
   ).slice(0, 60);
-  const items = [{ id: '', label: 'Default model' }, ...matches, { id: '__custom__', label: 'Custom…' }];
+  const items = [{ id: '', label: 'Default model' }, ...statusItems, ...matches, { id: '__custom__', label: 'Custom…' }];
   list.innerHTML = '';
   items.forEach(it => {
     const div = document.createElement('div');
-    div.className = 'model-ac-item' + (it.id === storyModelSelection ? ' selected' : '');
-    div.textContent = it.label;
+    div.className = 'model-ac-item' + (it.pseudo ? ' model-ac-pseudo' : '') + (it.id === storyModelSelection ? ' selected' : '');
     div.dataset.id = it.id;
-    div.addEventListener('mousedown', (e) => { e.preventDefault(); selectModelAC(it.id); });
+    if (it.id && it.id !== '__custom__' && it.id !== '__loading__' && it.id !== '__retry__') {
+      const m = ALL_MODELS.find(x => x.id === it.id);
+      if (m) {
+        const name = document.createElement('span');
+        name.className = 'model-ac-name';
+        name.textContent = m.label.split(' (')[0];
+        div.appendChild(name);
+        const idEl = document.createElement('span');
+        idEl.className = 'model-ac-id';
+        idEl.textContent = m.id;
+        div.appendChild(idEl);
+        const tags = document.createElement('span');
+        tags.className = 'model-ac-tags';
+        const free = m.price <= 0;
+        const t = document.createElement('span');
+        t.className = 'model-ac-tag' + (free ? ' free' : '');
+        t.textContent = free
+          ? 'free'
+          : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+        tags.appendChild(t);
+        if (it.id === storyModelSelection) {
+          const ck = document.createElement('span');
+          ck.className = 'model-ac-tag recommended';
+          ck.textContent = '\u2713';
+          ck.title = 'Currently selected';
+          tags.appendChild(ck);
+        }
+        div.appendChild(tags);
+      } else {
+        div.textContent = it.label;
+      }
+    } else {
+      div.textContent = it.label;
+    }
+    if (it.id === '__retry__') {
+      div.addEventListener('mousedown', (e) => { e.preventDefault(); retryLoadModels(); });
+    } else if (!it.pseudo) {
+      div.addEventListener('mousedown', (e) => { e.preventDefault(); selectModelAC(it.id); });
+    }
     div.addEventListener('mouseenter', () => {
       list.querySelectorAll('.model-ac-item').forEach(x => x.classList.remove('kb-active'));
       div.classList.add('kb-active');
@@ -1429,11 +1666,13 @@ function renderModelAC(query) {
 }
 
 function selectModelAC(id) {
+  if (id === '__loading__' || id === '__retry__') return;
   storyModelSelection = id;
-  localStorage.setItem('lastStoryModel', id);
+  // Persist to DB (single source of truth for all clients / WebSocket sync).
+  fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ story_model: id }) }).catch(() => {});
   const custom = document.getElementById('storyModelCustom');
   if (id === '__custom__') {
-    custom.value = localStorage.getItem('lastStoryModelCustom') || '';
+    custom.value = '';
     custom.style.display = '';
   } else {
     custom.style.display = 'none';
@@ -1466,12 +1705,424 @@ function resolveStoryModel() {
 }
 
 function restoreStoryModel() {
-  const saved = localStorage.getItem('lastStoryModel');
+  const saved = _serverConfig.story_model || null;
   if (saved) storyModelSelection = saved;
   if (storyModelSelection === '__custom__') {
-    document.getElementById('storyModelCustom').value = localStorage.getItem('lastStoryModelCustom') || '';
+    document.getElementById('storyModelCustom').value = _serverConfig.story_model_custom || '';
   }
   syncModelInputToSelection();
+}
+
+// --- Generalized model-picker (used for the meanings picker modal) ---
+// Mirrors the story-picker above but takes a `ctx` object so the same code
+// can drive multiple pickers against the same ALL_MODELS catalogue.
+// A ctx is { inputId, listId, customId, storageKey, customStorageKey,
+//             selection, onChange? }.
+
+const modelPickers = [];
+
+// Re-render the picker if it is currently visible. The meanings picker uses
+// an always-visible list (renderModelListFor); the inline story dropdown uses
+// the old dropdown renderer (renderModelACFor). Pick based on the modal
+// context the list lives in.
+function _refreshACIfOpen(ctx) {
+  const list = document.getElementById(ctx.listId);
+  if (!list) return;
+  const input = document.getElementById(ctx.inputId);
+  if (list.closest('.model-picker-modal')) {
+    renderModelListFor(ctx, input ? input.value : '');
+  } else if (list.style.display !== 'none') {
+    renderModelACFor(ctx, input ? input.value : '');
+  }
+}
+
+// Render the always-visible list used by the meanings picker modal.
+// The list is filtered by `query` (matches against the human name and the
+// model id, case-insensitive) and is never hidden — it stays in the DOM
+// between renders so scrolling position is preserved.
+function renderModelListFor(ctx, query) {
+  const list = document.getElementById(ctx.listId);
+  const empty = document.getElementById('meaningsModelEmpty');
+  if (!list) return;
+  const q = (query || '').trim().toLowerCase();
+  const matches = q
+    ? ALL_MODELS.filter(m => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+    : ALL_MODELS.slice();
+
+  list.innerHTML = '';
+
+  if (modelsLoading && !ALL_MODELS.length) {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item model-ac-pseudo';
+    div.textContent = 'Loading models…';
+    list.appendChild(div);
+    if (empty) empty.style.display = 'none';
+    return;
+  }
+  if (modelsError && !ALL_MODELS.length) {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item model-ac-pseudo';
+    div.textContent = '⚠ Failed to load models — click to retry';
+    div.addEventListener('mousedown', (e) => { e.preventDefault(); retryLoadModels(); });
+    list.appendChild(div);
+    if (empty) empty.style.display = 'none';
+    return;
+  }
+
+  if (!matches.length) {
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  matches.forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item' + (m.id === ctx.selection ? ' selected' : '');
+    div.dataset.id = m.id;
+    const name = document.createElement('span');
+    name.className = 'model-ac-name';
+    name.textContent = m.label.split(' (')[0];
+    div.appendChild(name);
+    const idEl = document.createElement('span');
+    idEl.className = 'model-ac-id';
+    idEl.textContent = m.id;
+    div.appendChild(idEl);
+    const tags = document.createElement('span');
+    tags.className = 'model-ac-tags';
+    const free = m.price <= 0;
+    const t = document.createElement('span');
+    t.className = 'model-ac-tag' + (free ? ' free' : '');
+    t.textContent = free
+      ? 'free'
+      : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+    tags.appendChild(t);
+    if (m.id === ctx.selection) {
+      const ck = document.createElement('span');
+      ck.className = 'model-ac-tag recommended';
+      ck.textContent = '\u2713';
+      ck.title = 'Currently selected';
+      tags.appendChild(ck);
+    }
+    div.appendChild(tags);
+    div.addEventListener('click', () => selectModelACFor(ctx, m.id));
+    list.appendChild(div);
+  });
+}
+
+// Re-render the autocomplete dropdown filtered by query. (Used for the
+// inline story-model dropdown — the meanings picker uses renderModelListFor
+// instead so its list is always visible.)
+function renderModelACFor(ctx, query) {
+  const list = document.getElementById(ctx.listId);
+  const q = (query || '').trim().toLowerCase();
+  let statusItems = [];
+  if (modelsLoading) {
+    statusItems = [{ id: '__loading__', label: 'Loading models…', pseudo: true }];
+  } else if (modelsError && !ALL_MODELS.length) {
+    statusItems = [{ id: '__retry__', label: '⚠ Failed to load models — click to retry', pseudo: true }];
+  }
+  const matches = ALL_MODELS.filter(m =>
+    !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+  ).slice(0, 60);
+  const items = [{ id: '', label: 'Default model' }, ...statusItems, ...matches, { id: '__custom__', label: 'Custom…' }];
+  list.innerHTML = '';
+  items.forEach(it => {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item' + (it.pseudo ? ' model-ac-pseudo' : '') + (it.id === ctx.selection ? ' selected' : '');
+    div.dataset.id = it.id;
+    if (it.id && it.id !== '__custom__' && it.id !== '__loading__' && it.id !== '__retry__') {
+      const m = ALL_MODELS.find(x => x.id === it.id);
+      if (m) {
+        const name = document.createElement('span');
+        name.className = 'model-ac-name';
+        name.textContent = m.label.split(' (')[0];
+        div.appendChild(name);
+        const idEl = document.createElement('span');
+        idEl.className = 'model-ac-id';
+        idEl.textContent = m.id;
+        div.appendChild(idEl);
+        const tags = document.createElement('span');
+        tags.className = 'model-ac-tags';
+        const free = m.price <= 0;
+        const t = document.createElement('span');
+        t.className = 'model-ac-tag' + (free ? ' free' : '');
+        t.textContent = free
+          ? 'free'
+          : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+        tags.appendChild(t);
+        if (it.id === ctx.selection) {
+          const t = document.createElement('span');
+          t.className = 'model-ac-tag recommended';
+          t.textContent = '\u2713';
+          t.title = 'Currently selected';
+          tags.appendChild(t);
+        }
+        div.appendChild(tags);
+      } else {
+        div.textContent = it.label;
+      }
+    } else {
+      div.textContent = it.label;
+    }
+    if (it.id === '__retry__') {
+      div.addEventListener('mousedown', (e) => { e.preventDefault(); retryLoadModels(); });
+    } else if (!it.pseudo) {
+      div.addEventListener('mousedown', (e) => { e.preventDefault(); selectModelACFor(ctx, it.id); });
+    }
+    div.addEventListener('mouseenter', () => {
+      list.querySelectorAll('.model-ac-item').forEach(x => x.classList.remove('kb-active'));
+      div.classList.add('kb-active');
+    });
+    list.appendChild(div);
+  });
+  list.style.display = items.length ? 'block' : 'none';
+  if (list.parentElement && list.parentElement.classList.contains('model-picker-list-wrap')) {
+    list.parentElement.style.display = items.length ? 'block' : 'none';
+  }
+}
+
+function selectModelACFor(ctx, id) {
+  if (id === '__loading__' || id === '__retry__') return;
+  ctx.selection = id;
+  // Persist to DB (single source of truth for all clients / WebSocket sync).
+  const payload = {};
+  if (ctx.storageKey === 'lastMeaningsModel') payload.meanings_model = id;
+  else payload.story_model = id;
+  fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(() => {});
+  const custom = document.getElementById(ctx.customId);
+  if (id === '__custom__') {
+    custom.value = '';
+    custom.style.display = '';
+  } else {
+    custom.style.display = 'none';
+  }
+  if (typeof ctx.onChange === 'function') ctx.onChange();
+  _syncModelInputFor(ctx);
+  // If this ctx is the always-visible meanings list, refresh it in place so
+  // the ✓ checkmark moves to the newly selected row, and update the Default
+  // row's selected state. Otherwise (story picker) hide the dropdown.
+  const list = document.getElementById(ctx.listId);
+  if (list && list.closest('.model-picker-modal')) {
+    const input = document.getElementById(ctx.inputId);
+    renderModelListFor(ctx, input ? input.value : '');
+    updateMeaningsDefaultRow();
+  } else {
+    _hideModelListFor(ctx);
+  }
+}
+
+// Populate the "Default model" row with the actual default id (fetched from
+// /api/config). If the catalogue already has the model, we show the human
+// name and the free/paid tag; otherwise we fall back to the raw id.
+let _meaningsDefaultId = null;
+// Human-readable name + tooltip for OpenRouter's built-in router slugs
+// (anything starting with `openrouter/` that isn't itself in the catalogue).
+const _OPENROUTER_ROUTER_LABELS = {
+  'openrouter/free': {
+    name: 'Free models router',
+    tag: 'free',
+    title: 'OpenRouter auto-selects a free-tier model for each request',
+  },
+  'openrouter/auto': {
+    name: 'Auto router (may use paid models)',
+    tag: 'auto',
+    title: 'OpenRouter picks any model per request; may incur charges',
+  },
+};
+function _routerLabel(id) {
+  return _OPENROUTER_ROUTER_LABELS[id] || null;
+}
+function _fillDefaultModelInfo() {
+  const idEl = document.getElementById('meaningsDefaultId');
+  const nameEl = document.getElementById('meaningsDefaultName');
+  const tag = document.getElementById('meaningsDefaultTag');
+  if (!idEl || !nameEl || !tag) return;
+  const id = _meaningsDefaultId || '';
+  idEl.textContent = id;
+  const m = ALL_MODELS.find(x => x.id === id);
+  const router = _routerLabel(id);
+  if (m) {
+    nameEl.textContent = m.label.split(' (')[0];
+  } else if (router) {
+    nameEl.textContent = router.name;
+  } else if (id) {
+    nameEl.textContent = 'Default (unknown model)';
+  } else {
+    nameEl.textContent = 'Default model';
+  }
+  tag.innerHTML = '';
+  if (m) {
+    const free = m.price <= 0;
+    const t = document.createElement('span');
+    t.className = 'model-ac-tag' + (free ? ' free' : '');
+    t.textContent = free
+      ? 'free'
+      : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+    tag.appendChild(t);
+  } else if (router) {
+    const t = document.createElement('span');
+    t.className = 'model-ac-tag free';
+    t.textContent = router.tag;
+    t.title = router.title;
+    tag.appendChild(t);
+  } else if (id) {
+    const t = document.createElement('span');
+    t.className = 'model-ac-tag';
+    t.textContent = 'fallback';
+    t.title = 'Fallback openrouter/free';
+    tag.appendChild(t);
+  }
+}
+
+// Toggle the ✓/highlight on the dedicated "Default model" row, and rebuild
+// the model details (name, id, free/paid tag) since ALL_MODELS may have
+// just finished loading.
+function updateMeaningsDefaultRow() {
+  const row = document.getElementById('meaningsDefaultRow');
+  if (!row) return;
+  const isDefault = !meaningsCtx.selection;
+  row.classList.toggle('selected', isDefault);
+  const tag = document.getElementById('meaningsDefaultTag');
+  // When the row is selected, prepend a ✓ tag (in addition to the
+  // free/paid tag filled by _fillDefaultModelInfo). Otherwise just keep
+  // the existing tags.
+  if (tag) {
+    let existing = tag.innerHTML;
+    tag.innerHTML = '';
+    if (isDefault) {
+      const ck = document.createElement('span');
+      ck.className = 'model-ac-tag recommended';
+      ck.textContent = '\u2713';
+      ck.title = 'Currently selected';
+      tag.appendChild(ck);
+    }
+    // Re-append the price/free tag from a fresh lookup so the row stays
+    // accurate after catalogue updates.
+    if (_meaningsDefaultId) {
+      const m = ALL_MODELS.find(x => x.id === _meaningsDefaultId);
+      if (m) {
+        const free = m.price <= 0;
+        const t = document.createElement('span');
+        t.className = 'model-ac-tag' + (free ? ' free' : '');
+        t.textContent = free
+          ? 'free'
+          : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+        tag.appendChild(t);
+      } else {
+        // Not in the catalogue — could be an OpenRouter router slug
+        // (e.g. openrouter/free). Render its friendly tag.
+        const router = _routerLabel(_meaningsDefaultId);
+        if (router) {
+          const t = document.createElement('span');
+          t.className = 'model-ac-tag free';
+          t.textContent = router.tag;
+          t.title = router.title;
+          tag.appendChild(t);
+        }
+      }
+    }
+  }
+}
+
+function _syncModelInputFor(ctx) {
+  const input = document.getElementById(ctx.inputId);
+  const custom = document.getElementById(ctx.customId);
+  if (ctx.selection === '__custom__') {
+    input.value = 'Custom…';
+    custom.style.display = '';
+  } else if (ctx.selection === '') {
+    input.value = 'Default model';
+    custom.style.display = 'none';
+  } else {
+    const m = ALL_MODELS.find(x => x.id === ctx.selection);
+    input.value = m ? m.label : ctx.selection;
+    custom.style.display = 'none';
+  }
+}
+
+function resolveModelFor(ctx) {
+  if (ctx.selection === '__custom__') {
+    return document.getElementById(ctx.customId).value.trim() || null;
+  }
+  return ctx.selection || null;
+}
+
+function restoreModelFor(ctx) {
+  const saved = ctx.storageKey === 'lastMeaningsModel'
+    ? (_serverConfig.meanings_model || null)
+    : (_serverConfig.story_model || null);
+  if (saved) ctx.selection = saved;
+  if (ctx.selection === '__custom__') {
+    const customKey = ctx.storageKey + 'Custom';
+    document.getElementById(ctx.customId).value = _serverConfig[customKey] || '';
+  }
+  _syncModelInputFor(ctx);
+  if (typeof ctx.onChange === 'function') ctx.onChange();
+}
+
+// Meanings picker ctx — registered with the model-pickers array so any global
+// refresh (e.g. when the catalogue finishes loading) updates its display.
+const meaningsCtx = {
+  inputId: 'meaningsModelInput',
+  listId: 'meaningsModelList',
+  customId: 'meaningsModelCustom',
+  storageKey: 'lastMeaningsModel',
+  customStorageKey: 'lastMeaningsModelCustom',
+  selection: '',
+  onChange: updateMeaningsModelButtonTitle,
+};
+modelPickers.push(meaningsCtx);
+
+function updateMeaningsModelButtonTitle() {
+  const toolbarBtn = document.getElementById('meaningsModelToolbarBtn');
+  const toolbarLabel = document.getElementById('meaningsModelToolbarLabel');
+  const id = resolveModelFor(meaningsCtx) || '';
+  // Resolve a human-readable short label for the active selection so the
+  // toolbar button can show what model is actually in use.
+  let shortLabel = 'Default';
+  if (id) {
+    const m = ALL_MODELS.find(x => x.id === id);
+    const router = (typeof _routerLabel === 'function') ? _routerLabel(id) : null;
+    if (m) shortLabel = m.label.split(' (')[0];
+    else if (router) shortLabel = router.name;
+    else shortLabel = id;
+  }
+  if (toolbarBtn) {
+    toolbarBtn.title = id ? `Meanings model: ${shortLabel} (${id}) — click to change` : 'Meanings model: Default — click to change';
+  }
+  if (toolbarLabel) {
+    toolbarLabel.textContent = shortLabel.length > 22 ? shortLabel.slice(0, 21) + '\u2026' : shortLabel;
+  }
+  // Keep the "Currently using" bar in sync as well.
+  updateMeaningsCurrentBar();
+}
+
+// Update the "Currently using" bar at the top of the picker modal.
+// Resolves the active selection against ALL_MODELS / router labels so the
+// human name appears in the chip, with the raw id shown underneath.
+function updateMeaningsCurrentBar() {
+  const nameEl = document.getElementById('meaningsCurrentName');
+  const idEl = document.getElementById('meaningsCurrentId');
+  const chip = document.getElementById('meaningsCurrentChip');
+  if (!nameEl || !idEl || !chip) return;
+  const id = resolveModelFor(meaningsCtx) || '';
+  if (!id) {
+    nameEl.textContent = 'Default';
+    idEl.textContent = '';
+    chip.style.display = '';
+    return;
+  }
+  const m = ALL_MODELS.find(x => x.id === id);
+  const router = (typeof _routerLabel === 'function') ? _routerLabel(id) : null;
+  if (m) {
+    nameEl.textContent = m.label.split(' (')[0];
+  } else if (router) {
+    nameEl.textContent = router.name;
+  } else {
+    nameEl.textContent = id;
+  }
+  idEl.textContent = id;
+  chip.style.display = '';
 }
 
 async function generateStory() {
@@ -1499,12 +2150,7 @@ async function generateStory() {
     const story = await res.json();
     currentStoryId = story.id;
     status.style.display = 'block';
-    const parts = [];
-    const dur = formatDuration(story.duration_ms);
-    if (dur) parts.push(dur);
-    if (story.cost != null) parts.push(story.cost > 0 ? `$${story.cost.toFixed(5)}` : 'free');
-    const meta = parts.length ? ` (${parts.join(' · ')})` : '';
-    status.textContent = `Story generated and saved: "${story.title}"${meta}. Find it in Saved Stories below.`;
+    status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. You can safely leave or refresh this page; it will appear in Saved Stories when ready.`;
     loadStories();
     document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
@@ -1533,13 +2179,25 @@ async function readStoryById(id, btn) {
         body: JSON.stringify({ text: stripMarkdown(stripStoryLabels(story.content)), story_id: id })
       });
       if (!saveRes.ok) throw new Error('TTS failed');
-      ({ filename } = await saveRes.json());
+      const data = await saveRes.json();
+      if (data.filename) {
+        filename = data.filename;
+      } else if (data.status === 'generating') {
+        // Heavy generation now runs in the background; the WebSocket will
+        // tell us when it's ready and re-trigger playback.
+        pendingStoryAudio = { id, btn };
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating 0%';
+        return;
+      } else {
+        throw new Error('Unexpected TTS response');
+      }
     }
     btn.disabled = false;
     playAudioFile('/audio/' + filename, btn, () => { loadStories(); hideStoryPlayer(); });
     showStoryPlayer();
     const audio = currentAudio;
     if (audio) {
+      audio.loop = true;
       audio.playbackRate = parseFloat(document.getElementById('storyModalSpeed').value) || 1;
       const tick = () => {
         const seek = document.getElementById('storyModalSeek');
@@ -1580,6 +2238,20 @@ async function deleteStory(id) {
   loadStories();
 }
 
+async function retryStory(id) {
+  try {
+    const res = await fetch(`/api/stories/${id}/retry`, { method: 'POST' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Retry failed');
+    }
+    showToast(`Retrying story #${id}\u2026`);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+  loadStories();
+}
+
 async function loadStories(wordId) {
   let url = '/api/stories';
   if (wordId) url += `?word_id=${wordId}`;
@@ -1593,27 +2265,50 @@ async function loadStories(wordId) {
   }
   stories.forEach(s => {
     const item = document.createElement('div');
-    item.className = 'story-list-item';
     item.dataset.id = s.id;
+    const isGenerating = s.status === 'generating';
+    const isFailed = s.status === 'failed';
+    item.className = 'story-list-item' + (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : '');
     const titleBox = document.createElement('span');
     titleBox.className = 'story-list-title-box';
     const title = document.createElement('span');
     title.className = 'story-list-title';
     title.textContent = s.title || 'Untitled';
     titleBox.appendChild(title);
-    if (s.model || s.cost != null || s.duration_ms != null) {
+    if (isGenerating || isFailed) {
+      const statusLine = document.createElement('span');
+      statusLine.className = 'story-list-status-line';
+      if (isGenerating) {
+        statusLine.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026';
+      } else {
+        const errText = s.error || 'Generation failed';
+        const warnIcon = document.createElement('i');
+        warnIcon.className = 'fa-solid fa-triangle-exclamation';
+        statusLine.appendChild(warnIcon);
+        statusLine.appendChild(document.createTextNode(' ' + errText));
+        statusLine.title = errText;
+      }
+      titleBox.appendChild(statusLine);
+    } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0) {
       const metaBox = document.createElement('span');
       metaBox.className = 'story-list-meta';
-      const add = (text) => {
+      const add = (icon, text) => {
         const span = document.createElement('span');
         span.className = 'story-list-meta-line';
-        span.textContent = text;
+        if (icon) {
+          const i = document.createElement('i');
+          i.className = icon;
+          span.appendChild(i);
+        }
+        span.appendChild(document.createTextNode(' ' + text));
         metaBox.appendChild(span);
       };
-      if (s.model) add(s.model.replace(/^.*\//, ''));
-      if (s.cost != null) add(s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
+      const chars = countStoryChars(s.content);
+      if (chars > 0) add('fa-solid fa-font', `${chars.toLocaleString()} chars`);
+      if (s.model) add('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
+      if (s.cost != null) add('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
       const dur = formatDuration(s.duration_ms);
-      if (dur) add(dur);
+      if (dur) add('fa-solid fa-stopwatch', dur);
       titleBox.appendChild(metaBox);
     }
     const right = document.createElement('span');
@@ -1627,10 +2322,18 @@ async function loadStories(wordId) {
     del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     del.onclick = (e) => { e.stopPropagation(); deleteStory(s.id); };
     right.appendChild(date);
+    if (isFailed) {
+      const retry = document.createElement('button');
+      retry.className = 'story-list-retry';
+      retry.title = 'Retry generation';
+      retry.innerHTML = '<i class="fa-solid fa-rotate-right"></i>';
+      retry.onclick = (e) => { e.stopPropagation(); retryStory(s.id); };
+      right.appendChild(retry);
+    }
     right.appendChild(del);
     item.appendChild(titleBox);
     item.appendChild(right);
-    item.onclick = () => openStoryModal(s.id);
+    item.onclick = (isGenerating || isFailed) ? null : () => openStoryModal(s.id);
     box.appendChild(item);
   });
 }
@@ -1672,54 +2375,68 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('themeToggle').innerHTML = next === 'dark' ? '<i class="fa-solid fa-moon"></i>' : '<i class="fa-solid fa-sun"></i>';
     });
 
-    const sortByDateBtn = document.getElementById('sortByDateBtn');
-    const sortByCreatedBtn = document.getElementById('sortByCreatedBtn');
-    const sortByEncountersBtn = document.getElementById('sortByEncountersBtn');
-    const sortByIdBtn = document.getElementById('sortByIdBtn');
-    const sortButtons = [sortByDateBtn, sortByCreatedBtn, sortByEncountersBtn, sortByIdBtn];
-
-    function setActiveSortButton(activeButton) {
-        sortButtons.forEach(button => button.classList.remove('active'));
-        activeButton.classList.add('active');
+    // --- Sort: select + ASC/DESC toggle (replaces 4 buttons) ---
+    const sortSelect = document.getElementById('sortSelect');
+    const sortOrderBtn = document.getElementById('sortOrderBtn');
+    if (sortSelect) {
+        const valid = ['updatedAt','createdAt','encounters','word','id'];
+        if (valid.includes(currentSort)) sortSelect.value = currentSort;
+        sortSelect.addEventListener('change', () => {
+            fetchData(sortSelect.value, currentOrder);
+        });
     }
-
-    sortByDateBtn.onclick = () => {
-        setActiveSortButton(sortByDateBtn);
-        fetchData('updatedAt');
-    };
-    sortByCreatedBtn.onclick = () => {
-        setActiveSortButton(sortByCreatedBtn);
-        fetchData('createdAt');
-    };
-    sortByEncountersBtn.onclick = () => {
-        setActiveSortButton(sortByEncountersBtn);
-        fetchData('encounters');
-    };
-    sortByIdBtn.onclick = () => {
-        setActiveSortButton(sortByIdBtn);
-        fetchData('id');
-    };
+    if (sortOrderBtn) {
+        updateSortOrderBtn();
+        sortOrderBtn.addEventListener('click', () => {
+            const next = currentOrder === 'asc' ? 'desc' : 'asc';
+            fetchData(currentSort, next);
+        });
+    }
 
     const volumeToggle = document.getElementById('volumeToggle');
     const volumePopup = document.getElementById('volumePopup');
     const volumeSlider = document.getElementById('volumeSlider');
     const volumeLabel = document.getElementById('volumeLabel');
+    const storyModalVolume = document.getElementById('storyModalVolume');
+    const storyModalVolLabel = document.getElementById('storyModalVolLabel');
+    const storyModalVolBtn = document.getElementById('storyModalVolBtn');
 
     const savedVolume = localStorage.getItem('ttsVolume');
     if (savedVolume !== null) {
         volumeSlider.value = savedVolume;
-        const pct = Math.round(savedVolume * 100);
-        volumeLabel.textContent = `${pct}%`;
-        volumeToggle.innerHTML = pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+        storyModalVolume.value = savedVolume;
     }
+    let lastNonZeroVolume = Math.max(parseFloat(volumeSlider.value) || 1, 0.05);
+
+    const volumeIconFor = (v) => {
+        const pct = Math.round(v * 100);
+        return pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+    };
+    const updateVolumeUI = (v) => {
+        const pct = Math.round(v * 100);
+        volumeLabel.textContent = `${pct}%`;
+        storyModalVolLabel.textContent = `${pct}%`;
+        const icon = volumeIconFor(v);
+        volumeToggle.innerHTML = icon;
+        storyModalVolBtn.innerHTML = icon;
+    };
+    const applyVolume = (v) => {
+        v = parseFloat(v);
+        if (v > 0) lastNonZeroVolume = v;
+        volumeSlider.value = v;
+        storyModalVolume.value = v;
+        updateVolumeUI(v);
+        localStorage.setItem('ttsVolume', String(v));
+        if (currentAudio) currentAudio.volume = v;
+    };
+
+    updateVolumeUI(parseFloat(volumeSlider.value));
 
     volumeToggle.addEventListener('click', () => volumePopup.classList.toggle('open'));
-    volumeSlider.addEventListener('input', () => {
-        const pct = Math.round(volumeSlider.value * 100);
-        volumeLabel.textContent = `${pct}%`;
-        volumeToggle.innerHTML = pct === 0 ? '<i class="fa-solid fa-volume-xmark"></i>' : pct < 50 ? '<i class="fa-solid fa-volume-low"></i>' : '<i class="fa-solid fa-volume-high"></i>';
-        localStorage.setItem('ttsVolume', volumeSlider.value);
-        if (currentAudio) currentAudio.volume = parseFloat(volumeSlider.value);
+    volumeSlider.addEventListener('input', () => applyVolume(volumeSlider.value));
+    storyModalVolume.addEventListener('input', () => applyVolume(storyModalVolume.value));
+    storyModalVolBtn.addEventListener('click', () => {
+        applyVolume(parseFloat(storyModalVolume.value) > 0 ? 0 : lastNonZeroVolume);
     });
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.volume-control')) volumePopup.classList.remove('open');
@@ -1728,23 +2445,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('searchInput').addEventListener('input', applySearch);
     document.getElementById('newWordInput').addEventListener('keydown', e => { if (e.key === 'Enter') addWord(); });
 
-    const csvLimitInput = document.getElementById('csvLimitInput');
-    const savedCsvLimit = localStorage.getItem('csvLimit');
-    if (savedCsvLimit !== null) csvLimitInput.value = savedCsvLimit;
-    csvLimitInput.addEventListener('input', () => {
-        if (csvLimitInput.value) localStorage.setItem('csvLimit', csvLimitInput.value);
-    });
-    document.getElementById('copyCsvBtn').addEventListener('click', copyTopWordsCSV);
-
     document.getElementById('closeStoryModalBtn').addEventListener('click', closeStoryModal);
     document.querySelectorAll('.modal-tab').forEach(t => t.onclick = () => {
       const tab = t.dataset.tab;
       document.querySelectorAll('.modal-tab').forEach(x => x.classList.toggle('active', x === t));
       document.getElementById('storyTabPanel').style.display = (tab === 'story') ? 'block' : 'none';
       document.getElementById('builtTabPanel').style.display = (tab === 'built') ? 'block' : 'none';
-    });
-    document.getElementById('storyModalOverlay').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('storyModalOverlay')) closeStoryModal();
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && document.getElementById('storyModalOverlay').classList.contains('open')) closeStoryModal();
@@ -1788,8 +2494,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('applyFilterBtn').addEventListener('click', applyFilter);
-    document.getElementById('storyModelCustom').addEventListener('input', (e) => {
-        localStorage.setItem('lastStoryModelCustom', e.target.value.trim());
+    document.getElementById('clearFilterBtn').addEventListener('click', () => {
+        document.getElementById('filterMin').value = '';
+        document.getElementById('filterMax').value = '';
+        document.getElementById('filterField').value = 'id';
+        document.getElementById('filterDirection').value = 'desc';
+        document.getElementById('filterResults').innerHTML = '';
+        document.getElementById('selCount').textContent = '';
+        selectedWords.clear();
+        updateSelectToggleUI();
+    });
+    document.getElementById('storyModelCustom').addEventListener('blur', (e) => {
+        const val = e.target.value.trim();
+        if (val && storyModelSelection === '__custom__') {
+            fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ story_model: val }) }).catch(() => {});
+        }
     });
     const acInput = document.getElementById('storyModelInput');
     acInput.addEventListener('focus', () => { acInput.select(); renderModelAC(''); });
@@ -1820,7 +2539,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (e.key === 'Enter') {
             if (list.style.display !== 'none' && items.length) {
                 e.preventDefault();
-                selectModelAC((active >= 0 ? items[active] : items[0]).dataset.id);
+                const target = (active >= 0 ? items[active] : items[0]);
+                if (target.dataset.id === '__retry__') { retryLoadModels(); return; }
+                selectModelAC(target.dataset.id);
             }
         } else if (e.key === 'Escape') {
             list.style.display = 'none';
@@ -1834,12 +2555,30 @@ document.addEventListener('DOMContentLoaded', () => {
             li.querySelector('input').checked = true;
         });
         renderChips();
+        updateSelectToggleUI();
     });
-    document.getElementById('clearSelBtn').addEventListener('click', () => {
-        selectedWords.clear();
-        renderFilterResultsFromDom();
+    document.getElementById('unselectAllBtn').addEventListener('click', () => {
+        document.querySelectorAll('#filterResults .filter-item').forEach(li => {
+            selectedWords.delete(li.dataset.word);
+            li.querySelector('input').checked = false;
+        });
         renderChips();
+        updateSelectToggleUI();
     });
+    function updateSelectToggleUI() {
+        const selectBtn = document.getElementById('selectAllBtn');
+        const unselectBtn = document.getElementById('unselectAllBtn');
+        const allVisible = document.querySelectorAll('#filterResults .filter-item').length;
+        const allSelected = document.querySelectorAll('#filterResults .filter-item input:checked').length;
+        if (!allVisible) { selectBtn.style.display = ''; unselectBtn.style.display = 'none'; return; }
+        if (allSelected === 0) {
+            selectBtn.style.display = ''; unselectBtn.style.display = 'none';
+        } else if (allSelected === allVisible) {
+            selectBtn.style.display = 'none'; unselectBtn.style.display = '';
+        } else {
+            selectBtn.style.display = ''; unselectBtn.style.display = '';
+        }
+    }
     document.getElementById('generateStoryBtn').addEventListener('click', generateStory);
 
     // Story button on word cards -> open Stories panel filtered by that word.
@@ -1848,7 +2587,62 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btn) openStoriesForWord(parseInt(btn.dataset.id));
     });
 
-    fetchData(currentSort);
+    // --- Meanings model picker modal wiring ---
+    // Only show the picker controls if the active provider is openrouter
+    // (the picker is meaningless for Gemini/Groq). Uses /api/config to find
+    // out, and stashes the env-default id for the Default row.
+    fetch('/api/config').then(r => r.json()).then(cfg => {
+        _meaningsDefaultId = (cfg && cfg.meanings_model) || null;
+        _serverConfig = cfg || {};
+        _fillDefaultModelInfo();
+        const isOpenRouter = cfg && cfg.ai_provider === 'openrouter';
+        window.isOpenRouter = !!isOpenRouter;
+        const toolbarBtn = document.getElementById('meaningsModelToolbarBtn');
+        if (isOpenRouter) {
+            if (toolbarBtn) toolbarBtn.style.display = '';
+            updateMeaningsModelButtonTitle();
+        }
+        // Re-restore models now that DB config is available (handles race
+        // with populateModelSelect which may have loaded before config).
+        if (typeof restoreModelFor === 'function') {
+            for (const ctx of (typeof modelPickers !== 'undefined' ? modelPickers : [])) {
+                restoreModelFor(ctx);
+            }
+        }
+        if (typeof restoreStoryModel === 'function') restoreStoryModel();
+    }).catch(() => {});
+
+    // The meanings picker uses an always-visible list filtered by the input,
+    // so wiring is just: live-filter on input, Escape to close the modal.
+    const _meaningsInput = document.getElementById(meaningsCtx.inputId);
+    if (_meaningsInput) {
+        _meaningsInput.addEventListener('input', () => renderModelListFor(meaningsCtx, _meaningsInput.value));
+        _meaningsInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); closeMeaningsModelModal(); }
+        });
+    }
+    document.getElementById('meaningsDefaultRow').addEventListener('click', () => {
+        selectModelACFor(meaningsCtx, '');
+    });
+    document.getElementById('meaningsModelCustom').addEventListener('blur', (e) => {
+        const val = e.target.value.trim();
+        if (val && meaningsCtx.selection === '__custom__') {
+            fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ meanings_model: val }) }).catch(() => {});
+        }
+    });
+    document.getElementById('closeModelPickerBtn').addEventListener('click', closeMeaningsModelModal);
+    document.getElementById('meaningsModelDoneBtn').addEventListener('click', closeMeaningsModelModal);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('modelPickerModalOverlay').classList.contains('open')) {
+            closeMeaningsModelModal();
+        }
+    });
+    // Click outside the modal box closes it.
+    document.getElementById('modelPickerModalOverlay').addEventListener('click', (e) => {
+        if (e.target.id === 'modelPickerModalOverlay') closeMeaningsModelModal();
+    });
+
+    fetchData(currentSort, currentOrder);
     connectWebSocket();
 });
 </script>
