@@ -607,6 +607,66 @@
     .model-picker-list .model-ac-item.selected { background-color: rgba(59,130,246,0.10); color: var(--text-primary); font-weight: 500; }
     .model-picker-list .model-ac-item.selected .model-ac-name { color: var(--color-primary); }
     .model-picker-empty { padding: 16px; text-align: center; color: var(--text-meta); font-size: 0.85em; }
+    #setupModelStep, #setupProviderStep { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+    /* --- Story Setup Modal: provider picker --- */
+    .setup-model-summary {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 10px 12px; margin-bottom: 10px; flex: 0 0 auto;
+        background: var(--bg-editable); border: 1px solid var(--border-input);
+        border-radius: 6px; font-size: 0.85em;
+    }
+    .setup-model-summary .model-name { font-weight: 600; color: var(--color-primary); }
+    .provider-back {
+        display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+        border-radius: 6px; cursor: pointer; font-size: 0.82em;
+        color: var(--text-meta); border: 1px solid var(--border-input);
+        margin-bottom: 6px;
+    }
+    .provider-back:hover { color: var(--color-primary); border-color: var(--color-primary); }
+    .provider-divider { border: none; border-top: 1px solid var(--border-details); margin: 6px 0; }
+    .provider-item {
+        display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+        border-radius: 6px; cursor: pointer; font-size: 0.82em;
+        border: 1px solid transparent;
+    }
+    .provider-item:hover { background-color: var(--bg-editable); border-color: var(--border-input); }
+    .provider-item.selected { background-color: rgba(59,130,246,0.10); border-color: var(--color-primary); }
+    .provider-item .provider-radio {
+        width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-input);
+        flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    }
+    .provider-item.selected .provider-radio {
+        border-color: var(--color-primary);
+    }
+    .provider-item.selected .provider-radio::after {
+        content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-primary);
+    }
+    .provider-name { font-weight: 500; min-width: 0; }
+    .provider-quant {
+        font-size: 0.78em; padding: 1px 6px; border-radius: 999px;
+        background: var(--bg-editable); color: var(--text-meta); flex-shrink: 0;
+    }
+    .provider-stats {
+        margin-left: auto; display: flex; gap: 12px; flex-shrink: 0;
+        font-size: 0.8em; color: var(--text-meta);
+    }
+    .provider-stat { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .provider-stat i { font-size: 0.85em; opacity: 0.7; }
+    .provider-stat.throughput { color: var(--color-success); }
+    .provider-stat.latency { color: var(--text-meta); }
+    .provider-stat.price { color: var(--text-meta); }
+    .provider-stat.uptime { color: var(--text-meta); }
+    .provider-item .model-ac-tag.free { color: var(--color-success); background: rgba(22,163,74,0.12); }
+    .provider-empty { padding: 16px; text-align: center; color: var(--text-meta); font-size: 0.85em; }
+    .setup-title-input {
+        width: 100%; box-sizing: border-box; padding: 7px 10px; margin-bottom: 12px;
+        border: 1px solid var(--border-input); border-radius: 4px;
+        font-size: 0.85em; font-family: inherit;
+        background-color: var(--bg-card); color: var(--text-primary); outline: none;
+    }
+    .setup-title-input:focus { border-color: var(--color-primary); }
+    .setup-title-label { font-size: 0.8em; color: var(--text-meta); margin-bottom: 4px; display: block; }
     .modal-footer { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border-details); background-color: var(--bg-card); flex: 0 0 auto; }
     .gen-status { margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.9em;
         background-color: var(--bg-editable); color: var(--color-success); border: 1px solid var(--border-input); }
@@ -629,6 +689,8 @@
     .story-list-del:hover { color: #dc2626; background-color: rgba(220,38,38,0.1); }
     .story-list-retry { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
     .story-list-retry:hover { color: #16a34a; background-color: rgba(22,163,74,0.1); }
+    .story-list-cancel { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
+    .story-list-cancel:hover { color: #dc2626; background-color: rgba(220,38,38,0.1); }
     .story-list-item.is-generating, .story-list-item.is-failed { cursor: default; }
     .story-list-item.is-generating:hover, .story-list-item.is-failed:hover { border-color: var(--border-input); }
     .story-list-item.is-generating { opacity: 0.75; }
@@ -784,12 +846,6 @@
     </div>
     <div id="filterResults" class="filter-results"></div>
     <div class="gen-actions">
-      <input type="text" id="storyTitle" placeholder="Optional title">
-      <div class="model-ac">
-        <input type="text" id="storyModelInput" class="model-ac-input" placeholder="Search or pick a model…" autocomplete="off" title="OpenRouter model (free or paid)">
-        <div id="storyModelList" class="model-ac-list" style="display:none;"></div>
-      </div>
-      <input type="text" id="storyModelCustom" class="model-custom" placeholder="custom model id (e.g. deepseek/deepseek-v4-flash-0731)" style="display:none;">
       <button id="generateStoryBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
     </div>
     <div id="genStatus" class="gen-status" style="display:none;"></div>
@@ -800,6 +856,54 @@
     <div id="storiesList"></div>
   </div>
 </div>
+
+<div id="storySetupModalOverlay" class="modal-overlay">
+    <div class="modal model-picker-modal">
+        <div class="modal-header">
+            <h3>Story Setup</h3>
+            <button id="setupCloseBtn" class="modal-close" title="Close">&times;</button>
+        </div>
+        <div class="model-picker-body">
+            <label class="setup-title-label" for="setupTitle">Title (optional)</label>
+            <input type="text" id="setupTitle" class="setup-title-input" placeholder="Optional title">
+
+            <!-- STEP 1: Model list -->
+            <div id="setupModelStep">
+                <div class="model-ac model-picker-ac">
+                    <input type="text" id="setupModelInput" class="model-ac-input" placeholder="Filter by name or id…" autocomplete="off">
+                </div>
+                <div class="model-picker-list-wrap">
+                    <div id="setupModelList" class="model-picker-list"></div>
+                </div>
+                <div class="provider-empty" id="setupModelEmpty" style="display:none;">No models match your filter.</div>
+                <input type="text" id="storyModelCustom" class="model-custom" placeholder="custom model id (e.g. deepseek/deepseek-v4-flash)" style="display:none; margin-top:8px;">
+            </div>
+
+            <!-- STEP 2: Provider list (hidden until model selected) -->
+            <div id="setupProviderStep" style="display:none;">
+                <div class="setup-model-summary" id="setupModelSummary">
+                    <span>Model:</span>
+                    <span class="model-name" id="setupModelNameDisplay"></span>
+                    <button id="setupChangeModelBtn" class="sort-btn" style="margin-left:auto; font-size:0.78em;">&#8592; Change</button>
+                </div>
+                <div class="model-picker-list-wrap">
+                    <div id="setupProviderList" class="model-picker-list"></div>
+                </div>
+                <div class="provider-empty" id="setupProviderLoading" style="display:none;">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Loading providers…
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button id="setupCancelBtn" class="sort-btn">Cancel</button>
+            <button id="setupGenerateBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden legacy elements kept for JS compatibility with generalized model picker -->
+<input type="text" id="storyModelInput" style="display:none;">
+<div id="storyModelList" style="display:none;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
@@ -1713,6 +1817,248 @@ function restoreStoryModel() {
   syncModelInputToSelection();
 }
 
+// --- Story Setup Modal (model + provider picker) ---
+let storyProviderSelection = "";  // "" = Default (auto-route), or a provider tag
+let setupProvidersCache = {};  // {model_id: [...]}
+
+function openStorySetupModal() {
+  const overlay = document.getElementById('storySetupModalOverlay');
+  // Restore title from the old input (now removed from DOM)
+  const titleInput = document.getElementById('setupTitle');
+  titleInput.value = '';
+  // Show model step
+  showSetupModelStep();
+  // Restore previous model selection
+  const modelInput = document.getElementById('setupModelInput');
+  if (storyModelSelection && storyModelSelection !== '__custom__') {
+    const m = ALL_MODELS.find(x => x.id === storyModelSelection);
+    modelInput.value = m ? (m.name || m.id) : storyModelSelection;
+  } else {
+    modelInput.value = '';
+  }
+  renderSetupModelList(modelInput.value);
+  overlay.classList.add('open');
+  modelInput.focus();
+}
+
+function closeStorySetupModal() {
+  document.getElementById('storySetupModalOverlay').classList.remove('open');
+}
+
+function showSetupModelStep() {
+  document.getElementById('setupModelStep').style.display = '';
+  document.getElementById('setupProviderStep').style.display = 'none';
+}
+
+function showSetupProviderStep() {
+  document.getElementById('setupModelStep').style.display = 'none';
+  document.getElementById('setupProviderStep').style.display = '';
+}
+
+function renderSetupModelList(filter) {
+  const box = document.getElementById('setupModelList');
+  const empty = document.getElementById('setupModelEmpty');
+  const q = (filter || '').toLowerCase();
+  const filtered = ALL_MODELS.filter(m => !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+  box.innerHTML = '';
+  if (!filtered.length) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  filtered.forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'model-ac-item' + (m.id === storyModelSelection ? ' selected' : '');
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'model-ac-name';
+    nameSpan.textContent = m.label.split(' (')[0];
+    div.appendChild(nameSpan);
+    const idSpan = document.createElement('span');
+    idSpan.className = 'model-ac-id';
+    idSpan.textContent = m.id;
+    div.appendChild(idSpan);
+    const tags = document.createElement('span');
+    tags.className = 'model-ac-tags';
+    const free = m.price <= 0;
+    const t = document.createElement('span');
+    t.className = 'model-ac-tag' + (free ? ' free' : '');
+    t.textContent = free
+      ? 'free'
+      : `$${m.pIn.toFixed(3)} in / $${m.pOut.toFixed(3)} out per 1M`;
+    tags.appendChild(t);
+    if (m.id === storyModelSelection) {
+      const ck = document.createElement('span');
+      ck.className = 'model-ac-tag recommended';
+      ck.textContent = '\u2713';
+      ck.title = 'Currently selected';
+      tags.appendChild(ck);
+    }
+    div.appendChild(tags);
+    div.addEventListener('mousedown', (e) => { e.preventDefault(); setupSelectModel(m.id); });
+    box.appendChild(div);
+  });
+}
+
+function setupSelectModel(id) {
+  if (id === '__loading__' || id === '__retry__') return;
+  storyModelSelection = id;
+  storyProviderSelection = '';  // reset provider when model changes
+  // Persist to DB
+  fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ story_model: id, story_provider: '' }) }).catch(() => {});
+  // Show provider step
+  const m = ALL_MODELS.find(x => x.id === id);
+  document.getElementById('setupModelNameDisplay').textContent = m ? (m.name || m.id) : id;
+  showSetupProviderStep();
+  // Fetch providers for this model
+  fetchSetupProviders(id);
+}
+
+function setupBackToModels() {
+  showSetupModelStep();
+  const modelInput = document.getElementById('setupModelInput');
+  renderSetupModelList(modelInput.value);
+  modelInput.focus();
+}
+
+async function fetchSetupProviders(modelId) {
+  const list = document.getElementById('setupProviderList');
+  const loading = document.getElementById('setupProviderLoading');
+  // Check cache
+  if (setupProvidersCache[modelId]) {
+    renderSetupProviderList(setupProvidersCache[modelId]);
+    return;
+  }
+  // free/auto don't have providers
+  if (!modelId || modelId === 'openrouter/free' || modelId === 'openrouter/auto') {
+    list.innerHTML = '<div class="provider-empty">This model uses OpenRouter auto-routing (no provider selection).</div>';
+    return;
+  }
+  list.innerHTML = '';
+  loading.style.display = '';
+  try {
+    const res = await fetch(`/api/openrouter/providers?model=${encodeURIComponent(modelId)}`);
+    const data = await res.json();
+    const providers = data.providers || [];
+    setupProvidersCache[modelId] = providers;
+    renderSetupProviderList(providers);
+  } catch (e) {
+    list.innerHTML = '<div class="provider-empty">Failed to load providers.</div>';
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+function renderSetupProviderList(providers) {
+  const list = document.getElementById('setupProviderList');
+  list.innerHTML = '';
+  // "Default" option
+  const defaultDiv = document.createElement('div');
+  defaultDiv.className = 'provider-item' + (storyProviderSelection === '' ? ' selected' : '');
+  defaultDiv.innerHTML = `
+    <div class="provider-radio"></div>
+    <span class="provider-name">Default (auto-route)</span>
+    <span class="provider-stats">
+      <span class="provider-stat" style="color:var(--text-meta);font-style:italic;">router picks cheapest fast provider</span>
+    </span>`;
+  defaultDiv.addEventListener('click', () => setupSelectProvider(''));
+  list.appendChild(defaultDiv);
+
+  if (!providers.length) return;
+
+  // Divider
+  const hr = document.createElement('hr');
+  hr.className = 'provider-divider';
+  list.appendChild(hr);
+
+  providers.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'provider-item' + (storyProviderSelection === p.tag ? ' selected' : '');
+    const tp = p.throughput_p50 != null ? `${p.throughput_p50} tok/s` : '—';
+    const lat = p.latency_p50 != null ? `${(p.latency_p50 / 1000).toFixed(1)}s` : '—';
+    const promptPrice = p.pricing.prompt != null ? `$${(p.pricing.prompt * 1e6).toFixed(2)}` : '—';
+    const compPrice = p.pricing.completion != null ? `$${(p.pricing.completion * 1e6).toFixed(2)}` : '—';
+    const uptime = p.uptime_last_1d != null ? `${p.uptime_last_1d.toFixed(1)}%` : '—';
+    // Build DOM safely (provider data from our API, not user input)
+    const radio = document.createElement('div');
+    radio.className = 'provider-radio';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'provider-name';
+    nameEl.textContent = p.provider_name;
+    const quantEl = document.createElement('span');
+    quantEl.className = 'provider-quant';
+    quantEl.textContent = p.quantization;
+    const stats = document.createElement('span');
+    stats.className = 'provider-stats';
+    const discountTag = p.discount > 0 ? `<span class="model-ac-tag free">-${Math.round(p.discount * 100)}%</span>` : '';
+    stats.innerHTML = `<span class="provider-stat throughput"><i class="fa-solid fa-gauge-high"></i> ${tp}</span><span class="provider-stat latency"><i class="fa-solid fa-clock"></i> ${lat}</span><span class="provider-stat price"><i class="fa-solid fa-coins"></i> ${promptPrice}/${compPrice} ${discountTag}</span><span class="provider-stat uptime"><i class="fa-solid fa-signal"></i> ${uptime}</span>`;
+    div.appendChild(radio);
+    div.appendChild(nameEl);
+    div.appendChild(quantEl);
+    div.appendChild(stats);
+    div.addEventListener('click', () => setupSelectProvider(p.tag));
+    list.appendChild(div);
+  });
+}
+
+function setupSelectProvider(tag) {
+  storyProviderSelection = tag;
+  // Persist to DB
+  fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ story_provider: tag }) }).catch(() => {});
+  // Re-render list to update selection highlight
+  const providers = setupProvidersCache[storyModelSelection] || [];
+  renderSetupProviderList(providers);
+  // Also highlight default
+  const list = document.getElementById('setupProviderList');
+  const items = list.querySelectorAll('.provider-item');
+  if (items.length) {
+    items[0].className = 'provider-item' + (tag === '' ? ' selected' : '');
+  }
+}
+
+function setupGenerateStory() {
+  const words = Array.from(selectedWords);
+  if (!words.length) { showToast('Select at least one word first'); return; }
+  const title = document.getElementById('setupTitle').value.trim() || null;
+  const model = resolveStoryModel();
+  const provider = storyProviderSelection || null;
+  closeStorySetupModal();
+  _doGenerateStory(words, title, model, provider);
+}
+
+async function _doGenerateStory(words, title, model, provider) {
+  const btn = document.getElementById('generateStoryBtn');
+  const status = document.getElementById('genStatus');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
+  status.style.display = 'none';
+  try {
+    const res = await fetch('/api/story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ words, title, model, provider })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Failed to generate story');
+    }
+    const story = await res.json();
+    currentStoryId = story.id;
+    status.style.display = 'block';
+    status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. You can safely leave or refresh this page; it will appear in Saved Stories when ready.`;
+    loadStories();
+    document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story';
+  }
+}
+
+function restoreStoryProvider() {
+  storyProviderSelection = _serverConfig.story_provider || '';
+}
+
 // --- Generalized model-picker (used for the meanings picker modal) ---
 // Mirrors the story-picker above but takes a `ctx` object so the same code
 // can drive multiple pickers against the same ALL_MODELS catalogue.
@@ -2126,39 +2472,7 @@ function updateMeaningsCurrentBar() {
 }
 
 async function generateStory() {
-  const words = Array.from(selectedWords);
-  if (!words.length) { showToast('Select at least one word first'); return; }
-  const btn = document.getElementById('generateStoryBtn');
-  const status = document.getElementById('genStatus');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
-  status.style.display = 'none';
-  try {
-    const res = await fetch('/api/story', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        words,
-        title: document.getElementById('storyTitle').value.trim() || null,
-        model: resolveStoryModel()
-      })
-    });
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}));
-      throw new Error(e.detail || 'Failed to generate story');
-    }
-    const story = await res.json();
-    currentStoryId = story.id;
-    status.style.display = 'block';
-    status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. You can safely leave or refresh this page; it will appear in Saved Stories when ready.`;
-    loadStories();
-    document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
-  } catch (e) {
-    alert('Error: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story';
-  }
+  openStorySetupModal();
 }
 
 async function readStoryById(id, btn) {
@@ -2252,6 +2566,20 @@ async function retryStory(id) {
   loadStories();
 }
 
+async function cancelStory(id) {
+  try {
+    const res = await fetch(`/api/stories/${id}/cancel`, { method: 'POST' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Cancel failed');
+    }
+    showToast(`Story #${id} cancelled.`);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+  loadStories();
+}
+
 async function loadStories(wordId) {
   let url = '/api/stories';
   if (wordId) url += `?word_id=${wordId}`;
@@ -2322,6 +2650,14 @@ async function loadStories(wordId) {
     del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     del.onclick = (e) => { e.stopPropagation(); deleteStory(s.id); };
     right.appendChild(date);
+    if (isGenerating) {
+      const cancel = document.createElement('button');
+      cancel.className = 'story-list-cancel';
+      cancel.title = 'Cancel generation';
+      cancel.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+      cancel.onclick = (e) => { e.stopPropagation(); cancelStory(s.id); };
+      right.appendChild(cancel);
+    }
     if (isFailed) {
       const retry = document.createElement('button');
       retry.className = 'story-list-retry';
@@ -2610,6 +2946,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         if (typeof restoreStoryModel === 'function') restoreStoryModel();
+        if (typeof restoreStoryProvider === 'function') restoreStoryProvider();
     }).catch(() => {});
 
     // The meanings picker uses an always-visible list filtered by the input,
@@ -2640,6 +2977,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // Click outside the modal box closes it.
     document.getElementById('modelPickerModalOverlay').addEventListener('click', (e) => {
         if (e.target.id === 'modelPickerModalOverlay') closeMeaningsModelModal();
+    });
+
+    // --- Story Setup Modal wiring ---
+    document.getElementById('setupCloseBtn').addEventListener('click', closeStorySetupModal);
+    document.getElementById('setupCancelBtn').addEventListener('click', closeStorySetupModal);
+    document.getElementById('setupGenerateBtn').addEventListener('click', setupGenerateStory);
+    document.getElementById('setupChangeModelBtn').addEventListener('click', setupBackToModels);
+    document.getElementById('storySetupModalOverlay').addEventListener('click', (e) => {
+        if (e.target.id === 'storySetupModalOverlay') closeStorySetupModal();
+    });
+    const setupModelInput = document.getElementById('setupModelInput');
+    setupModelInput.addEventListener('input', () => renderSetupModelList(setupModelInput.value));
+    setupModelInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { closeStorySetupModal(); }
     });
 
     fetchData(currentSort, currentOrder);

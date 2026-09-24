@@ -532,6 +532,7 @@ class StoryCreate(BaseModel):
     words: List[str]
     title: Optional[str] = None
     model: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class StoryUpdate(BaseModel):
@@ -550,6 +551,7 @@ async def create_story(data: StoryCreate):
 
     # Model from localStorage (client), fallback hardcoded openrouter/free (same as meanings).
     actual_model = data.model or "openrouter/free"
+    actual_provider = data.provider or None
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -577,15 +579,15 @@ async def create_story(data: StoryCreate):
     # Heavy AI generation runs as a background task so a page refresh or
     # dropped connection can't lose the result — it is written to the DB
     # and announced over the WebSocket when done.
-    asyncio.create_task(generate_story_job(story_id, words, data.title, actual_model))
+    asyncio.create_task(generate_story_job(story_id, words, data.title, actual_model, actual_provider))
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 
 
-async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str):
+async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str, provider_tag: Optional[str] = None):
     """Generate story content in the background and persist it when done."""
     try:
-        result = await run_in_threadpool(openrouter_agent.sync_generate_story, words, title_hint, model)
+        result = await run_in_threadpool(openrouter_agent.sync_generate_story, words, title_hint, model, provider_tag, story_id)
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "Story generation failed"))
 
@@ -640,6 +642,15 @@ def api_openrouter_models():
     return {"models": result["models"]}
 
 
+@app.get("/api/openrouter/providers")
+def api_openrouter_providers(model: str = Query(...)):
+    """Per-provider endpoint data for a given model (authenticated, cached ~5 min)."""
+    result = openrouter_agent.sync_list_providers(model)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Failed to fetch providers"))
+    return {"providers": result["providers"]}
+
+
 @app.get("/api/config")
 def api_config():
     """Small public config the frontend needs to render provider-specific UI."""
@@ -648,6 +659,7 @@ def api_config():
         "openrouter_ready": openrouter_agent.is_ready(),
         "meanings_model": get_setting("meanings_model") or "openrouter/free",
         "story_model": get_setting("story_model") or "openrouter/free",
+        "story_provider": get_setting("story_provider") or "",
     }
 
 
@@ -655,12 +667,15 @@ def api_config():
 def update_config(
     meanings_model: Optional[str] = Body(None),
     story_model: Optional[str] = Body(None),
+    story_provider: Optional[str] = Body(None),
 ):
     """Save model selections to DB (single source of truth for all clients)."""
     if meanings_model is not None:
         set_setting("meanings_model", meanings_model)
     if story_model is not None:
         set_setting("story_model", story_model)
+    if story_provider is not None:
+        set_setting("story_provider", story_provider)
     return {"ok": True}
 
 
@@ -775,6 +790,30 @@ async def retry_story(story_id: int):
     asyncio.create_task(generate_story_job(story_id, words, title_hint, actual_model))
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
+
+
+@app.post("/api/stories/{story_id}/cancel")
+async def cancel_story(story_id: int):
+    """Cancel an in-flight story generation request."""
+    # 1. Close the HTTP request if it's in-flight.
+    openrouter_agent.cancel_story_request(story_id)
+    # 2. Mark DB as failed (only if still generating).
+    def fail_operation():
+        conn = sqlite3.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE stories SET status = 'failed', error = ?, updatedAt = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'generating'",
+            ("Cancelled by user", story_id),
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return changed
+    changed = await run_in_threadpool(fail_operation)
+    if changed:
+        manager.broadcast_from_sync(f"story_error:{story_id}")
+    return {"ok": True}
 
 
 @app.put("/api/stories/{story_id}")

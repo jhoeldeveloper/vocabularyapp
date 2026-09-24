@@ -24,3 +24,6 @@ audio/
 # IDE
 .vscode/
 .idea/
+
+.opencode/plans/kokoro-tts.md
+AGENTS.md
