@@ -10,7 +10,7 @@ venv/
 .env
 
 # Database
-*.db
+# *.db
 
 # Downloaded TTS model weights (large, fetched by download_models.sh)
 models/
