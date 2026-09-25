@@ -19,6 +19,13 @@ set -e
 APP_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 cd "$APP_DIR"
 
+# Load environment variables from .env
+if [ -f "$APP_DIR/.env" ]; then
+  set -a
+  source "$APP_DIR/.env"
+  set +a
+fi
+
 MODELS_DIR="$APP_DIR/models/onnx"
 mkdir -p "$MODELS_DIR"
 
