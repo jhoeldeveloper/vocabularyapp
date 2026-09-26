@@ -659,6 +659,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             "elapsed": elapsed,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "cost": round(cost, 6),
         }
     except Exception as e:

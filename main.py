@@ -195,7 +195,16 @@ def init_db():
     # Migrate: add story metadata columns if they don't exist yet.
     _cur.execute("PRAGMA table_info(stories)")
     _story_cols = [col[1] for col in _cur.fetchall()]
-    for col, ddl in (("model", "TEXT"), ("duration_ms", "INTEGER"), ("cost", "REAL"), ("status", "TEXT DEFAULT 'ready'"), ("error", "TEXT")):
+    for col, ddl in (
+        ("model", "TEXT"),
+        ("duration_ms", "INTEGER"),
+        ("cost", "REAL"),
+        ("status", "TEXT DEFAULT 'ready'"),
+        ("error", "TEXT"),
+        ("prompt_tokens", "INTEGER"),
+        ("completion_tokens", "INTEGER"),
+        ("reasoning_tokens", "INTEGER"),
+    ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
             print(f"MIGRATION: Added stories.{col} column.")
@@ -805,9 +814,16 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
                 return False
             cursor.execute(
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
+                "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
                 "status = 'ready', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
-                (title, content, model, duration_ms, cost, story_id),
+                (
+                    title, content, model, duration_ms, cost,
+                    int(result.get("prompt_tokens") or 0),
+                    int(result.get("completion_tokens") or 0),
+                    int(result.get("reasoning_tokens") or 0),
+                    story_id,
+                ),
             )
             published = cursor.rowcount
             conn.commit()
@@ -912,6 +928,18 @@ def update_config(
     return {"ok": True}
 
 
+# Columns returned by the story read endpoints. Defined once so the list view,
+# the word-filtered view and the detail view cannot drift apart when a column is
+# added (the token columns are easy to forget in one of the three).
+_STORY_FIELDS = (
+    "id", "title", "content", "audio_path", "model", "duration_ms", "cost",
+    "prompt_tokens", "completion_tokens", "reasoning_tokens",
+    "status", "error", "createdAt", "updatedAt",
+)
+_STORY_SELECT = ", ".join(_STORY_FIELDS)
+_STORY_SELECT_PREFIXED = ", ".join(f"s.{f}" for f in _STORY_FIELDS)
+
+
 @app.get("/api/stories")
 def api_list_stories(word_id: Optional[int] = Query(None)):
     conn = sqlite3.connect(DATABASE_URL)
@@ -920,14 +948,14 @@ def api_list_stories(word_id: Optional[int] = Query(None)):
 
     if word_id is not None:
         cursor.execute(
-            "SELECT s.id, s.title, s.content, s.audio_path, s.model, s.duration_ms, s.cost, s.status, s.error, s.createdAt, s.updatedAt "
+            f"SELECT {_STORY_SELECT_PREFIXED} "
             "FROM stories s JOIN story_words sw ON sw.story_id = s.id "
             "WHERE sw.word_id = ? ORDER BY s.createdAt DESC, s.id DESC",
             (word_id,),
         )
     else:
         cursor.execute(
-            "SELECT id, title, content, audio_path, model, duration_ms, cost, status, error, createdAt, updatedAt "
+            f"SELECT {_STORY_SELECT} "
             "FROM stories ORDER BY createdAt DESC, id DESC"
         )
     stories = [dict(row) for row in cursor.fetchall()]
@@ -950,8 +978,7 @@ def api_get_story(story_id: int):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, title, content, audio_path, model, duration_ms, cost, status, error, createdAt, updatedAt "
-        "FROM stories WHERE id = ?",
+        f"SELECT {_STORY_SELECT} FROM stories WHERE id = ?",
         (story_id,),
     )
     row = cursor.fetchone()

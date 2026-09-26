@@ -478,6 +478,38 @@
     .story-word-chip:hover { border-color: var(--color-primary); }
     mark.story-hl { background-color: #ffe066; color: inherit; border-radius: 3px; padding: 0 2px; }
     .story-meta { font-size: 0.75em; color: var(--text-meta); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-details); }
+    /* The stat bar lives inside the scrolling tab panel, so it is pinned with
+       position:sticky instead of scrolling away with the story text. Styled by
+       ID on purpose: both the completed and the streaming modal paths overwrite
+       className with 'story-list-meta', so a class rule would be dropped. */
+    #storyModalMeta {
+        position: sticky; top: 0; z-index: 2;
+        background-color: var(--bg-card);
+        /* Full-bleed past the tab panel's 16px padding so the bar spans edge to edge. */
+        margin: -16px -16px 8px;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border-details);
+    }
+    /* Stop-generating control: a pill like the other stats, but in danger red.
+       Uses the filled square (fa-stop) rather than an X, which would be
+       confused with the modal's own close button. */
+    .story-stop {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 0.7em; white-space: nowrap; cursor: pointer;
+        background: rgba(220, 38, 38, 0.1); color: #dc2626;
+        padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(220, 38, 38, 0.25);
+        font-family: inherit;
+    }
+    .story-stop:hover { background: rgba(220, 38, 38, 0.2); color: #b91c1c; }
+    /* Blinking caret at the tail of the text while it is still being written. */
+    .stream-caret {
+        display: inline-block; margin-left: 1px; color: var(--text-meta);
+        animation: stream-caret-blink 1s steps(2, start) infinite;
+    }
+    @keyframes stream-caret-blink { to { visibility: hidden; } }
+    @media (prefers-reduced-motion: reduce) {
+        .stream-caret { animation: none; }
+    }
     .story-player { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
     .story-seek { flex: 1; min-width: 80px; }
     .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -691,6 +723,10 @@
     .story-list-retry:hover { color: #16a34a; background-color: rgba(22,163,74,0.1); }
     .story-list-cancel { background: none; border: none; color: var(--text-meta); cursor: pointer; font-size: 0.95em; padding: 4px 6px; border-radius: 4px; }
     .story-list-cancel:hover { color: #dc2626; background-color: rgba(220,38,38,0.1); }
+    /* Icon-only variant in the story list: same square glyph, sized to sit
+       beside the delete button rather than as a full pill. */
+    .story-list-cancel.story-stop-icon { color: #dc2626; }
+    .story-list-cancel.story-stop-icon:hover { background-color: rgba(220,38,38,0.15); }
     .story-list-item.is-generating, .story-list-item.is-failed { cursor: default; }
     .story-list-item.is-generating:hover, .story-list-item.is-failed:hover { border-color: var(--border-input); }
     .story-list-item.is-generating { opacity: 0.75; }
@@ -1396,17 +1432,25 @@ function fetchData(sortBy = currentSort, order = currentOrder) {
 // --- Story modal ---
 let currentModalStoryId = null;
 
-// Live text of in-flight stories: id -> {text, title, renderTimer, listTimer}.
+// Live text of in-flight stories: id -> {text, title, renderTimer, listTimer,
+// tickTimer, startedAt}.
 const storyStreams = new Map();
 
 // Re-rendering Markdown for every token is far too expensive, so the modal is
 // refreshed on this interval instead.
 const STREAM_RENDER_MS = 150;
 
+// Rough token estimate from character count (~4 chars/token). OpenRouter only
+// sends `usage` in the final SSE chunk, so a real count is impossible while the
+// story is streaming — this is shown with a "≈" to make that clear.
+function estimateTokens(text) {
+    return Math.round(countStoryChars(text || '') / 4);
+}
+
 function storyStreamState(id) {
   let st = storyStreams.get(id);
   if (!st) {
-    st = { text: '', title: null, renderTimer: null, listTimer: null };
+    st = { text: '', title: null, renderTimer: null, listTimer: null, tickTimer: null, startedAt: null };
     storyStreams.set(id, st);
   }
   return st;
@@ -1429,8 +1473,48 @@ function dropStoryStream(id) {
   if (st) {
     if (st.renderTimer) clearTimeout(st.renderTimer);
     if (st.listTimer) clearTimeout(st.listTimer);
+    if (st.tickTimer) clearInterval(st.tickTimer);
   }
   storyStreams.delete(id);
+}
+
+// Elapsed comes from the story's createdAt (set when the row was inserted, i.e.
+// when generation started) rather than from the first delta, so a tab that
+// opens the story mid-generation still shows the true elapsed time.
+function streamStartedAt(id, story) {
+  const st = storyStreamState(id);
+  if (st.startedAt == null) {
+    const created = story && story.createdAt ? Date.parse(String(story.createdAt).replace(' ', 'T') + 'Z') : NaN;
+    st.startedAt = isNaN(created) ? Date.now() : created;
+  }
+  return st.startedAt;
+}
+
+function streamElapsedSec(id) {
+  const st = storyStreams.get(id);
+  if (!st || st.startedAt == null) return 0;
+  return Math.max(0, (Date.now() - st.startedAt) / 1000);
+}
+
+function formatElapsed(sec) {
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  return `${m}:${Math.floor(sec % 60).toString().padStart(2, '0')}`;
+}
+
+function streamRate(id) {
+  const st = storyStreams.get(id);
+  if (!st) return 0;
+  const secs = streamElapsedSec(id);
+  return secs > 0.4 ? Math.round(estimateTokens(st.text) / secs) : 0;
+}
+
+// Build one stat pill, matching the .story-list-meta-line look.
+function statPill(html) {
+  const span = document.createElement('span');
+  span.className = 'story-list-meta-line';
+  span.innerHTML = html;
+  return span;
 }
 
 function renderStreamedStory(id) {
@@ -1441,15 +1525,19 @@ function renderStreamedStory(id) {
   const body = document.getElementById('storyModalBody');
   if (!overlay.classList.contains('open')) return;
   // Follow the tail only when the reader is already at the bottom, so scrolling
-  // back to re-read a sentence is not fought by the stream.
+  // back to re-read a sentence is not fought by the stream. The tolerance
+  // accounts for the sticky stat bar sitting above the text.
   const scroller = body.parentElement;
   const atBottom = scroller
-    ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40
+    ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90
     : true;
-  body.innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}</div>`;
+  // The caret marks the text as still being written. This function only runs
+  // while a stream is live (dropStoryStream removes the entry on story_ready /
+  // story_error, and the modal is re-rendered from the DB at that point).
+  const caret = '<span class="stream-caret">&#9613;</span>';
+  body.innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}${caret}</div>`;
   if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
-  const counter = document.getElementById('storyStreamChars');
-  if (counter) counter.textContent = countStoryChars(st.text).toLocaleString();
+  updateStreamStats(id);
 }
 
 function scheduleStreamRender(id) {
@@ -1461,14 +1549,36 @@ function scheduleStreamRender(id) {
   }, STREAM_RENDER_MS);
 }
 
-function updateStreamListItem(id) {
+// Refresh the elapsed / token / rate pills while a story streams. The token
+// figure is an estimate until the real usage arrives with story_ready.
+function updateStreamStats(id) {
+  const st = storyStreams.get(id);
+  if (!st) return;
+  const secs = streamElapsedSec(id);
+  const est = estimateTokens(st.text);
+  const rate = streamRate(id);
+  if (currentModalStoryId === id) {
+    const el = document.getElementById('storyModalMeta');
+    if (el) {
+      const t = el.querySelector('[data-stat="elapsed"]');
+      if (t) t.textContent = formatElapsed(secs);
+      const k = el.querySelector('[data-stat="tokens"]');
+      if (k) k.textContent = `\u2248${est.toLocaleString()} tokens`;
+      const r = el.querySelector('[data-stat="rate"]');
+      if (r) r.textContent = rate > 0 ? `\u2248${rate.toLocaleString()} tok/s` : 'measuring\u2026';
+    }
+  }
+  updateStreamListItem(id, est);
+}
+
+function updateStreamListItem(id, est) {
   const item = document.querySelector(`.story-list-item[data-id="${id}"]`);
   if (!item) return;
   const statusLine = item.querySelector('.story-list-status-line');
   if (!statusLine) return;
   const st = storyStreams.get(id);
-  const chars = st ? countStoryChars(st.text) : 0;
-  statusLine.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 ${chars.toLocaleString()} chars`;
+  const tokens = est != null ? est : (st ? estimateTokens(st.text) : 0);
+  statusLine.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 \u2248${tokens.toLocaleString()} tokens`;
 }
 
 function scheduleStreamListUpdate(id) {
@@ -1480,9 +1590,18 @@ function scheduleStreamListUpdate(id) {
   }, 250);
 }
 
+// Elapsed and rate change even when no new token arrives, so they need their
+// own 1s ticker rather than riding on the delta cadence.
+function startStreamTicker(id) {
+  const st = storyStreamState(id);
+  if (st.tickTimer) return;
+  st.tickTimer = setInterval(() => updateStreamStats(id), 1000);
+}
+
 function onStoryDelta(id, chunk) {
   const st = storyStreamState(id);
   st.text += chunk;
+  startStreamTicker(id);
   scheduleStreamRender(id);
   scheduleStreamListUpdate(id);
 }
@@ -1549,40 +1668,53 @@ function countStoryChars(content) {
 // subscribe, so joining mid-stream is seamless.
 function openGeneratingStoryModal(id, s) {
   const st = storyStreamState(id);
+  streamStartedAt(id, s);
   const overlay = document.getElementById('storyModalOverlay');
   switchStoryTab();
   document.getElementById('storyModalTitle').textContent = st.title || s.title || 'Generating…';
   const body = document.getElementById('storyModalBody');
   body.innerHTML = st.text
-    ? `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}</div>`
+    ? `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}<span class="stream-caret">&#9613;</span></div>`
     : '<p style="color:var(--text-meta)"><i class="fa-solid fa-spinner fa-spin"></i> Waiting for the first words…</p>';
 
-  // Meta row: a live-updating char count, and a cancel button.
+  // Stat bar: live elapsed, estimated tokens, rate, and the square Stop button.
+  // The className is 'story-list-meta' so it keeps the existing row-of-pills
+  // look; the sticky positioning comes from the #storyModalMeta CSS rule.
   const metaEl = document.getElementById('storyModalMeta');
   metaEl.className = 'story-list-meta';
   metaEl.style.display = '';
-  metaEl.style.borderBottom = '1px solid var(--border-details)';
-  metaEl.style.paddingBottom = '6px';
-  metaEl.style.marginBottom = '8px';
   metaEl.innerHTML = '';
-  const line = document.createElement('span');
-  line.className = 'story-list-meta-line';
-  line.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating — <span id="storyStreamChars">${countStoryChars(st.text).toLocaleString()}</span> chars`;
-  metaEl.appendChild(line);
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'story-list-cancel';
-  cancelBtn.title = 'Cancel generation';
-  cancelBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Stop';
-  cancelBtn.style.marginLeft = '8px';
-  cancelBtn.onclick = () => cancelStory(id);
-  metaEl.appendChild(cancelBtn);
+  const elapsed = statPill(`<i class="fa-solid fa-spinner fa-spin"></i> <span data-stat="elapsed">${formatElapsed(streamElapsedSec(id))}</span>`);
+  metaEl.appendChild(elapsed);
+  metaEl.appendChild(statPill(`<i class="fa-solid fa-font"></i> <span data-stat="tokens">\u2248${estimateTokens(st.text).toLocaleString()} tokens</span>`));
+  metaEl.appendChild(statPill(`<i class="fa-solid fa-gauge-high"></i> <span data-stat="rate">measuring\u2026</span>`));
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'story-stop';
+  stopBtn.title = 'Stop generating this story';
+  stopBtn.innerHTML = '<i class="fa-solid fa-stop"></i> Stop';
+  stopBtn.onclick = () => cancelStory(id);
+  metaEl.appendChild(stopBtn);
 
   // The word chips aren't known until the story is saved; hide the old ones.
   document.getElementById('storyModalWordsChips').innerHTML = '';
 
+  // Nothing to read aloud yet: the content is still NULL, and generating audio
+  // from an empty string would burn minutes of CPU and leave a 0-length
+  // audio_path on the story.
+  setReadAloudEnabled(false);
+
   overlay.classList.add('open');
   subscribeStoryStream(id);
+  startStreamTicker(id);
   renderStreamedStory(id);
+}
+
+// Read Aloud is meaningless (and harmful) while the text is still streaming.
+function setReadAloudEnabled(enabled) {
+  const rb = document.getElementById('storyModalReadBtn');
+  if (!rb) return;
+  rb.style.display = enabled ? '' : 'none';
+  rb.disabled = !enabled;
 }
 
 async function openStoryModal(id) {
@@ -1609,9 +1741,6 @@ async function openStoryModal(id) {
     document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
     const metaEl = document.getElementById('storyModalMeta');
     metaEl.className = 'story-list-meta';
-    metaEl.style.borderBottom = '1px solid var(--border-details)';
-    metaEl.style.paddingBottom = '6px';
-    metaEl.style.marginBottom = '8px';
     metaEl.innerHTML = '';
     const addMeta = (icon, text) => {
       const span = document.createElement('span');
@@ -1626,6 +1755,16 @@ async function openStoryModal(id) {
     };
     const chars = countStoryChars(s.content);
     if (chars > 0) addMeta('fa-solid fa-font', `${chars.toLocaleString()} chars`);
+    // Real token counts, persisted with the story at generation time. Older
+    // stories predate the columns and simply have nothing to show here.
+    const outTok = s.completion_tokens || 0;
+    const inTok = s.prompt_tokens || 0;
+    if (outTok || inTok) {
+      const reasoning = s.reasoning_tokens || 0;
+      const label = `${inTok.toLocaleString()} in \u2022 ${outTok.toLocaleString()} out`
+        + (reasoning > 0 ? ` (${reasoning.toLocaleString()} reasoning)` : '');
+      addMeta('fa-solid fa-arrow-down-up', label);
+    }
     if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
     if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
     const dur = formatDuration(s.duration_ms);
@@ -1637,6 +1776,7 @@ async function openStoryModal(id) {
     } else {
       metaEl.style.display = 'none';
     }
+    setReadAloudEnabled(true);
     const chipsBox = document.getElementById('storyModalWordsChips');
     chipsBox.innerHTML = '';
     (s.words || []).forEach(w => {
@@ -2811,9 +2951,9 @@ async function loadStories(wordId) {
       statusLine.className = 'story-list-status-line';
       if (isGenerating) {
         const st = storyStreams.get(s.id);
-        const chars = st ? countStoryChars(st.text) : 0;
-        statusLine.innerHTML = chars > 0
-          ? `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 ${chars.toLocaleString()} chars`
+        const tokens = st ? estimateTokens(st.text) : 0;
+        statusLine.innerHTML = tokens > 0
+          ? `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 \u2248${tokens.toLocaleString()} tokens`
           : '<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026';
         statusLine.title = 'Click the story to watch it being written.';
       } else {
@@ -2860,9 +3000,9 @@ async function loadStories(wordId) {
     right.appendChild(date);
     if (isGenerating) {
       const cancel = document.createElement('button');
-      cancel.className = 'story-list-cancel';
-      cancel.title = 'Cancel generation';
-      cancel.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+      cancel.className = 'story-list-cancel story-stop-icon';
+      cancel.title = 'Stop generating';
+      cancel.innerHTML = '<i class="fa-solid fa-stop"></i>';
       cancel.onclick = (e) => { e.stopPropagation(); cancelStory(s.id); };
       right.appendChild(cancel);
     }
