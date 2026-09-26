@@ -34,24 +34,105 @@ _PROVIDERS_TTL = 300  # seconds
 # are (word, model); values are threading.Event + the shared result dict.
 _lookup_inflight: dict = {}
 
-# Active story generation requests keyed by story_id. Used to abort the
-# HTTP connection when the user clicks "cancel" in the UI.
-_active_story_responses: dict = {}
+# Active story generation requests keyed by story_id. The story request is
+# streamed, so a Response object exists for the whole generation and closing it
+# genuinely aborts the in-flight body read (see sync_generate_story).
+# Values: {"cancelled": bool, "response": requests.Response | None}.
+_story_controls: dict = {}
+_story_controls_lock = threading.Lock()
 
-# Hard total elapsed timeout for story generation (8 minutes).
+# Hard total elapsed timeout for story generation (8 minutes), enforced inside
+# the stream loop rather than after the fact.
 _STORY_MAX_ELAPSED = 480
+
+# Connect / per-read socket timeouts for the streamed story request. The read
+# timeout is deliberately short: it only has to cover the gap between two SSE
+# chunks, so a stalled provider fails fast instead of hanging until the
+# overall deadline.
+_STORY_CONNECT_TIMEOUT = 10
+_STORY_READ_TIMEOUT = 30
+
+# Error strings shared with the UI / log.
+_STORY_ERR_CANCELLED = "Story generation cancelled."
+_STORY_ERR_DISCONNECTED = "Error generating story: connection closed."
+_STORY_ERR_TIMEOUT = (
+    "Error generating story: request timed out. The model may be slow or rate-limited "
+    "for this many words. Try a smaller word set or a different model."
+)
+_STORY_ERR_DEADLINE = (
+    "Story generation timed out after 8 minutes. The provider may be too slow "
+    "— try a different model or provider."
+)
+
+# raw_decode on this gives (record, chars_consumed), which is how the stream
+# reader tells one SSE record from several packed onto a single line.
+_JSON_DECODER = json.JSONDecoder()
+
+
+def _register_story_control(story_id) -> None:
+    """Mark a story generation as active and not yet cancelled."""
+    if story_id is None:
+        return
+    with _story_controls_lock:
+        _story_controls[story_id] = {"cancelled": False, "response": None}
+
+
+def _set_story_response(story_id, response) -> None:
+    """Attach the streaming Response so cancel_story_request can close it."""
+    if story_id is None:
+        return
+    with _story_controls_lock:
+        control = _story_controls.get(story_id)
+        if control is None:
+            return
+        control["response"] = response
+        # Cancelled before the response even arrived: close it right away.
+        if control["cancelled"]:
+            _safe_close(response)
+
+
+def _release_story_control(story_id) -> None:
+    if story_id is None:
+        return
+    with _story_controls_lock:
+        control = _story_controls.pop(story_id, None)
+    if control:
+        _safe_close(control.get("response"))
+
+
+def _story_cancelled(story_id) -> bool:
+    """True if the user asked to cancel this story (before or during the request)."""
+    if story_id is None:
+        return False
+    with _story_controls_lock:
+        control = _story_controls.get(story_id)
+        return bool(control and control["cancelled"])
+
+
+def _safe_close(response) -> None:
+    if response is None:
+        return
+    try:
+        response.close()
+    except Exception:
+        pass
 
 
 def cancel_story_request(story_id: int) -> bool:
-    """Abort the in-flight HTTP request for a story. Returns True if found."""
-    resp = _active_story_responses.pop(story_id, None)
-    if resp:
-        try:
-            resp.close()
-        except Exception:
-            pass
-        return True
-    return False
+    """Abort the in-flight HTTP request for a story.
+
+    Flips the story's control flag (so a request still waiting on response
+    headers bails out as soon as it can) and closes the streaming Response to
+    tear down the socket immediately. Returns True if a live request was found.
+    """
+    with _story_controls_lock:
+        control = _story_controls.get(story_id)
+        if control is None:
+            return False
+        control["cancelled"] = True
+        response = control.get("response")
+    _safe_close(response)
+    return True
 
 
 def _get_reasoning_config(model_id: str):
@@ -254,7 +335,161 @@ def _build_prompt(words, title):
     Story: <the story text>
     """
 
-def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None):
+def _read_story_stream(response, started, model, story_id, on_delta):
+    """Consume an OpenRouter SSE body and reassemble the final payload.
+
+    Returns ``(data, None)`` on success or ``(None, error_message)`` when the
+    user cancelled or the overall deadline was hit. ``data`` is shaped like a
+    non-streaming chat completion so the caller can treat both the same.
+
+    Providers that ignore ``"stream": true`` and answer with a single plain
+    JSON body are handled too: the raw body is parsed and emitted as one delta.
+    """
+    content_parts = []
+    reasoning_parts = []
+    usage = {}
+    provider_responses = []
+    seen_model = None
+    finish_reason = None
+    native_finish_reason = None
+    native_tokens_reasoning = None
+    saw_sse = False
+    done = False
+    plain_lines = []
+
+    for raw_line in response.iter_lines():
+        # Decode explicitly as UTF-8: "text/event-stream" carries no charset,
+        # so requests would otherwise fall back to ISO-8859-1 and mangle every
+        # em dash and curly quote in the story.
+        if isinstance(raw_line, bytes):
+            raw_line = raw_line.decode("utf-8", "replace")
+        if not raw_line or not raw_line.strip():
+            continue
+
+        line = raw_line.lstrip()
+        if not line.startswith("data:"):
+            # Not SSE — keep the raw line for the whole-body fallback below.
+            if not saw_sse:
+                plain_lines.append(line)
+            continue
+
+        if not saw_sse:
+            saw_sse = True
+            plain_lines = []
+
+        body = line[len("data:"):]
+        while body:
+            body = body.strip()
+            if not body:
+                break
+            if body == "[DONE]":
+                # Do NOT break out of the read loop: with
+                # stream_options.include_usage the final usage chunk arrives
+                # *after* this sentinel. Keep reading so token/cost accounting
+                # stays intact; the read timeout and the deadline below bound
+                # the wait if a provider forgets to close the stream.
+                done = True
+                break
+
+            # Bail out as early as possible once cancelled or out of time.
+            if _story_cancelled(story_id):
+                return None, _STORY_ERR_CANCELLED
+            if time.monotonic() - started > _STORY_MAX_ELAPSED:
+                return None, _STORY_ERR_DEADLINE
+
+            # raw_decode tells us exactly where this record ended, so we can
+            # tell a well-formed record apart from several glued onto one line
+            # without ever splitting inside the story text.
+            try:
+                chunk, consumed = _JSON_DECODER.raw_decode(body)
+            except ValueError:
+                nxt = body.find("data:")
+                if nxt == -1:
+                    break       # malformed record, nothing to resync to
+                body = body[nxt + len("data:"):]
+                continue
+            if not isinstance(chunk, dict):
+                break
+
+            if chunk.get("model"):
+                seen_model = chunk["model"]
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            if chunk.get("provider_responses"):
+                provider_responses = chunk["provider_responses"]
+            if chunk.get("finish_reason"):
+                finish_reason = chunk["finish_reason"]
+            if chunk.get("native_finish_reason"):
+                native_finish_reason = chunk["native_finish_reason"]
+            if chunk.get("native_tokens_reasoning") is not None:
+                native_tokens_reasoning = chunk["native_tokens_reasoning"]
+
+            for choice in chunk.get("choices") or []:
+                if done:
+                    break
+                # Streamed chunks use "delta"; some providers send a full "message".
+                piece = choice.get("delta") or choice.get("message") or {}
+                text = piece.get("content")
+                if text:
+                    content_parts.append(text)
+                    if on_delta:
+                        on_delta(text)
+                reasoning = piece.get("reasoning")
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+
+            body = body[consumed:]
+            nxt = body.find("data:")
+            if nxt == -1:
+                break       # that was the last record on this line
+            body = body[nxt + len("data:"):]
+
+    if not saw_sse and plain_lines:
+        # Non-streaming provider: parse the whole body at once.
+        try:
+            payload = json.loads("\n".join(plain_lines))
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            seen_model = payload.get("model") or seen_model
+            usage = payload.get("usage") or usage
+            provider_responses = payload.get("provider_responses") or provider_responses
+            finish_reason = payload.get("finish_reason") or payload.get("native_finish_reason") or finish_reason
+            native_finish_reason = payload.get("native_finish_reason") or native_finish_reason
+            if payload.get("native_tokens_reasoning") is not None:
+                native_tokens_reasoning = payload["native_tokens_reasoning"]
+            for choice in payload.get("choices") or []:
+                msg = choice.get("message") or choice.get("delta") or {}
+                if msg.get("content"):
+                    content_parts.append(msg["content"])
+                if msg.get("reasoning"):
+                    reasoning_parts.append(msg["reasoning"])
+
+    # Last chance to honour a cancel that landed while we were reading.
+    if _story_cancelled(story_id):
+        return None, _STORY_ERR_CANCELLED
+
+    if not saw_sse and content_parts and on_delta:
+        # Emit the whole (non-streamed) story as a single live update.
+        on_delta("".join(content_parts))
+
+    return {
+        "model": seen_model or model,
+        "choices": [{
+            "message": {
+                "content": "".join(content_parts),
+                "reasoning": "".join(reasoning_parts),
+            }
+        }],
+        "usage": usage,
+        "provider_responses": provider_responses,
+        "finish_reason": finish_reason,
+        "native_finish_reason": native_finish_reason,
+        "native_tokens_reasoning": native_tokens_reasoning,
+    }, None
+
+
+def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None, on_delta=None):
     if not OPENROUTER_API_KEY:
         return {"ok": False, "error": "OpenRouter API key not set. Add OPENROUTER_API_KEY to your .env file."}
     if not words:
@@ -289,7 +524,12 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.7,
-        "max_tokens": 10000
+        "max_tokens": 10000,
+        # Stream so the request can be cancelled mid-generation and the UI can
+        # render the story as it arrives. include_usage keeps the token/cost
+        # accounting identical to the non-streaming path.
+        "stream": True,
+        "stream_options": {"include_usage": True},
     }
 
     # Auto-detect reasoning config from model metadata.
@@ -297,7 +537,19 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
     if reasoning_config:
         payload["reasoning"] = reasoning_config
 
+    def post():
+        return requests.post(
+            OPENROUTER_BASE_URL,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=(_STORY_CONNECT_TIMEOUT, _STORY_READ_TIMEOUT),
+        )
+
     started = time.monotonic()
+    # Register before the request so a cancel arriving during the connect phase
+    # is not lost; _set_story_response closes the socket once it exists.
+    _register_story_control(story_id)
     try:
         id_part = f"id={story_id} " if story_id is not None else ""
         print(
@@ -306,30 +558,21 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             flush=True,
         )
         try:
-            response = requests.post(
-                OPENROUTER_BASE_URL, headers=headers, json=payload, timeout=(10, 240)
-            )
-            if story_id:
-                _active_story_responses.pop(story_id, None)
+            response = post()
+            _set_story_response(story_id, response)
         except requests.exceptions.ConnectionError:
             # May be caused by cancel_story_request closing the socket.
-            if story_id and story_id not in _active_story_responses:
-                return {"ok": False, "error": "Story generation cancelled."}
-            return {"ok": False, "error": "Error generating story: connection closed."}
+            if _story_cancelled(story_id):
+                return {"ok": False, "error": _STORY_ERR_CANCELLED}
+            return {"ok": False, "error": _STORY_ERR_DISCONNECTED}
         except requests.exceptions.Timeout:
-            return {"ok": False, "error": (
-                "Error generating story: request timed out. The model may be slow or rate-limited "
-                "for this many words. Try a smaller word set or a different model.")}
+            return {"ok": False, "error": _STORY_ERR_TIMEOUT}
         except requests.exceptions.RequestException as e:
             return {"ok": False, "error": f"Error generating story: {e}"}
 
-        # Hard total elapsed check (8 minutes).
-        elapsed = time.monotonic() - started
-        if elapsed > _STORY_MAX_ELAPSED:
-            return {"ok": False, "error": "Story generation timed out after 8 minutes. The provider may be too slow — try a different model or provider."}
-
         if response.status_code != 200:
             detail = response.text[:400].replace("\n", " ")
+            _safe_close(response)
             print(f"[story] OpenRouter {response.status_code} for model='{model}' for {len(words)} words: {detail}", file=sys.stderr, flush=True)
             should_retry = (
                 model != FALLBACK_MODEL and (
@@ -342,22 +585,35 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
                 print(f"[story] retry fallback {FALLBACK_MODEL} after {response.status_code} {model} for {len(words)} words", file=sys.stderr, flush=True)
                 payload["model"] = FALLBACK_MODEL
                 try:
-                    response = requests.post(
-                        OPENROUTER_BASE_URL, headers=headers, json=payload, timeout=(10, 240)
-                    )
+                    # No deltas were emitted by the failed attempt, so replaying
+                    # the same on_delta against the fallback model is safe.
+                    response = post()
+                    _set_story_response(story_id, response)
                 except requests.exceptions.RequestException as e:
                     return {"ok": False, "error": f"Error generating story: {e}"}
                 if response.status_code != 200:
                     detail = response.text[:400].replace("\n", " ")
+                    _safe_close(response)
                     return {"ok": False, "error": f"Error generating story ({response.status_code}): {detail}"}
                 model = FALLBACK_MODEL
             else:
                 return {"ok": False, "error": f"Error generating story ({response.status_code}): {detail}"}
 
+        # The deadline is enforced inside this loop, chunk by chunk.
         try:
-            data = response.json()
-        except ValueError:
-            return {"ok": False, "error": f"Error generating story: invalid JSON response ({response.status_code})."}
+            data, stream_error = _read_story_stream(response, started, model, story_id, on_delta)
+        except requests.exceptions.Timeout:
+            if _story_cancelled(story_id):
+                return {"ok": False, "error": _STORY_ERR_CANCELLED}
+            return {"ok": False, "error": _STORY_ERR_TIMEOUT}
+        except requests.exceptions.ConnectionError:
+            if _story_cancelled(story_id):
+                return {"ok": False, "error": _STORY_ERR_CANCELLED}
+            return {"ok": False, "error": _STORY_ERR_DISCONNECTED}
+        finally:
+            _safe_close(response)
+        if stream_error:
+            return {"ok": False, "error": stream_error}
 
         elapsed = time.monotonic() - started
         msg = (data.get("choices") or [{}])[0].get("message") or {}
@@ -369,6 +625,12 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         prompt_tokens = usage.get("prompt_tokens") or 0
         completion_tokens = usage.get("completion_tokens") or 0
         reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+        if not reasoning_tokens and msg.get("reasoning"):
+            # Provider sent no usage block. Approximate from the reasoning text
+            # so the log line still separates visible from hidden tokens.
+            reasoning_tokens = max(1, len(msg["reasoning"]) // 4)
+            if not completion_tokens:
+                completion_tokens = reasoning_tokens
         visible_tokens = max(0, completion_tokens - reasoning_tokens)
         total_tokens = usage.get("total_tokens") or (prompt_tokens + completion_tokens)
         cost = usage.get("cost")
@@ -401,6 +663,8 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         }
     except Exception as e:
         return {"ok": False, "error": f"Error generating story: {e}"}
+    finally:
+        _release_story_control(story_id)
 
 
 # --- Word-lookup (meanings / sentences / synonyms) ----------------------------

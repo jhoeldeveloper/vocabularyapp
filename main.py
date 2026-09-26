@@ -1,5 +1,8 @@
 import os
 import sys
+import re
+import json
+import time
 import asyncio
 import threading
 import sqlite3
@@ -275,17 +278,39 @@ class ConnectionManager:
         # Captured from an async context; falls back to this if a sync
         # (worker-thread) call happens first.
         self._loop = None
+        # Story ids each connection wants live text for. Story deltas are only
+        # sent to subscribers so a client parked on the Words view doesn't
+        # receive a token stream for a story it cannot see.
+        self.subs: dict = {}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        self.subs[websocket] = set()
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        self.subs.pop(websocket, None)
+
+    def subscribe(self, websocket: WebSocket, story_id: int):
+        self.subs.setdefault(websocket, set()).add(story_id)
+
+    def unsubscribe(self, websocket: WebSocket, story_id: int):
+        ids = self.subs.get(websocket)
+        if ids:
+            ids.discard(story_id)
 
     async def broadcast(self, message: str):
         tasks = [conn.send_text(message) for conn in self.active_connections]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def broadcast_story_delta(self, story_id: int, message: str):
+        """Send a story_delta/story_title frame to that story's subscribers."""
+        targets = [conn for conn, ids in self.subs.items() if story_id in ids]
+        if not targets:
+            return
+        tasks = [conn.send_text(message) for conn in targets]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def broadcast_from_sync(self, message: str):
@@ -297,9 +322,138 @@ class ConnectionManager:
             self._loop = loop
         except RuntimeError:
             loop = self._loop
+        if loop is None:
+            return
         asyncio.run_coroutine_threadsafe(self.broadcast(message), loop)
 
+    def broadcast_story_delta_from_sync(self, story_id: int, message: str):
+        """Worker-thread variant of broadcast_story_delta (story text deltas)."""
+        try:
+            loop = asyncio.get_running_loop()
+            self._loop = loop
+        except RuntimeError:
+            loop = self._loop
+        if loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.broadcast_story_delta(story_id, message), loop
+        )
+
+
 manager = ConnectionManager()
+
+# Live text of in-flight stories, so clients that subscribe (or reconnect)
+# mid-generation can be caught up. Keyed by story_id; cleaned up by
+# generate_story_job's finally block.
+#
+# Each entry carries the token of the job that owns it, so a job that is still
+# unwinding (e.g. cancelled just before the user hit Retry) can never clobber
+# the buffer of the newer job for the same story.
+_story_streams: dict = {}
+_story_streams_lock = threading.Lock()
+_story_stream_seq = 0
+
+# Live generation tasks, so cancel/delete can unwind the coroutine instead of
+# just flagging the DB row.
+_story_tasks: dict = {}
+
+# Delta batching: a token stream is chunked far faster than any UI can render,
+# so deltas are coalesced before hitting the WebSocket.
+_STREAM_FLUSH_SECONDS = 0.12
+_STREAM_FLUSH_CHARS = 400
+
+
+def _new_story_stream_token() -> int:
+    global _story_stream_seq
+    with _story_streams_lock:
+        _story_stream_seq += 1
+        return _story_stream_seq
+
+
+def _story_stream_append(story_id: int, token: int, text: str) -> None:
+    with _story_streams_lock:
+        entry = _story_streams.get(story_id)
+        if not entry or entry["token"] != token:
+            entry = {"token": token, "text": "", "title": None}
+            _story_streams[story_id] = entry
+        entry["text"] += text
+
+
+def _story_stream_snapshot(story_id: int):
+    with _story_streams_lock:
+        entry = _story_streams.get(story_id)
+        if not entry:
+            return "", None
+        return entry["text"], entry["title"]
+
+
+def _story_stream_clear(story_id: int, token: int) -> None:
+    """Drop the buffer, but only if it still belongs to the given job."""
+    with _story_streams_lock:
+        entry = _story_streams.get(story_id)
+        if entry and entry["token"] == token:
+            _story_streams.pop(story_id, None)
+
+
+def _story_stream_set_title(story_id: int, token: int, title: str) -> None:
+    with _story_streams_lock:
+        entry = _story_streams.get(story_id)
+        if entry and entry["token"] == token:
+            entry["title"] = title
+
+
+def _make_story_delta_sink(story_id: int, token: int):
+    """Build the on_delta callback for one story job.
+
+    Called from the worker thread once per SSE chunk. Accumulates the full text
+    (for replay) and flushes coalesced deltas to subscribed WebSocket clients.
+    """
+    pending = []
+    pending_chars = 0
+    last_flush = time.monotonic()
+    state = {"title_sent": False}
+
+    def flush():
+        nonlocal pending, pending_chars, last_flush
+        if not pending:
+            return
+        chunk = "".join(pending)
+        pending = []
+        pending_chars = 0
+        last_flush = time.monotonic()
+        # json.dumps keeps newlines and colons out of the single-string frame.
+        manager.broadcast_story_delta_from_sync(
+            story_id, f"story_delta:{story_id}:{json.dumps(chunk)}"
+        )
+
+    def on_delta(text: str):
+        nonlocal pending_chars
+        if not text:
+            return
+        _story_stream_append(story_id, token, text)
+        pending.append(text)
+        pending_chars += len(text)
+
+        full, _ = _story_stream_snapshot(story_id)
+        if not state["title_sent"]:
+            # The prompt asks for "Title: ..." first. Wait for the newline that
+            # ends the line, otherwise we'd publish a half-written title.
+            match = re.match(r"^\s*Title:[ \t]*([^\n]+)", full, re.IGNORECASE)
+            if match and match.end() < len(full) and full[match.end()] == "\n":
+                title = match.group(1).strip()
+                if title:
+                    _story_stream_set_title(story_id, token, title)
+                    state["title_sent"] = True
+                    manager.broadcast_story_delta_from_sync(
+                        story_id, f"story_title:{story_id}:{json.dumps(title)}"
+                    )
+
+        if pending_chars >= _STREAM_FLUSH_CHARS or \
+                time.monotonic() - last_flush >= _STREAM_FLUSH_SECONDS:
+            flush()
+
+    on_delta.flush = flush
+    return on_delta
 
 
 # --- WebSocket Endpoint ---
@@ -308,7 +462,32 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            # Commands are additive: the UI only uses them to follow live story
+            # text. Anything unparseable is ignored rather than fatal.
+            try:
+                msg = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(msg, dict):
+                continue
+            kind = msg.get("type")
+            story_id = msg.get("id")
+            if story_id is None:
+                continue
+            story_id = int(story_id)
+            if kind == "subscribe_story":
+                manager.subscribe(websocket, story_id)
+                # Catch the client up on whatever has been generated so far.
+                text, title = _story_stream_snapshot(story_id)
+                if title:
+                    await websocket.send_text(f"story_title:{story_id}:{json.dumps(title)}")
+                if text:
+                    await websocket.send_text(
+                        f"story_delta:{story_id}:{json.dumps(text)}"
+                    )
+            elif kind == "unsubscribe_story":
+                manager.unsubscribe(websocket, story_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:
@@ -579,17 +758,34 @@ async def create_story(data: StoryCreate):
     # Heavy AI generation runs as a background task so a page refresh or
     # dropped connection can't lose the result — it is written to the DB
     # and announced over the WebSocket when done.
-    asyncio.create_task(generate_story_job(story_id, words, data.title, actual_model, actual_provider))
+    _start_story_job(story_id, words, data.title, actual_model, actual_provider)
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 
 
 async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str, provider_tag: Optional[str] = None):
     """Generate story content in the background and persist it when done."""
+    token = _new_story_stream_token()
+    on_delta = _make_story_delta_sink(story_id, token)
     try:
-        result = await run_in_threadpool(openrouter_agent.sync_generate_story, words, title_hint, model, provider_tag, story_id)
+        result = await run_in_threadpool(
+            openrouter_agent.sync_generate_story,
+            words, title_hint, model, provider_tag, story_id, on_delta,
+        )
+        # Always ship the tail of the stream before the terminal event so the UI
+        # never renders a truncated story.
+        try:
+            on_delta.flush()
+        except Exception:
+            pass
+
         if not result.get("ok"):
-            raise RuntimeError(result.get("error", "Story generation failed"))
+            error = result.get("error", "Story generation failed")
+            if error == openrouter_agent._STORY_ERR_CANCELLED:
+                # cancel_story already wrote the failed row and announced it.
+                print(f"[STORY] generation cancelled for story {story_id}", flush=True)
+                return
+            raise RuntimeError(error)
 
         content = result["content"]
         duration_ms = int(result.get("elapsed", 0.0) * 1000)
@@ -599,33 +795,70 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
         def db_operation():
             conn = sqlite3.connect(DATABASE_URL)
             cursor = conn.cursor()
-            # Row may have been deleted by the user while generating; the
-            # UPDATE is then simply a no-op.
+            # Only publish if the row is still ours and still generating: the
+            # user may have cancelled or deleted it while we were streaming,
+            # and a late completion must never resurrect it.
+            cursor.execute("SELECT status FROM stories WHERE id = ?", (story_id,))
+            row = cursor.fetchone()
+            if not row or row[0] != "generating":
+                conn.close()
+                return False
             cursor.execute(
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
-                "status = 'ready', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                "status = 'ready', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status = 'generating'",
                 (title, content, model, duration_ms, cost, story_id),
             )
+            published = cursor.rowcount
             conn.commit()
             conn.close()
+            return published
 
-        await run_in_threadpool(db_operation)
+        published = await run_in_threadpool(db_operation)
+        if not published:
+            print(f"[STORY] discarded late result for story {story_id} (cancelled or deleted)", flush=True)
+            return
         manager.broadcast_from_sync(f"story_ready:{story_id}")
+    except asyncio.CancelledError:
+        # The HTTP request is aborted by openrouter_agent.cancel_story_request;
+        # this just stops the write and the broadcast.
+        print(f"[STORY] generation task cancelled for story {story_id}", flush=True)
+        raise
     except Exception as e:
-        print(f"[STORY] background generation failed for story {story_id}: {e}")
+        print(f"[STORY] background generation failed for story {story_id}: {e}", flush=True)
 
         def fail_operation():
             conn = sqlite3.connect(DATABASE_URL)
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE stories SET status = 'failed', error = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE stories SET status = 'failed', error = ?, updatedAt = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'generating'",
                 (str(e)[:500], story_id),
             )
+            changed = cursor.rowcount
             conn.commit()
             conn.close()
+            return changed
 
-        await run_in_threadpool(fail_operation)
-        manager.broadcast_from_sync(f"story_error:{story_id}")
+        changed = await run_in_threadpool(fail_operation)
+        if changed:
+            manager.broadcast_from_sync(f"story_error:{story_id}")
+    finally:
+        _story_stream_clear(story_id, token)
+        # Only drop the registry entry if it still points at this job: the user
+        # may have hit Retry, which installs a fresh task for the same story.
+        current = asyncio.current_task()
+        if _story_tasks.get(story_id) is current:
+            _story_tasks.pop(story_id, None)
+
+
+def _start_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str, provider_tag: Optional[str] = None):
+    """Create the background generation task and remember it for cancel/delete."""
+    task = asyncio.create_task(
+        generate_story_job(story_id, words, title_hint, model, provider_tag)
+    )
+    _story_tasks[story_id] = task
+    return task
 
 
 @app.get("/api/story_counts")
@@ -787,7 +1020,7 @@ async def retry_story(story_id: int):
     if row and row[0] and row[0] != "Generating story...":
         title_hint = row[0]
 
-    asyncio.create_task(generate_story_job(story_id, words, title_hint, actual_model))
+    _start_story_job(story_id, words, title_hint, actual_model)
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 
@@ -795,9 +1028,13 @@ async def retry_story(story_id: int):
 @app.post("/api/stories/{story_id}/cancel")
 async def cancel_story(story_id: int):
     """Cancel an in-flight story generation request."""
-    # 1. Close the HTTP request if it's in-flight.
-    openrouter_agent.cancel_story_request(story_id)
-    # 2. Mark DB as failed (only if still generating).
+    # 1. Close the streamed HTTP request. This is what actually stops the work.
+    aborted = openrouter_agent.cancel_story_request(story_id)
+    # 2. Unwind the coroutine so it stops before writing/announcing anything.
+    task = _story_tasks.pop(story_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+    # 3. Mark DB as failed (only if still generating).
     def fail_operation():
         conn = sqlite3.connect(DATABASE_URL)
         cursor = conn.cursor()
@@ -813,7 +1050,7 @@ async def cancel_story(story_id: int):
     changed = await run_in_threadpool(fail_operation)
     if changed:
         manager.broadcast_from_sync(f"story_error:{story_id}")
-    return {"ok": True}
+    return {"ok": True, "aborted": aborted}
 
 
 @app.put("/api/stories/{story_id}")
@@ -845,6 +1082,12 @@ async def update_story(story_id: int, data: StoryUpdate):
 
 @app.delete("/api/stories/{story_id}")
 async def delete_story(story_id: int):
+    # Abort any in-flight generation so it stops burning tokens against a row
+    # that is about to disappear.
+    if openrouter_agent.cancel_story_request(story_id):
+        task = _story_tasks.pop(story_id, None)
+        if task is not None and not task.done():
+            task.cancel()
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
         cursor = conn.cursor()

@@ -968,7 +968,6 @@ function connectWebSocket() {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
     socket = new WebSocket(wsUrl);
-    socket.onopen = () => console.log("WebSocket connection established.");
     socket.onmessage = async (event) => {
         if (event.data.startsWith("update_words")) {
             let wordToPlay = null;
@@ -1014,15 +1013,50 @@ function connectWebSocket() {
                 else btn.innerHTML = '<i class="fa-solid fa-volume-up"></i>';
                 alert('Audio generation failed. Check the server logs.');
             }
+        } else if (event.data.startsWith("story_delta")) {
+            // Live story text: "story_delta:<id>:<json string>".
+            const rest = event.data.slice("story_delta:".length);
+            const sep = rest.indexOf(':');
+            if (sep !== -1) {
+                let text = '';
+                try { text = JSON.parse(rest.slice(sep + 1)); } catch (e) { text = rest.slice(sep + 1); }
+                onStoryDelta(parseInt(rest.slice(0, sep), 10), text);
+            }
+        } else if (event.data.startsWith("story_title")) {
+            const rest = event.data.slice("story_title:".length);
+            const sep = rest.indexOf(':');
+            if (sep !== -1) {
+                let title = '';
+                try { title = JSON.parse(rest.slice(sep + 1)); } catch (e) { title = rest.slice(sep + 1); }
+                onStoryTitle(parseInt(rest.slice(0, sep), 10), title);
+            }
         } else if (event.data.startsWith("story_ready") || event.data.startsWith("story_error")) {
-            // Background story generation finished (or failed). Refresh the
-            // list so the placeholder swaps for the real story. This also
-            // covers clients that reconnected after a page refresh.
+            // Background story generation finished (or failed). Drop the live
+            // buffer and refresh the list so the placeholder swaps for the real
+            // story. This also covers clients that reconnected mid-generation.
+            const sid = parseInt(event.data.slice(event.data.indexOf(':') + 1), 10);
+            const wasStreaming = storyStreams.has(sid);
+            dropStoryStream(sid);
+            unsubscribeStoryStream(sid);
             const panel = document.getElementById('storiesPanel');
             if (panel.style.display !== 'none') {
                 loadStories();
             }
-            if (event.data.startsWith("story_error")) showToast('A story failed to generate.');
+            if (event.data.startsWith("story_error")) {
+                showToast(wasStreaming ? 'Story generation stopped.' : 'A story failed to generate.');
+                if (currentModalStoryId === sid) closeStoryModal();
+            } else if (currentModalStoryId === sid) {
+                // Re-open from the DB so the modal shows the authoritative text.
+                openStoryModal(sid);
+            }
+        }
+    };
+    socket.onopen = () => {
+        console.log("WebSocket connection established.");
+        // A fresh socket has no subscriptions; re-follow whatever is still open.
+        const overlay = document.getElementById('storyModalOverlay');
+        if (currentModalStoryId != null && overlay.classList.contains('open')) {
+            subscribeStoryStream(currentModalStoryId);
         }
     };
     socket.onclose = () => setTimeout(connectWebSocket, 5000);
@@ -1362,6 +1396,108 @@ function fetchData(sortBy = currentSort, order = currentOrder) {
 // --- Story modal ---
 let currentModalStoryId = null;
 
+// Live text of in-flight stories: id -> {text, title, renderTimer, listTimer}.
+const storyStreams = new Map();
+
+// Re-rendering Markdown for every token is far too expensive, so the modal is
+// refreshed on this interval instead.
+const STREAM_RENDER_MS = 150;
+
+function storyStreamState(id) {
+  let st = storyStreams.get(id);
+  if (!st) {
+    st = { text: '', title: null, renderTimer: null, listTimer: null };
+    storyStreams.set(id, st);
+  }
+  return st;
+}
+
+function subscribeStoryStream(id) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'subscribe_story', id }));
+  }
+}
+
+function unsubscribeStoryStream(id) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'unsubscribe_story', id }));
+  }
+}
+
+function dropStoryStream(id) {
+  const st = storyStreams.get(id);
+  if (st) {
+    if (st.renderTimer) clearTimeout(st.renderTimer);
+    if (st.listTimer) clearTimeout(st.listTimer);
+  }
+  storyStreams.delete(id);
+}
+
+function renderStreamedStory(id) {
+  const st = storyStreams.get(id);
+  if (!st) return;
+  if (currentModalStoryId !== id) return;
+  const overlay = document.getElementById('storyModalOverlay');
+  const body = document.getElementById('storyModalBody');
+  if (!overlay.classList.contains('open')) return;
+  // Follow the tail only when the reader is already at the bottom, so scrolling
+  // back to re-read a sentence is not fought by the stream.
+  const scroller = body.parentElement;
+  const atBottom = scroller
+    ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40
+    : true;
+  body.innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}</div>`;
+  if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+  const counter = document.getElementById('storyStreamChars');
+  if (counter) counter.textContent = countStoryChars(st.text).toLocaleString();
+}
+
+function scheduleStreamRender(id) {
+  const st = storyStreamState(id);
+  if (st.renderTimer) return;
+  st.renderTimer = setTimeout(() => {
+    st.renderTimer = null;
+    renderStreamedStory(id);
+  }, STREAM_RENDER_MS);
+}
+
+function updateStreamListItem(id) {
+  const item = document.querySelector(`.story-list-item[data-id="${id}"]`);
+  if (!item) return;
+  const statusLine = item.querySelector('.story-list-status-line');
+  if (!statusLine) return;
+  const st = storyStreams.get(id);
+  const chars = st ? countStoryChars(st.text) : 0;
+  statusLine.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 ${chars.toLocaleString()} chars`;
+}
+
+function scheduleStreamListUpdate(id) {
+  const st = storyStreamState(id);
+  if (st.listTimer) return;
+  st.listTimer = setTimeout(() => {
+    st.listTimer = null;
+    updateStreamListItem(id);
+  }, 250);
+}
+
+function onStoryDelta(id, chunk) {
+  const st = storyStreamState(id);
+  st.text += chunk;
+  scheduleStreamRender(id);
+  scheduleStreamListUpdate(id);
+}
+
+function onStoryTitle(id, title) {
+  const st = storyStreamState(id);
+  st.title = title;
+  if (currentModalStoryId === id) {
+    const el = document.getElementById('storyModalTitle');
+    if (el && el.textContent !== title) el.textContent = title;
+  }
+  const item = document.querySelector(`.story-list-item[data-id="${id}"] .story-list-title`);
+  if (item) item.textContent = title;
+}
+
 function formatDate(ts) {
   if (!ts) return '';
   const d = new Date(String(ts).replace(' ', 'T') + 'Z');
@@ -1408,7 +1544,52 @@ function countStoryChars(content) {
   return stripStoryLabels(content || '').length;
 }
 
+// Open a story that is still generating: show a live preview fed by the
+// WebSocket deltas. The server replays everything generated so far on
+// subscribe, so joining mid-stream is seamless.
+function openGeneratingStoryModal(id, s) {
+  const st = storyStreamState(id);
+  const overlay = document.getElementById('storyModalOverlay');
+  switchStoryTab();
+  document.getElementById('storyModalTitle').textContent = st.title || s.title || 'Generating…';
+  const body = document.getElementById('storyModalBody');
+  body.innerHTML = st.text
+    ? `<div class="rendered">${marked.parse(stripStoryLabels(st.text))}</div>`
+    : '<p style="color:var(--text-meta)"><i class="fa-solid fa-spinner fa-spin"></i> Waiting for the first words…</p>';
+
+  // Meta row: a live-updating char count, and a cancel button.
+  const metaEl = document.getElementById('storyModalMeta');
+  metaEl.className = 'story-list-meta';
+  metaEl.style.display = '';
+  metaEl.style.borderBottom = '1px solid var(--border-details)';
+  metaEl.style.paddingBottom = '6px';
+  metaEl.style.marginBottom = '8px';
+  metaEl.innerHTML = '';
+  const line = document.createElement('span');
+  line.className = 'story-list-meta-line';
+  line.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating — <span id="storyStreamChars">${countStoryChars(st.text).toLocaleString()}</span> chars`;
+  metaEl.appendChild(line);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'story-list-cancel';
+  cancelBtn.title = 'Cancel generation';
+  cancelBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Stop';
+  cancelBtn.style.marginLeft = '8px';
+  cancelBtn.onclick = () => cancelStory(id);
+  metaEl.appendChild(cancelBtn);
+
+  // The word chips aren't known until the story is saved; hide the old ones.
+  document.getElementById('storyModalWordsChips').innerHTML = '';
+
+  overlay.classList.add('open');
+  subscribeStoryStream(id);
+  renderStreamedStory(id);
+}
+
 async function openStoryModal(id) {
+  // Leaving a previous story: stop following its live text.
+  if (currentModalStoryId != null && currentModalStoryId !== id) {
+    unsubscribeStoryStream(currentModalStoryId);
+  }
   currentModalStoryId = id;
   stopAudio();
   hideStoryPlayer();
@@ -1416,6 +1597,14 @@ async function openStoryModal(id) {
     const res = await fetch(`/api/stories/${id}`);
     if (!res.ok) return;
     const s = await res.json();
+
+    if (s.status === 'generating') {
+      // Follow the live stream instead of showing an empty body.
+      openGeneratingStoryModal(id, s);
+      return;
+    }
+
+    dropStoryStream(id);
     document.getElementById('storyModalTitle').textContent = s.title || 'Untitled';
     document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
     const metaEl = document.getElementById('storyModalMeta');
@@ -1465,6 +1654,7 @@ async function openStoryModal(id) {
 
 function closeStoryModal() {
   document.getElementById('storyModalOverlay').classList.remove('open');
+  if (currentModalStoryId != null) unsubscribeStoryStream(currentModalStoryId);
   stopAudio();
   hideStoryPlayer();
 }
@@ -2043,8 +2233,11 @@ async function _doGenerateStory(words, title, model, provider) {
     }
     const story = await res.json();
     currentStoryId = story.id;
+    // Follow this story's live text so the list shows a running char count.
+    storyStreamState(story.id);
+    subscribeStoryStream(story.id);
     status.style.display = 'block';
-    status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. You can safely leave or refresh this page; it will appear in Saved Stories when ready.`;
+    status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. Click it to watch it being written.`;
     loadStories();
     document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
@@ -2546,6 +2739,7 @@ async function playAudioFile(url, btn, onEnd) {
 async function deleteStory(id) {
   if (!confirm('Delete this story? This also removes its saved audio.')) return;
   await fetch(`/api/stories/${id}`, { method: 'DELETE' });
+  dropStoryStream(id);
   if (currentStoryId === id) {
     currentStoryId = null;
   }
@@ -2560,6 +2754,9 @@ async function retryStory(id) {
       throw new Error(e.detail || 'Retry failed');
     }
     showToast(`Retrying story #${id}\u2026`);
+    // Follow the retried story's live text too.
+    storyStreamState(id);
+    subscribeStoryStream(id);
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -2573,7 +2770,13 @@ async function cancelStory(id) {
       const e = await res.json().catch(() => ({}));
       throw new Error(e.detail || 'Cancel failed');
     }
-    showToast(`Story #${id} cancelled.`);
+    const data = await res.json().catch(() => ({}));
+    dropStoryStream(id);
+    if (data.aborted) {
+      showToast(`Story #${id} cancelled.`);
+    } else {
+      showToast(`Story #${id} had already finished generating.`);
+    }
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -2607,7 +2810,12 @@ async function loadStories(wordId) {
       const statusLine = document.createElement('span');
       statusLine.className = 'story-list-status-line';
       if (isGenerating) {
-        statusLine.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026';
+        const st = storyStreams.get(s.id);
+        const chars = st ? countStoryChars(st.text) : 0;
+        statusLine.innerHTML = chars > 0
+          ? `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 ${chars.toLocaleString()} chars`
+          : '<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026';
+        statusLine.title = 'Click the story to watch it being written.';
       } else {
         const errText = s.error || 'Generation failed';
         const warnIcon = document.createElement('i');
@@ -2669,7 +2877,8 @@ async function loadStories(wordId) {
     right.appendChild(del);
     item.appendChild(titleBox);
     item.appendChild(right);
-    item.onclick = (isGenerating || isFailed) ? null : () => openStoryModal(s.id);
+    // Generating stories are openable too — the modal shows the live preview.
+    item.onclick = isFailed ? null : () => openStoryModal(s.id);
     box.appendChild(item);
   });
 }
