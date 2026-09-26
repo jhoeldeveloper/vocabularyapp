@@ -478,17 +478,16 @@
     .story-word-chip:hover { border-color: var(--color-primary); }
     mark.story-hl { background-color: #ffe066; color: inherit; border-radius: 3px; padding: 0 2px; }
     .story-meta { font-size: 0.75em; color: var(--text-meta); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-details); }
-    /* The stat bar lives inside the scrolling tab panel, so it is pinned with
-       position:sticky instead of scrolling away with the story text. Styled by
-       ID on purpose: both the completed and the streaming modal paths overwrite
-       className with 'story-list-meta', so a class rule would be dropped. */
+    /* The stat bar lives OUTSIDE the scrolling tab panel: it is a flex-shrink:0
+       sibling of it, so the stats never scroll away and no sticky/negative-margin
+       maths is needed. Styled by ID because both the completed and the streaming
+       modal paths overwrite className with 'story-list-meta'. */
     #storyModalMeta {
-        position: sticky; top: 0; z-index: 2;
+        flex-shrink: 0;
+        margin: 0;                     /* cancels .story-list-meta's margin-top */
         background-color: var(--bg-card);
-        /* Full-bleed past the tab panel's 16px padding so the bar spans edge to edge. */
-        margin: -16px -16px 8px;
-        padding: 8px 16px;
         border-bottom: 1px solid var(--border-details);
+        padding: 10px 16px;            /* 16px lines the pills up with the prose */
     }
     /* Stop-generating control: a pill like the other stats, but in danger red.
        Uses the filled square (fa-stop) rather than an X, which would be
@@ -822,8 +821,8 @@
             <button class="modal-tab active" data-tab="story">Story</button>
             <button class="modal-tab" data-tab="built">Built from</button>
         </div>
+        <div class="story-meta" id="storyModalMeta" style="display:none;"></div>
         <div id="storyTabPanel" class="modal-tab-panel">
-            <div class="story-meta" id="storyModalMeta" style="display:none;"></div>
             <div id="storyModalBody" class="rendered"></div>
         </div>
         <div id="builtTabPanel" class="modal-tab-panel" style="display:none;">
