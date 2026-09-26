@@ -289,6 +289,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.7,
+        "max_tokens": 10000
     }
 
     # Auto-detect reasoning config from model metadata.
