@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -63,6 +64,10 @@ _STORY_ERR_DEADLINE = (
     "Story generation timed out after 8 minutes. The provider may be too slow "
     "— try a different model or provider."
 )
+# A story cut off by max_tokens is still published (status 'truncated'), but only
+# if there is a useful amount of prose left. Below this many visible tokens the
+# "story" is a sentence or two and is not worth keeping.
+_STORY_MIN_VISIBLE_TOKENS = 50
 
 # raw_decode on this gives (record, chars_consumed), which is how the stream
 # reader tells one SSE record from several packed onto a single line.
@@ -306,34 +311,186 @@ REDDIT_STYLES = [
 ]
 
 def _build_prompt(words, title):
-    word_list = ", ".join(words)
     style = random.choice(REDDIT_STYLES)
+    # A numbered block keeps multi-word phrases intact and stops the model from
+    # reading the words as part of the instructions.
+    word_list = "\n".join(f"{i + 1}. {w}" for i, w in enumerate(words))
     title_instruction = (
-        f"Use exactly this title: '{title}'." if title
-        else "Invent a short, catchy title."
+        f"Use exactly this title, word for word: '{title}'." if title
+        else "Invent a short, catchy title of at most 8 words."
     )
-    return f"""Write one enjoyable, coherent story that reads like a real post on Reddit and uses ALL of these words: {word_list}
+    return f"""Write one enjoyable, coherent story that reads like a real post on Reddit, and that uses every word in this list:
 
-    Style for this story: {style}.
+WORDS TO USE
+{word_list}
 
-    Story requirements:
-    - Write in the first person, in a casual, conversational voice, like someone telling a friend what happened. Open with a hook in the first two sentences.
-    - One narrator with a clear goal, one place that changes as the story moves, and a real plot with a beginning, a middle (a problem or conflict) and an unexpected ending.
-      Make the twist feel earned by details planted earlier.
-    - Every scene should follow logically from the previous one. Never restart the story or jump to unrelated scenes.
-    - The words are given in random order. Do NOT use them in list order. Place each word in the scene where it fits most naturally, and don't force several unrelated words into one sentence.
-    - Use each word at least once, and no more than 3 times, in a sentence where the context makes its meaning clear.
-    - Make sure to include all the words without losing coherence.
-    - Use vivid details, realistic dialogue, honest reactions and small funny or awkward moments. Keep the language simple enough for a learner.
-    - No swearing. Do not add an "Edit" or "Update" line at the end and Do not use the word "Reddit".
-    - Wrap every occurrence of a vocabulary word in Markdown bold (**word**). Bold only those words.
+Style for this story: {style}.
 
-    {title_instruction}
+PLOT
+- First person, casual and conversational, like telling a friend what happened. Open with a hook in the first two sentences.
+- One narrator with a clear goal, one place that changes as the story moves, a problem in the middle, and an unexpected ending whose twist is set up by details planted earlier.
+- Every scene follows from the previous one. No restarting, no unrelated jumps.
+- Vivid details, realistic dialogue, honest reactions, small funny or awkward moments.
 
-    Output format (exactly two labelled sections):
-    Title: <the title>
-    Story: <the story text>
+USING THE WORDS
+- The list is in random order. Do not work through it in order: place each word in whichever scene it fits most naturally, and never force two unrelated words into one sentence.
+- Use each word at least once, at most twice, in its standard sense, in a sentence where the meaning is clear from context alone.
+- A variant of a word counts as using it: run/running/ran, quick/quickly, look/looked/looking, and for a phrase, one word of the phrase inflected.
+- Never explain, translate or gloss a word in the story, and never mention the list itself.
+
+BOLDING (graded strictly)
+- Bold exactly one occurrence of each word in the list, using **double asterisks**. The bolded word may be a variant of the listed one.
+- Bold NOTHING else. A bolded word that is not in the list is a failure.
+  Example with a list of [run, ephemeral, piece of cake]:
+  Right: a **run** in the rain, an **ephemeral** victory, a **piece of cake** to fix it.
+  Wrong: I **use** my phone, I was **already** late, **not** a good idea. <-- none of these are listed words
+- If a listed word is an everyday word, use it in its less obvious sense and still bold only that one occurrence.
+- The title must not be bolded.
+
+LANGUAGE
+- Learner level B1-C1: mostly short-to-medium sentences (under 25 words), plain words everywhere except the listed ones, no idioms the narrator would have to explain.
+- No swearing. Never write the word "Reddit". No "Edit" or "Update" line at the end.
+- Plain prose only: no headings, lists, block quotes, code fences or commentary around the story.
+
+{title_instruction}
+
+OUTPUT — emit exactly this and nothing else, no preamble and no closing remarks:
+Title: <the title>
+
+Story: <the story text>
+
+Before you answer, check yourself: every listed word appears once in bold (a variant is fine), and no other word is bolded."""
+
+def _normalize_term(text):
+    """Lowercase a word or phrase and keep only its letters and spaces."""
+    cleaned = re.sub(r"[^a-z0-9 ]+", " ", str(text).lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+# Cheap suffix stripping so an inflected form still matches its dictionary entry.
+# Deliberately conservative: it only tries the endings English actually adds to
+# these words, and never strips below 3 characters.
+_SUFFIXES = ("ingly", "edly", "ing", "ers", "er", "ies", "ied", "es", "ed", "ly", "s")
+
+# Irregular forms no suffix stripper can reach. The prompt explicitly lets the
+# model inflect a listed word, so "run" has to keep "ran" bolded or the
+# sanitizer would delete a perfectly good highlight. Every value is a real
+# tuple -- a bare ("children") would be a string and update() would splatter
+# single characters into the allowed set.
+_IRREGULAR = {
+    "run": ("ran", "running"), "go": ("went", "gone", "going"), "eat": ("ate", "eaten"),
+    "write": ("wrote", "written"), "take": ("took", "taken"), "give": ("gave", "given"),
+    "see": ("saw", "seen"), "come": ("came", "coming"), "do": ("did", "done", "doing"),
+    "make": ("made", "making"), "say": ("said", "saying"), "tell": ("told", "telling"),
+    "get": ("got", "gotten"), "find": ("found", "finding"), "think": ("thought", "thinking"),
+    "bring": ("brought",), "hold": ("held",), "leave": ("left",), "keep": ("kept",),
+    "feel": ("felt",), "sleep": ("slept",), "lose": ("lost",), "meet": ("met",),
+    "pay": ("paid",), "put": ("putting",), "read": ("reading",), "sit": ("sat", "sitting"),
+    "sell": ("sold",), "send": ("sent",), "set": ("setting",), "stand": ("stood",),
+    "understand": ("understood",), "win": ("won",), "wear": ("wore", "worn"),
+    "choose": ("chose", "chosen"), "drive": ("drove", "driven"), "fall": ("fell", "fallen"),
+    "draw": ("drew", "drawn"), "grow": ("grew", "grown"), "know": ("knew", "known"),
+    "speak": ("spoke", "spoken"), "throw": ("threw", "thrown"), "break": ("broke", "broken"),
+    "become": ("became",), "begin": ("began", "begun"), "bite": ("bit", "bitten"),
+    "blow": ("blew", "blown"), "build": ("built",), "buy": ("bought",), "catch": ("caught",),
+    "cut": ("cutting",), "deal": ("dealt",), "dig": ("dug",), "feed": ("fed",),
+    "fight": ("fought",), "fly": ("flew", "flown"), "forget": ("forgot", "forgotten"),
+    "freeze": ("froze", "frozen"), "hide": ("hid", "hidden"), "hurt": ("hurt",),
+    "lead": ("led",), "lend": ("lent",), "lie": ("lay", "lain"), "light": ("lit",),
+    "ride": ("rode", "ridden"), "ring": ("rang", "rung"), "rise": ("rose", "risen"),
+    "shake": ("shook", "shaken"), "shrink": ("shrank",), "sink": ("sank", "sunk"),
+    "spread": ("spread",), "steal": ("stole", "stolen"), "swim": ("swam", "swum"),
+    "teach": ("taught",), "tear": ("tore", "torn"), "wake": ("woke", "woken"),
+    "good": ("better", "best"), "bad": ("worse", "worst"), "many": ("more", "most"),
+    "much": ("more", "most"), "little": ("less", "least"), "far": ("farther", "further"),
+    "well": ("better", "best"), "badly": ("worse", "worst"), "child": ("children",),
+    "foot": ("feet",), "tooth": ("teeth",), "person": ("people",), "man": ("men",),
+    "woman": ("women",), "life": ("lives",), "wife": ("wives",), "knife": ("knives",),
+    "leaf": ("leaves",), "wolf": ("wolves",), "half": ("halves",), "thief": ("thieves",),
+}
+
+# Endings the model may legitimately add to a listed word. Used to *widen* the
+# allowed set (over-permitting only means a stray bold survives; under-
+# permitting would delete a correct highlight), so it is deliberately generous.
+_DERIVATIONS = ("s", "es", "ed", "d", "ing", "ly", "er", "est", "ies", "ied")
+
+def _variants_of(term):
+    """The term itself plus a few stripped forms, for bold-matching."""
+    seen = {term}
+    if not term:
+        return seen
+    for suffix in _SUFFIXES:
+        if not term.endswith(suffix):
+            continue
+        base = term[: -len(suffix)]
+        # "ies"/"ied" lose a character, not just a suffix: "tried" -> "try".
+        if suffix in ("ies", "ied"):
+            if base.endswith("i") and len(base) >= 3:
+                seen.add(base[:-1] + "y")
+            continue
+        if len(base) < 3:
+            continue
+        seen.add(base)
+        # doubled consonant: "running" -> "run"
+        if len(base) > 3 and base[-1] == base[-2]:
+            seen.add(base[:-1])
+    # Irregular forms, plus the reverse direction ("ran" should match "run").
+    for base, forms in _IRREGULAR.items():
+        if term == base or term in forms:
+            seen.add(base)
+            seen.update(forms)
+    return seen
+
+def _allowed_bold_terms(words):
+    """Every single token that may legitimately be bolded for this word list."""
+    allowed = set()
+    for word in words or []:
+        normalized = _normalize_term(word)
+        if not normalized:
+            continue
+        allowed.add(normalized)
+        bases = _variants_of(normalized)
+        # A phrase entry also licenses any single word of it, since the prompt
+        # lets the model inflect one word of a phrase.
+        for part in normalized.split():
+            bases |= _variants_of(part)
+        for base in bases:
+            allowed.add(base)
+            # A listed word may be the one that got inflected in the story, so
+            # accept the derived forms of every form we know about.
+            for ending in _DERIVATIONS:
+                allowed.add(base + ending)
+                if base.endswith("e"):
+                    allowed.add(base[:-1] + ending)
+            # consonant + y: "try" -> "tried", "tries", "trier".
+            if base.endswith("y") and len(base) >= 3:
+                stem = base[:-1]
+                for ending in ("ied", "ies", "ier", "iest", "ily", "ying"):
+                    allowed.add(stem + ending)
+    return allowed
+
+def _strip_stray_bold(content, words):
+    """Un-bold anything that is not a listed word or a variant of one.
+
+    Models over-apply bold even when told not to (bolding "use", "already",
+    "not"), which reads as sloppy in the rendered story. The DB is the source of
+    truth for what a word looked like, so the fix is applied before persisting.
+    Deliberately one-sided: it only ever removes bold, never adds it, so a word
+    the model failed to highlight stays un-highlighted rather than being mangled.
     """
+    allowed = _allowed_bold_terms(words)
+    if not allowed:
+        return content
+
+    def fix(match):
+        inner = match.group(1)
+        # A bolded multi-word span is left alone: it is almost certainly a listed
+        # phrase, and guessing which word inside it is the target is not worth it.
+        if " " in inner.strip():
+            return match.group(0)
+        return f"**{inner}**" if _normalize_term(inner) in allowed else inner
+
+    return re.sub(r"\*\*(.+?)\*\*", fix, content, flags=re.S)
+
 
 def _read_story_stream(response, started, model, story_id, on_delta):
     """Consume an OpenRouter SSE body and reassemble the final payload.
@@ -640,6 +797,22 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         provider_responses = data.get("provider_responses") or []
         provider_name = provider_responses[0].get("provider_name", "?") if provider_responses else "?"
         finish = data.get("finish_reason") or data.get("native_finish_reason") or "?"
+        # "length" means the model ran into max_tokens and stopped mid-sentence.
+        # The prose is still worth showing, so it is reported to the caller
+        # rather than treated as a failure (main.py stores it as a 'truncated'
+        # story the user can retry). The exception is a reasoning model that
+        # spent the whole budget thinking and emitted almost no visible text:
+        # there is nothing worth keeping, so that fails outright.
+        truncated = finish == "length"
+        if truncated and visible_tokens < _STORY_MIN_VISIBLE_TOKENS:
+            return {
+                "ok": False,
+                "error": (
+                    "Error generating story: the model used the whole token budget "
+                    "reasoning and left almost no story text. Try a different model "
+                    "or generate with fewer words."
+                ),
+            }
         actual_model = data.get("model", model)
         chars = len(content)
         native_reason = data.get("native_tokens_reasoning")
@@ -655,11 +828,15 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
 
         return {
             "ok": True,
-            "content": content,
+            "content": _strip_stray_bold(content, words),
             "elapsed": elapsed,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "reasoning_tokens": reasoning_tokens,
+            # True when finish_reason == "length": the prose stops mid-sentence
+            # because it hit max_tokens. main.py publishes it anyway, as a
+            # 'truncated' story, so the user can read it and retry.
+            "truncated": truncated,
             "cost": round(cost, 6),
         }
     except Exception as e:

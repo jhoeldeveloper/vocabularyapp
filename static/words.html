@@ -31,6 +31,12 @@
         --color-success-disabled: #94d3a2;
         --color-danger:   #dc3545;
 
+        /* Cut-off ("truncated") story notice: amber, deliberately not the red
+           used for failures -- a truncated story is readable, just incomplete. */
+        --warn-bg:        #fdf3d7;
+        --warn-border:    #e0b950;
+        --warn-text:      #7a5300;
+
         --shadow-card:    rgba(0,0,0,0.07);
         --shadow-btn:     rgba(0,0,0,0.1);
         --shadow-search:  rgba(0,123,255,0.15);
@@ -55,6 +61,10 @@
         --text-secondary: #C0C8D8; /* white_alt */
         --text-meta:      #60728A; /* gray5 */
         --text-heading:   #81A1C1; /* blue1 */
+
+        --warn-bg:        #2a2415;
+        --warn-border:    #6b5520;
+        --warn-text:      #e3c766;
 
         --shadow-card:    rgba(0,0,0,0.3);
         --shadow-btn:     rgba(0,0,0,0.3);
@@ -500,6 +510,30 @@
         font-family: inherit;
     }
     .story-stop:hover { background: rgba(220, 38, 38, 0.2); color: #b91c1c; }
+    /* "Cut off" notice for a story that hit the model's token limit. Same
+       placement rule as the stat bar above: a flex-shrink:0 sibling BEFORE the
+       scrolling .modal-tab-panel, so it can never scroll out of sight. It is
+       deliberately not inside the panel — see the note on #storyModalMeta about
+       sticky/negative-margin maths failing on the panel's box model. */
+    #storyTruncatedNote {
+        flex-shrink: 0;
+        display: none;                   /* JS shows it only for status 'truncated' */
+        align-items: center; gap: 8px;
+        background-color: var(--warn-bg);
+        color: var(--warn-text);
+        border-bottom: 1px solid var(--warn-border);
+        padding: 8px 16px;
+        font-size: 0.8em;
+    }
+    #storyTruncatedNote i { opacity: 0.9; }
+    #storyTruncatedNote .story-truncated-retry {
+        margin-left: auto; flex-shrink: 0;
+        font-family: inherit; cursor: pointer;
+        background: none; color: inherit;
+        border: 1px solid var(--warn-border); border-radius: 999px;
+        padding: 2px 10px; font-size: 0.95em; white-space: nowrap;
+    }
+    #storyTruncatedNote .story-truncated-retry:hover { background: var(--warn-border); }
     /* Blinking caret at the tail of the text while it is still being written. */
     .stream-caret {
         display: inline-block; margin-left: 1px; color: var(--text-meta);
@@ -733,6 +767,11 @@
     .story-list-item.is-generating .story-list-status-line { color: var(--color-success); }
     .story-list-item.is-failed { border-style: dashed; opacity: 0.8; }
     .story-list-item.is-failed .story-list-status-line { color: #dc2626; }
+    /* A truncated story is readable, so it keeps the normal row look and only
+       gains a dashed amber edge — no dimming, unlike a failed one. */
+    .story-list-item.is-truncated { border-style: dashed; border-color: var(--warn-border); }
+    .story-list-item.is-truncated:hover { border-color: var(--warn-border); }
+    .story-list-meta-line.is-warning { color: var(--warn-text); background: var(--warn-bg); }
     .story-card { margin-bottom: 16px; }
     .story-card .word-details { display: block; }
 
@@ -822,6 +861,14 @@
             <button class="modal-tab" data-tab="built">Built from</button>
         </div>
         <div class="story-meta" id="storyModalMeta" style="display:none;"></div>
+        <!-- Cut-off notice. Sibling of both tab panels (not inside either) so it
+             is always visible; JS fills it in and shows it only when the story
+             was truncated by the model's token limit. -->
+        <div id="storyTruncatedNote">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span class="story-truncated-text"></span>
+            <button class="story-truncated-retry" type="button">Retry</button>
+        </div>
         <div id="storyTabPanel" class="modal-tab-panel">
             <div id="storyModalBody" class="rendered"></div>
         </div>
@@ -1446,6 +1493,50 @@ function estimateTokens(text) {
     return Math.round(countStoryChars(text || '') / 4);
 }
 
+// Token counts for a finished story, as shown in BOTH the story list and the
+// modal. Defined once so the two surfaces cannot drift.
+//
+// Real usage when OpenRouter reported it, otherwise an estimate. Two cases
+// produce no usage: rows written before the token columns were migrated in
+// (NULL), and providers that omit the final SSE `usage` chunk (stored as 0).
+// Neither is backfilled in the DB — a guess written there would be
+// indistinguishable from a real measurement forever — so the estimate is
+// computed here and marked with "≈". The input side is not estimated: the
+// prompt is not stored, so there is nothing honest to derive it from.
+function storyTokenLabel(s) {
+    const inTok = s.prompt_tokens || 0;
+    const outTok = s.completion_tokens || 0;
+    if (inTok || outTok) {
+        const reasoning = s.reasoning_tokens || 0;
+        return `${inTok.toLocaleString()} in • ${outTok.toLocaleString()} out`
+            + (reasoning > 0 ? ` (${reasoning.toLocaleString()} reasoning)` : '');
+    }
+    const est = estimateTokens(s.content || '');
+    return est > 0 ? `≈${est.toLocaleString()} out (estimated)` : '';
+}
+
+// Show or hide the modal's "cut off" notice. Hidden for everything else,
+// including a story that is still generating.
+function setStoryTruncatedNote(s) {
+    const note = document.getElementById('storyTruncatedNote');
+    if (!note) return;
+    if (!s || s.status !== 'truncated') {
+        note.style.display = 'none';
+        return;
+    }
+    note.querySelector('.story-truncated-text').textContent =
+        "This story hit the model's token limit, so the ending is missing.";
+    const retry = note.querySelector('.story-truncated-retry');
+    retry.onclick = () => {
+      retryStory(s.id).then(() => {
+        // Re-enter the live view: the retry endpoint has already flipped the row
+        // to 'generating', so this takes the streaming path and hides the notice.
+        if (currentModalStoryId === s.id) openStoryModal(s.id);
+      });
+    };
+    note.style.display = 'flex';
+}
+
 function storyStreamState(id) {
   let st = storyStreams.get(id);
   if (!st) {
@@ -1670,6 +1761,9 @@ function openGeneratingStoryModal(id, s) {
   streamStartedAt(id, s);
   const overlay = document.getElementById('storyModalOverlay');
   switchStoryTab();
+  // A retry of a truncated story reuses this path, so clear any notice left
+  // over from the previous (truncated) version of this story.
+  setStoryTruncatedNote(s);
   document.getElementById('storyModalTitle').textContent = st.title || s.title || 'Generating…';
   const body = document.getElementById('storyModalBody');
   body.innerHTML = st.text
@@ -1736,6 +1830,7 @@ async function openStoryModal(id) {
     }
 
     dropStoryStream(id);
+    setStoryTruncatedNote(s);
     document.getElementById('storyModalTitle').textContent = s.title || 'Untitled';
     document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
     const metaEl = document.getElementById('storyModalMeta');
@@ -1754,16 +1849,10 @@ async function openStoryModal(id) {
     };
     const chars = countStoryChars(s.content);
     if (chars > 0) addMeta('fa-solid fa-font', `${chars.toLocaleString()} chars`);
-    // Real token counts, persisted with the story at generation time. Older
-    // stories predate the columns and simply have nothing to show here.
-    const outTok = s.completion_tokens || 0;
-    const inTok = s.prompt_tokens || 0;
-    if (outTok || inTok) {
-      const reasoning = s.reasoning_tokens || 0;
-      const label = `${inTok.toLocaleString()} in \u2022 ${outTok.toLocaleString()} out`
-        + (reasoning > 0 ? ` (${reasoning.toLocaleString()} reasoning)` : '');
-      addMeta('fa-solid fa-arrow-down-up', label);
-    }
+    // Real token counts when the provider reported usage, an estimate otherwise
+    // (see storyTokenLabel).
+    const tokenLabel = storyTokenLabel(s);
+    if (tokenLabel) addMeta('fa-solid fa-arrow-down-up', tokenLabel);
     if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
     if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
     const dur = formatDuration(s.duration_ms);
@@ -2938,7 +3027,11 @@ async function loadStories(wordId) {
     item.dataset.id = s.id;
     const isGenerating = s.status === 'generating';
     const isFailed = s.status === 'failed';
-    item.className = 'story-list-item' + (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : '');
+    // Cut off by the model's token limit: readable, and retryable (the story
+    // simply hit max_tokens, so a second run is the natural fix).
+    const isTruncated = s.status === 'truncated';
+    item.className = 'story-list-item'
+      + (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : isTruncated ? ' is-truncated' : '');
     const titleBox = document.createElement('span');
     titleBox.className = 'story-list-title-box';
     const title = document.createElement('span');
@@ -2964,12 +3057,13 @@ async function loadStories(wordId) {
         statusLine.title = errText;
       }
       titleBox.appendChild(statusLine);
-    } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0) {
+    } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0
+               || s.prompt_tokens || s.completion_tokens) {
       const metaBox = document.createElement('span');
       metaBox.className = 'story-list-meta';
-      const add = (icon, text) => {
+      const add = (icon, text, cls) => {
         const span = document.createElement('span');
-        span.className = 'story-list-meta-line';
+        span.className = 'story-list-meta-line' + (cls ? ' ' + cls : '');
         if (icon) {
           const i = document.createElement('i');
           i.className = icon;
@@ -2977,9 +3071,18 @@ async function loadStories(wordId) {
         }
         span.appendChild(document.createTextNode(' ' + text));
         metaBox.appendChild(span);
+        return span;
       };
       const chars = countStoryChars(s.content);
       if (chars > 0) add('fa-solid fa-font', `${chars.toLocaleString()} chars`);
+      // Same helper the modal uses, so both surfaces show the same numbers
+      // (or the same "≈ estimated" fallback).
+      const tokenLabel = storyTokenLabel(s);
+      if (tokenLabel) add('fa-solid fa-arrow-down-up', tokenLabel);
+      if (isTruncated) {
+        add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
+          .title = "This story hit the model's token limit, so the ending is missing.";
+      }
       if (s.model) add('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
       if (s.cost != null) add('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
       const dur = formatDuration(s.duration_ms);
@@ -3005,10 +3108,12 @@ async function loadStories(wordId) {
       cancel.onclick = (e) => { e.stopPropagation(); cancelStory(s.id); };
       right.appendChild(cancel);
     }
-    if (isFailed) {
+    if (isFailed || isTruncated) {
       const retry = document.createElement('button');
       retry.className = 'story-list-retry';
-      retry.title = 'Retry generation';
+      retry.title = isTruncated
+        ? "Retry generation (this story was cut off by the token limit)"
+        : 'Retry generation';
       retry.innerHTML = '<i class="fa-solid fa-rotate-right"></i>';
       retry.onclick = (e) => { e.stopPropagation(); retryStory(s.id); };
       right.appendChild(retry);

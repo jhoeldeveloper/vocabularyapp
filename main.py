@@ -800,6 +800,10 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
         duration_ms = int(result.get("elapsed", 0.0) * 1000)
         cost = result.get("cost", 0.0)
         title = _extract_title(content, title_hint)
+        # A story that hit max_tokens stops mid-sentence. Publish it anyway --
+        # most of it is readable -- but as 'truncated' so the UI can say so and
+        # offer a retry. A plain 'ready' would hide the missing ending.
+        final_status = "truncated" if result.get("truncated") else "ready"
 
         def db_operation():
             conn = sqlite3.connect(DATABASE_URL)
@@ -815,13 +819,14 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
             cursor.execute(
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
                 "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
-                "status = 'ready', error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
+                "status = ?, error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
                 (
                     title, content, model, duration_ms, cost,
                     int(result.get("prompt_tokens") or 0),
                     int(result.get("completion_tokens") or 0),
                     int(result.get("reasoning_tokens") or 0),
+                    final_status,
                     story_id,
                 ),
             )
@@ -998,7 +1003,11 @@ def api_get_story(story_id: int):
 
 @app.post("/api/stories/{story_id}/retry")
 async def retry_story(story_id: int):
-    """Re-run background generation for a failed story (same words + model)."""
+    """Re-run background generation for a failed or truncated story.
+
+    Truncated stories are retryable too: they were cut off by max_tokens, so a
+    second run of the same word list is the natural way to get the full story.
+    """
     def fetch_and_reset():
         conn = sqlite3.connect(DATABASE_URL)
         conn.row_factory = sqlite3.Row
@@ -1008,9 +1017,9 @@ async def retry_story(story_id: int):
         if not story:
             conn.close()
             return None, None, None
-        if story["status"] != "failed":
+        if story["status"] not in ("failed", "truncated"):
             conn.close()
-            return "not_failed", None, None
+            return "not_retryable", None, None
         cursor.execute(
             "SELECT LOWER(d.word) FROM story_words sw "
             "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ? ORDER BY d.id",
@@ -1031,8 +1040,8 @@ async def retry_story(story_id: int):
     outcome, words, model = await run_in_threadpool(fetch_and_reset)
     if outcome is None:
         raise HTTPException(status_code=404, detail="Story not found")
-    if outcome == "not_failed":
-        raise HTTPException(status_code=400, detail="Only failed stories can be retried")
+    if outcome == "not_retryable":
+        raise HTTPException(status_code=400, detail="Only failed or truncated stories can be retried")
     if outcome == "no_words":
         raise HTTPException(status_code=400, detail="Story has no linked words to regenerate from")
 
