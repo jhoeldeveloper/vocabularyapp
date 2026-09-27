@@ -336,7 +336,6 @@ USING THE WORDS
 - The list is in random order. Do not work through it in order: place each word in whichever scene it fits most naturally, and never force two unrelated words into one sentence.
 - Use each word at least once, at most twice, in its standard sense, in a sentence where the meaning is clear from context alone.
 - A variant of a word counts as using it: run/running/ran, quick/quickly, look/looked/looking, and for a phrase, one word of the phrase inflected.
-- Never explain, translate or gloss a word in the story, and never mention the list itself.
 
 BOLDING (graded strictly)
 - Bold exactly one occurrence of each word in the list, using **double asterisks**. The bolded word may be a variant of the listed one.
@@ -346,6 +345,13 @@ BOLDING (graded strictly)
   Wrong: I **use** my phone, I was **already** late, **not** a good idea. <-- none of these are listed words
 - If a listed word is an everyday word, use it in its less obvious sense and still bold only that one occurrence.
 - The title must not be bolded.
+
+NEVER NARRATE YOUR OWN WORK
+- Your answer is the story. Nothing else goes in it.
+- Do not mention the list, the checklist, the draft, or which words you have or have not used. Never write a sentence like "Not a listed word." or "use edible already used" or "not listed".
+- No self-corrections: nothing in parentheses, and no aside after a dash, comma or "and" that comments on the writing instead of the events.
+- If you notice a mistake while writing, fix it silently in the text you output. Never describe the fix.
+- Counting is silent. Do the check in your thinking, never in the answer.
 
 LANGUAGE
 - Learner level B1-C1: mostly short-to-medium sentences (under 25 words), plain words everywhere except the listed ones, no idioms the narrator would have to explain.
@@ -357,9 +363,7 @@ LANGUAGE
 OUTPUT — emit exactly this and nothing else, no preamble and no closing remarks:
 Title: <the title>
 
-Story: <the story text>
-
-Before you answer, check yourself: every listed word appears once in bold (a variant is fine), and no other word is bolded."""
+Story: <the story text>"""
 
 def _normalize_term(text):
     """Lowercase a word or phrase and keep only its letters and spaces."""
@@ -774,9 +778,21 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
 
         elapsed = time.monotonic() - started
         msg = (data.get("choices") or [{}])[0].get("message") or {}
-        content = msg.get("content") or msg.get("reasoning") or ""
+        # Content only. A reasoning-only response used to be stored AS the story
+        # (the `or msg.get("reasoning")` fallback), which put the model's
+        # scratchpad in the database and fed it to TTS. Reasoning is a separate
+        # channel and must never become content.
+        content = msg.get("content") or ""
         if not content.strip():
-            return {"ok": False, "error": "Error generating story: model returned an empty response (it may have produced only reasoning). Try again or use a different model."}
+            reason = ("the model returned only reasoning and no story text"
+                      if msg.get("reasoning") else "the model returned an empty response")
+            return {
+                "ok": False,
+                "error": (
+                    f"Error generating story: {reason}. Try again, or use a "
+                    f"different model."
+                ),
+            }
 
         usage = data.get("usage") or {}
         prompt_tokens = usage.get("prompt_tokens") or 0
