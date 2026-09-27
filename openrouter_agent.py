@@ -685,7 +685,10 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.7,
-        "max_tokens": 10000,
+        # Output budget. It is the only length bound: the prompt deliberately
+        # sets no target length. A story cut off here is still published, as
+        # status 'truncated' (see _STORY_MIN_VISIBLE_TOKENS).
+        "max_tokens": 20000,
         # Stream so the request can be cancelled mid-generation and the UI can
         # render the story as it arrives. include_usage keeps the token/cost
         # accounting identical to the non-streaming path.
