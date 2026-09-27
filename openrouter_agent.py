@@ -312,9 +312,12 @@ REDDIT_STYLES = [
 
 def _build_prompt(words, title):
     style = random.choice(REDDIT_STYLES)
-    # A numbered block keeps multi-word phrases intact and stops the model from
-    # reading the words as part of the instructions.
-    word_list = "\n".join(f"{i + 1}. {w}" for i, w in enumerate(words))
+    # Comma-separated, with multi-word phrases quoted so they stay one item.
+    # Deliberately NOT numbered: a numbered list (1. scavenge, 2. traits, ...)
+    # was measured leaking into the output as "**scavenge** 1", and it also
+    # invited the model to work through the list in order, which the prompt
+    # explicitly forbids. See _detect_degeneracy's index-fusion check.
+    word_list = ", ".join(f'"{w}"' if " " in w else w for w in words)
     title_instruction = (
         f"Use exactly this title, word for word: '{title}'." if title
         else "Invent a short, catchy title of at most 8 words."
@@ -334,24 +337,21 @@ PLOT
 
 USING THE WORDS
 - The list is in random order. Do not work through it in order: place each word in whichever scene it fits most naturally, and never force two unrelated words into one sentence.
-- Use each word at least once, at most twice, in its standard sense, in a sentence where the meaning is clear from context alone.
+- Use each word once, in its standard sense, in a sentence where the meaning is clear from context alone. A second use is allowed, but only the first one is bolded.
 - A variant of a word counts as using it: run/running/ran, quick/quickly, look/looked/looking, and for a phrase, one word of the phrase inflected.
 
 BOLDING (graded strictly)
 - Bold exactly one occurrence of each word in the list, using **double asterisks**. The bolded word may be a variant of the listed one.
-- Bold NOTHING else. A bolded word that is not in the list is a failure.
+- Bold NOTHING else. Every other word in the story stays unbolded, including ordinary words like "use", "already" or "not" unless they are in the list.
   Example with a list of [run, ephemeral, piece of cake]:
   Right: a **run** in the rain, an **ephemeral** victory, a **piece of cake** to fix it.
-  Wrong: I **use** my phone, I was **already** late, **not** a good idea. <-- none of these are listed words
 - If a listed word is an everyday word, use it in its less obvious sense and still bold only that one occurrence.
 - The title must not be bolded.
 
 NEVER NARRATE YOUR OWN WORK
 - Your answer is the story. Nothing else goes in it.
 - Do not mention the list, the checklist, the draft, or which words you have or have not used. Never write a sentence like "Not a listed word." or "use edible already used" or "not listed".
-- No self-corrections: nothing in parentheses, and no aside after a dash, comma or "and" that comments on the writing instead of the events.
-- If you notice a mistake while writing, fix it silently in the text you output. Never describe the fix.
-- Counting is silent. Do the check in your thinking, never in the answer.
+- No commentary about your own writing. Fix anything you get wrong silently; never describe the fix.
 
 LANGUAGE
 - Learner level B1-C1: mostly short-to-medium sentences (under 25 words), plain words everywhere except the listed ones, no idioms the narrator would have to explain.
@@ -444,32 +444,43 @@ def _variants_of(term):
             seen.update(forms)
     return seen
 
+def _token_forms(term):
+    """Every single-token form of `term` the model may legitimately produce.
+
+    One definition shared by the bold sanitizer and the health checks, so
+    "is this bold allowed?" and "was this word used?" can never disagree.
+    Deliberately over-permissive: keeping a stray bold is harmless, deleting a
+    correct highlight is not.
+    """
+    normalized = _normalize_term(term)
+    forms = {normalized} if normalized else set()
+    if not normalized:
+        return forms
+    bases = _variants_of(normalized)
+    # A phrase entry also licenses any single word of it, since the prompt lets
+    # the model inflect one word of a phrase.
+    for part in normalized.split():
+        bases |= _variants_of(part)
+    for base in bases:
+        forms.add(base)
+        # A listed word may be the one that got inflected in the story, so
+        # accept the derived forms of every form we know about.
+        for ending in _DERIVATIONS:
+            forms.add(base + ending)
+            if base.endswith("e"):
+                forms.add(base[:-1] + ending)
+        # consonant + y: "try" -> "tried", "tries", "trier".
+        if base.endswith("y") and len(base) >= 3:
+            stem = base[:-1]
+            for ending in ("ied", "ies", "ier", "iest", "ily", "ying"):
+                forms.add(stem + ending)
+    return forms
+
 def _allowed_bold_terms(words):
     """Every single token that may legitimately be bolded for this word list."""
     allowed = set()
     for word in words or []:
-        normalized = _normalize_term(word)
-        if not normalized:
-            continue
-        allowed.add(normalized)
-        bases = _variants_of(normalized)
-        # A phrase entry also licenses any single word of it, since the prompt
-        # lets the model inflect one word of a phrase.
-        for part in normalized.split():
-            bases |= _variants_of(part)
-        for base in bases:
-            allowed.add(base)
-            # A listed word may be the one that got inflected in the story, so
-            # accept the derived forms of every form we know about.
-            for ending in _DERIVATIONS:
-                allowed.add(base + ending)
-                if base.endswith("e"):
-                    allowed.add(base[:-1] + ending)
-            # consonant + y: "try" -> "tried", "tries", "trier".
-            if base.endswith("y") and len(base) >= 3:
-                stem = base[:-1]
-                for ending in ("ied", "ies", "ier", "iest", "ily", "ying"):
-                    allowed.add(stem + ending)
+        allowed |= _token_forms(word)
     return allowed
 
 def _strip_stray_bold(content, words):
@@ -496,6 +507,136 @@ def _strip_stray_bold(content, words):
     return re.sub(r"\*\*(.+?)\*\*", fix, content, flags=re.S)
 
 
+# --- Generation health checks -------------------------------------------------
+# These measure the *quality* of what came back, so a bad run is visible in the
+# log instead of only in the stored prose. They are deliberately high-precision:
+# an earlier attempt to detect "the model is narrating its own work" by
+# matching prose phrases produced 4 false positives in 6 hits, because phrases
+# like "I should have" and "wait" occur in perfectly good fiction.
+
+# "**scavenge** 47" — a list index leaking into the prose. Only ever produced
+# when the prompt presented the word list numbered.
+_INDEX_FUSION = re.compile(r"\*\*[^*\n]{1,30}\*\*\s+\d{1,3}\b")
+
+# The model narrating its own checklist. These exact strings were observed in
+# stored stories, unlike the vaguer prose patterns tried before.
+_SELF_TALK = re.compile(
+    r"not a listed word|already used\b|not listed\b|word list|"
+    r"\bwait,\s*(use|used)\b|use\s+\w+\s+already\b",
+    re.I,
+)
+
+# Fraction of the prose that may be listed words before it is a word salad
+# rather than a story. This is deliberately LOOSE: asking for 286 target words
+# in a short story is inherently dense (a known-good 286-word story measured
+# 22%), so a tight cap would fail the very thing that was requested. 45% is
+# where the prose stops reading as English at all.
+_MAX_DENSITY = 0.45
+
+
+def _story_body(content):
+    """The prose only, with the Title:/Story: labels removed."""
+    body = re.sub(r"^\s*Title:.*$", "", content or "", count=1, flags=re.M)
+    return re.sub(r"^\s*Story:\s*", "", body, count=1).strip()
+
+
+def _word_pattern(term):
+    """Regex matching a word or any inflection of it, as a whole word.
+
+    A multi-word entry ("piece of cake", "barge into") requires *all* of its
+    parts, in order, with a couple of words allowed between them. Matching any
+    single part would make "of" or "into" count as a used word, which would
+    inflate the coverage figure.
+    """
+    normalized = _normalize_term(term)
+    if not normalized:
+        return None
+    parts = [p for p in normalized.split() if p]
+    if not parts:
+        return None
+    chunks = []
+    for part in parts:
+        forms = {f for f in _token_forms(part) if f and " " not in f}
+        if not forms:
+            return None
+        chunks.append("(?:" + "|".join(sorted((re.escape(f) for f in forms),
+                                             key=len, reverse=True)) + ")")
+    if len(chunks) == 1:
+        return re.compile(r"\b" + chunks[0] + r"\b", re.I)
+    # Up to two intervening words between parts ("barge straight into").
+    return re.compile(r"\b" + r"(?:\s+\S+){0,2}\s+".join(chunks) + r"\b", re.I)
+
+
+def _count_words_used(content, words):
+    """How many of the listed words appear in the prose (variants count)."""
+    body = _story_body(content)
+    if not body:
+        return 0
+    used = 0
+    for word in words or []:
+        pattern = _word_pattern(word)
+        if pattern and pattern.search(body):
+            used += 1
+    return used
+
+
+def _count_stray_bold(content, words):
+    """Bolded single-token spans that are not a listed word or a variant."""
+    allowed = _allowed_bold_terms(words)
+    if not allowed:
+        return 0
+    stray = 0
+    for inner in re.findall(r"\*\*(.+?)\*\*", content or "", flags=re.S):
+        if " " in inner.strip():
+            continue
+        if _normalize_term(inner) not in allowed:
+            stray += 1
+    return stray
+
+
+def _count_self_talk(content):
+    return len(_SELF_TALK.findall(content or ""))
+
+
+def _detect_degeneracy(content, words):
+    """Return a list of reasons the output is unusable (empty means fine).
+
+    Only checks with an exact, unambiguous signal belong here, because a false
+    positive throws away a good generation and costs the user a retry. Verified
+    against every story in the local database: all of them pass. A per-word
+    repetition count was tried and removed — it flagged the title word of
+    ordinary stories ("barn" 7x, "cucumber" 12x) — and a tight density cap
+    flagged a known-good 286-word story at 22%. The duplicate-paragraph check
+    already catches a redraft loop exactly.
+
+    Low coverage is deliberately NOT a failure. It is the most useful signal in
+    the health log (`used=n/total`), and a story that used few of the words is
+    still readable, so it is surfaced rather than discarded.
+    """
+    reasons = []
+    body = _story_body(content)
+    if not body:
+        return ["empty body"]
+
+    if _INDEX_FUSION.search(body):
+        reasons.append("list indices leaked into the prose")
+    if _SELF_TALK.search(body):
+        reasons.append("model narrated its own checklist")
+
+    # A paragraph repeated verbatim is the visible trace of a redraft loop.
+    paragraphs = [p.strip() for p in body.split("\n\n") if len(p.strip()) > 80]
+    if len(paragraphs) != len({p for p in paragraphs}):
+        reasons.append("duplicate paragraph (redraft loop)")
+
+    total_words = len(re.findall(r"\b[\w']+\b", body))
+    if total_words:
+        density = _count_words_used(content, words) / total_words
+        if density > _MAX_DENSITY:
+            reasons.append(f"target vocabulary is {density:.0%} of the prose (word salad)")
+
+    return reasons
+
+
 def _read_story_stream(response, started, model, story_id, on_delta):
     """Consume an OpenRouter SSE body and reassemble the final payload.
 
@@ -510,6 +651,7 @@ def _read_story_stream(response, started, model, story_id, on_delta):
     reasoning_parts = []
     usage = {}
     provider_responses = []
+    generation_id = ""
     seen_model = None
     finish_reason = None
     native_finish_reason = None
@@ -574,6 +716,11 @@ def _read_story_stream(response, started, model, story_id, on_delta):
 
             if chunk.get("model"):
                 seen_model = chunk["model"]
+            if chunk.get("id"):
+                # OpenRouter's generation id: the handle for looking this run up
+                # in the dashboard, which is the only place finish_reason and the
+                # billed token counts appear when the stream omits them.
+                generation_id = chunk["id"]
             if chunk.get("usage"):
                 usage = chunk["usage"]
             if chunk.get("provider_responses"):
@@ -613,6 +760,7 @@ def _read_story_stream(response, started, model, story_id, on_delta):
             payload = None
         if isinstance(payload, dict):
             seen_model = payload.get("model") or seen_model
+            generation_id = payload.get("id") or generation_id
             usage = payload.get("usage") or usage
             provider_responses = payload.get("provider_responses") or provider_responses
             finish_reason = payload.get("finish_reason") or payload.get("native_finish_reason") or finish_reason
@@ -644,6 +792,7 @@ def _read_story_stream(response, started, model, story_id, on_delta):
         }],
         "usage": usage,
         "provider_responses": provider_responses,
+        "id": generation_id or None,
         "finish_reason": finish_reason,
         "native_finish_reason": native_finish_reason,
         "native_tokens_reasoning": native_tokens_reasoning,
@@ -695,6 +844,10 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+
+    # Output budget, needed again below to recognise a capped response when the
+    # provider omits finish_reason.
+    max_tokens = payload["max_tokens"]
 
     # Auto-detect reasoning config from model metadata.
     reasoning_config = _get_reasoning_config(model)
@@ -815,6 +968,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             cost = prompt_tokens * pricing.get("prompt", 0) + completion_tokens * pricing.get("completion", 0)
         provider_responses = data.get("provider_responses") or []
         provider_name = provider_responses[0].get("provider_name", "?") if provider_responses else "?"
+        generation_id = data.get("id") or ""
         finish = data.get("finish_reason") or data.get("native_finish_reason") or "?"
         # "length" means the model ran into max_tokens and stopped mid-sentence.
         # The prose is still worth showing, so it is reported to the caller
@@ -823,13 +977,35 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         # spent the whole budget thinking and emitted almost no visible text:
         # there is nothing worth keeping, so that fails outright.
         truncated = finish == "length"
-        if truncated and visible_tokens < _STORY_MIN_VISIBLE_TOKENS:
+        truncate_source = "finish_reason" if finish != "?" else None
+        if not truncated and finish == "?" and not reasoning_tokens:
+            # Some providers (x-ai/grok-4.7 observed) send no finish_reason in
+            # the stream at all, so a capped response is indistinguishable from
+            # a complete one. For a non-reasoning model completion_tokens is the
+            # visible output and sits exactly at max_tokens when capped, which
+            # makes this a reliable fallback. Guarded on reasoning_tokens == 0
+            # because a reasoning model's completion_tokens bundles reasoning,
+            # which is NOT counted against max_tokens and can exceed it freely.
+            if completion_tokens >= max_tokens:
+                truncated = True
+                truncate_source = "token-cap"
+        # Too little actual story to be worth keeping -- and this is NOT the same
+        # test as "truncated": a reasoning model can spend the whole budget
+        # thinking and emit a sentence without ever hitting the cap. Only checked
+        # when the provider reported usage at all, because otherwise
+        # completion_tokens is 0 for every story and this would reject them all.
+        if usage and visible_tokens < _STORY_MIN_VISIBLE_TOKENS:
+            if truncated:
+                detail = ("the model used the whole token budget reasoning and "
+                          "left almost no story text")
+            else:
+                detail = ("the model returned almost no story text for this word "
+                          "list")
             return {
                 "ok": False,
                 "error": (
-                    "Error generating story: the model used the whole token budget "
-                    "reasoning and left almost no story text. Try a different model "
-                    "or generate with fewer words."
+                    f"Error generating story: {detail}. Try a different model, or "
+                    f"generate with fewer words."
                 ),
             }
         actual_model = data.get("model", model)
@@ -837,25 +1013,59 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         native_reason = data.get("native_tokens_reasoning")
         native_part = f" native_reason={native_reason}" if native_reason is not None else ""
         id_part = f"id={story_id} " if story_id is not None else ""
+
+        # Sanitize first, then measure: the health figures must describe what
+        # actually gets stored, not what the model sent.
+        cleaned = _strip_stray_bold(content, words)
+
+        # Health metrics. Without these the log only showed token counts, which
+        # made it impossible to tell a good run from a degenerate one: a 286-word
+        # story once came back "ready" after 405s and 26.5k reasoning tokens.
+        used = _count_words_used(cleaned, words)
+        stray_bold = _count_stray_bold(cleaned, words)
+        self_talk = _count_self_talk(cleaned)
+        health = f"used={used}/{len(words)} stray_bold={stray_bold} selftalk={self_talk}"
+        if visible_tokens:
+            health += f" reason/vis={reasoning_tokens / visible_tokens:.1f}"
+
+        degeneracy = _detect_degeneracy(cleaned, words)
+        gen_part = f" gen={generation_id}" if generation_id else ""
+        trunc_part = f" truncated({truncate_source})" if truncated else ""
         print(
-            f"[story] {id_part}ok | model={actual_model} via {provider_name} | words={len(words)} | "
+            f"[story] {id_part}ok | model={actual_model} via {provider_name}{gen_part} | words={len(words)} | "
             f"in={prompt_tokens} out={completion_tokens} (reason={reasoning_tokens}, visible={visible_tokens}) "
             f"total={total_tokens}{native_part} | reason_cfg={_reason_cfg_label(reasoning_config)} | "
-            f"{elapsed:.1f}s | {finish} | ${cost:.4f} | chars={chars}",
+            f"{elapsed:.1f}s | {finish}{trunc_part} | ${cost:.4f} | chars={chars} | {health}",
             flush=True,
         )
+        if degeneracy:
+            # Unusable output. Failing it lets the user retry instead of storing
+            # a story they cannot read; the word list is unchanged by a retry.
+            print(f"[story] {id_part}degenerate output: {'; '.join(degeneracy)}", file=sys.stderr, flush=True)
+            return {
+                "ok": False,
+                "error": (
+                    "Error generating story: the model's output fell apart on this "
+                    f"word list ({degeneracy[0]}). Try again, use fewer words, or "
+                    f"pick a different model."
+                ),
+            }
 
         return {
             "ok": True,
-            "content": _strip_stray_bold(content, words),
+            "content": cleaned,
             "elapsed": elapsed,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "reasoning_tokens": reasoning_tokens,
-            # True when finish_reason == "length": the prose stops mid-sentence
-            # because it hit max_tokens. main.py publishes it anyway, as a
-            # 'truncated' story, so the user can read it and retry.
+            # True when the response was cut off by max_tokens (either reported
+            # as finish_reason "length" or inferred from the token cap).
+            # main.py publishes it anyway, as a 'truncated' story, so the user
+            # can read it and retry.
             "truncated": truncated,
+            "truncated_source": truncate_source,
+            "generation_id": generation_id,
+            "words_used": used,
             "cost": round(cost, 6),
         }
     except Exception as e:

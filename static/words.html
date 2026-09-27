@@ -1496,6 +1496,12 @@ function estimateTokens(text) {
 // Token counts for a finished story, as shown in BOTH the story list and the
 // modal. Defined once so the two surfaces cannot drift.
 //
+// `completion_tokens` from OpenRouter is the NATIVE count: it bundles the
+// model's reasoning tokens into the completion figure. A mandatory-reasoning
+// model therefore reports tens of thousands of "out" tokens for a ~2,000-token
+// story, overstating the billable output roughly 5x. So the visible output is
+// shown as the headline number and the reasoning is broken out separately.
+//
 // Real usage when OpenRouter reported it, otherwise an estimate. Two cases
 // produce no usage: rows written before the token columns were migrated in
 // (NULL), and providers that omit the final SSE `usage` chunk (stored as 0).
@@ -1508,11 +1514,25 @@ function storyTokenLabel(s) {
     const outTok = s.completion_tokens || 0;
     if (inTok || outTok) {
         const reasoning = s.reasoning_tokens || 0;
-        return `${inTok.toLocaleString()} in • ${outTok.toLocaleString()} out`
-            + (reasoning > 0 ? ` (${reasoning.toLocaleString()} reasoning)` : '');
+        const visible = Math.max(0, outTok - reasoning);
+        return `${inTok.toLocaleString()} in • ${visible.toLocaleString()} out`
+            + (reasoning > 0 ? ` (+${reasoning.toLocaleString()} reasoning)` : '');
     }
     const est = estimateTokens(s.content || '');
     return est > 0 ? `≈${est.toLocaleString()} out (estimated)` : '';
+}
+
+// Tooltip for the token pill, so the two figures are not mistaken for a total.
+function storyTokenTitle(s) {
+    if (!s.prompt_tokens && !s.completion_tokens) {
+        return 'Estimated from the text length (this story has no recorded usage).';
+    }
+    const reasoning = s.reasoning_tokens || 0;
+    return reasoning > 0
+        ? `The model's own visible output was ${Math.max(0, (s.completion_tokens || 0) - reasoning).toLocaleString()} tokens; `
+          + `it also spent ${reasoning.toLocaleString()} tokens reasoning, which OpenRouter counts inside the `
+          + `completion total but which is not part of the story.`
+        : 'Prompt and completion tokens reported by the provider.';
 }
 
 // Show or hide the modal's "cut off" notice. Hidden for everything else,
@@ -1846,13 +1866,17 @@ async function openStoryModal(id) {
       }
       span.appendChild(document.createTextNode(' ' + text));
       metaEl.appendChild(span);
+      return span;
     };
     const chars = countStoryChars(s.content);
     if (chars > 0) addMeta('fa-solid fa-font', `${chars.toLocaleString()} chars`);
     // Real token counts when the provider reported usage, an estimate otherwise
     // (see storyTokenLabel).
     const tokenLabel = storyTokenLabel(s);
-    if (tokenLabel) addMeta('fa-solid fa-arrow-down-up', tokenLabel);
+    if (tokenLabel) {
+      const pill = addMeta('fa-solid fa-arrow-down-up', tokenLabel);
+      if (pill) pill.title = storyTokenTitle(s);
+    }
     if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
     if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
     const dur = formatDuration(s.duration_ms);
@@ -3078,7 +3102,7 @@ async function loadStories(wordId) {
       // Same helper the modal uses, so both surfaces show the same numbers
       // (or the same "≈ estimated" fallback).
       const tokenLabel = storyTokenLabel(s);
-      if (tokenLabel) add('fa-solid fa-arrow-down-up', tokenLabel);
+      if (tokenLabel) add('fa-solid fa-arrow-down-up', tokenLabel).title = storyTokenTitle(s);
       if (isTruncated) {
         add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
           .title = "This story hit the model's token limit, so the ending is missing.";
