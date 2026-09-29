@@ -509,22 +509,13 @@ def _strip_stray_bold(content, words):
 
 # --- Generation health checks -------------------------------------------------
 # These measure the *quality* of what came back, so a bad run is visible in the
-# log instead of only in the stored prose. They are deliberately high-precision:
-# an earlier attempt to detect "the model is narrating its own work" by
-# matching prose phrases produced 4 false positives in 6 hits, because phrases
-# like "I should have" and "wait" occur in perfectly good fiction.
+# log instead of only in the stored prose. Every check here is deliberately
+# high-precision, because a false positive throws away a good generation and
+# costs the user a retry.
 
 # "**scavenge** 47" — a list index leaking into the prose. Only ever produced
 # when the prompt presented the word list numbered.
 _INDEX_FUSION = re.compile(r"\*\*[^*\n]{1,30}\*\*\s+\d{1,3}\b")
-
-# The model narrating its own checklist. These exact strings were observed in
-# stored stories, unlike the vaguer prose patterns tried before.
-_SELF_TALK = re.compile(
-    r"not a listed word|already used\b|not listed\b|word list|"
-    r"\bwait,\s*(use|used)\b|use\s+\w+\s+already\b",
-    re.I,
-)
 
 # Fraction of the prose that may be listed words before it is a word salad
 # rather than a story. This is deliberately LOOSE: asking for 286 target words
@@ -594,20 +585,25 @@ def _count_stray_bold(content, words):
     return stray
 
 
-def _count_self_talk(content):
-    return len(_SELF_TALK.findall(content or ""))
-
-
 def _detect_degeneracy(content, words):
     """Return a list of reasons the output is unusable (empty means fine).
 
     Only checks with an exact, unambiguous signal belong here, because a false
     positive throws away a good generation and costs the user a retry. Verified
-    against every story in the local database: all of them pass. A per-word
-    repetition count was tried and removed — it flagged the title word of
-    ordinary stories ("barn" 7x, "cucumber" 12x) — and a tight density cap
-    flagged a known-good 286-word story at 22%. The duplicate-paragraph check
-    already catches a redraft loop exactly.
+    against every story in the local database: all of them pass. Three checks
+    were tried and removed — a per-word repetition count (it flagged the title
+    word of ordinary stories, "barn" 7x, "cucumber" 12x), a tight density cap
+    (it flagged a known-good 286-word story at 22%), and self-talk detection
+    (see below). The duplicate-paragraph check already catches a redraft loop
+    exactly.
+
+    Self-talk detection ("not a listed word", "already used", "word list", ...)
+    was removed on 2026-09-29: it fired ONCE on a healthy 310-word run
+    (used=270/310, stray_bold=0, reason/vis=0.4, 148s, 22.8k chars) and threw
+    the whole generation away. Those phrases occur in ordinary fiction, and with
+    a single-match threshold the false-positive rate scales with story length.
+    Do not re-add it as "cheap insurance" — the prompt rule in _build_prompt is
+    what keeps the meta text out of the output in the first place.
 
     Low coverage is deliberately NOT a failure. It is the most useful signal in
     the health log (`used=n/total`), and a story that used few of the words is
@@ -620,8 +616,6 @@ def _detect_degeneracy(content, words):
 
     if _INDEX_FUSION.search(body):
         reasons.append("list indices leaked into the prose")
-    if _SELF_TALK.search(body):
-        reasons.append("model narrated its own checklist")
 
     # A paragraph repeated verbatim is the visible trace of a redraft loop.
     paragraphs = [p.strip() for p in body.split("\n\n") if len(p.strip()) > 80]
@@ -1023,8 +1017,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         # story once came back "ready" after 405s and 26.5k reasoning tokens.
         used = _count_words_used(cleaned, words)
         stray_bold = _count_stray_bold(cleaned, words)
-        self_talk = _count_self_talk(cleaned)
-        health = f"used={used}/{len(words)} stray_bold={stray_bold} selftalk={self_talk}"
+        health = f"used={used}/{len(words)} stray_bold={stray_bold}"
         if visible_tokens:
             health += f" reason/vis={reasoning_tokens / visible_tokens:.1f}"
 
