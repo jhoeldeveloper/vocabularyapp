@@ -1535,6 +1535,69 @@ function storyTokenTitle(s) {
         : 'Prompt and completion tokens reported by the provider.';
 }
 
+// --- Target-word coverage and density -------------------------------------
+//
+// Both figures are measured server-side (openrouter_agent._count_words_used /
+// ._prose_word_count) and stored on the story row, because computing them here
+// would mean reimplementing the Python inflection matcher in JS. `prose_words`
+// is stored rather than derived from `content` for the same reason: the density
+// the user sees must be the exact number _detect_degeneracy compares against
+// _MAX_DENSITY, and a JS word count would drift from the Python one on any
+// non-ASCII prose (Python's \w is Unicode-aware, JavaScript's is not).
+//
+// Rows generated before the columns existed have NULL here. They are hidden
+// rather than estimated, exactly like the token columns.
+const COVERAGE_WARN_RATIO = 0.8;
+
+// One shared formatter so the list row and the modal show identical numbers.
+function storyCoverageLabel(s) {
+    const used = s.words_used;
+    const total = s.words_total;
+    if (used == null || !total) return '';
+    return `${used.toLocaleString()}/${total.toLocaleString()}`;
+}
+
+function storyCoverageRatio(s) {
+    const used = s.words_used;
+    const total = s.words_total;
+    return (used != null && total) ? used / total : null;
+}
+
+function storyCoverageTitle(s) {
+    const ratio = storyCoverageRatio(s);
+    if (ratio == null) return '';
+    const used = s.words_used.toLocaleString();
+    const total = s.words_total.toLocaleString();
+    const low = ratio < COVERAGE_WARN_RATIO;
+    let out = `${used} of the ${total} target words appear at least once (${Math.round(ratio * 100)}%). `
+        + `Inflections and phrase variants count, so "ran" covers "run".`;
+    if (low) {
+        out += ' Below 80% usually means the story padded itself with prose instead of using the word list.';
+    }
+    if (s.status === 'truncated') {
+        out += ' This story was cut off by the token limit, so the count covers only the text that arrived.';
+    }
+    out += ' Re-measured if you edit the story text.';
+    return out;
+}
+
+// Target words as a share of the prose. NOT a quality score in the usual sense:
+// a long word list is inherently dense (a known-good 286-word list measured 22%),
+// which is why the generator only rejects a story above 45% as word salad.
+function storyDensityLabel(s) {
+    const used = s.words_used;
+    const prose = s.prose_words;
+    if (used == null || !prose) return '';
+    return `${Math.round((used / prose) * 100)}%`;
+}
+
+function storyDensityTitle(s) {
+    const prose = s.prose_words;
+    if (!prose) return '';
+    return `${s.words_used} target words out of ${prose.toLocaleString()} words of prose. `
+        + 'The generator fails a story above 45% as word salad; long word lists are naturally dense.';
+}
+
 // Show or hide the modal's "cut off" notice. Hidden for everything else,
 // including a story that is still generating.
 function setStoryTruncatedNote(s) {
@@ -1856,9 +1919,9 @@ async function openStoryModal(id) {
     const metaEl = document.getElementById('storyModalMeta');
     metaEl.className = 'story-list-meta';
     metaEl.innerHTML = '';
-    const addMeta = (icon, text) => {
+    const addMeta = (icon, text, cls) => {
       const span = document.createElement('span');
-      span.className = 'story-list-meta-line';
+      span.className = 'story-list-meta-line' + (cls ? ' ' + cls : '');
       if (icon) {
         const i = document.createElement('i');
         i.className = icon;
@@ -1877,6 +1940,15 @@ async function openStoryModal(id) {
       const pill = addMeta('fa-solid fa-arrow-down-up', tokenLabel);
       if (pill) pill.title = storyTokenTitle(s);
     }
+    // Coverage before density: it is the figure that answers "did it use my words".
+    const covRatio = storyCoverageRatio(s);
+    const covLabel = storyCoverageLabel(s);
+    if (covLabel) {
+      const cls = covRatio != null && covRatio < COVERAGE_WARN_RATIO ? 'is-warning' : '';
+      addMeta('fa-solid fa-list-check', covLabel, cls).title = storyCoverageTitle(s);
+    }
+    const densLabel = storyDensityLabel(s);
+    if (densLabel) addMeta('fa-solid fa-gauge-high', densLabel).title = storyDensityTitle(s);
     if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
     if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
     const dur = formatDuration(s.duration_ms);
@@ -3082,7 +3154,7 @@ async function loadStories(wordId) {
       }
       titleBox.appendChild(statusLine);
     } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0
-               || s.prompt_tokens || s.completion_tokens) {
+               || s.prompt_tokens || s.completion_tokens || s.words_used != null) {
       const metaBox = document.createElement('span');
       metaBox.className = 'story-list-meta';
       const add = (icon, text, cls) => {
@@ -3103,6 +3175,15 @@ async function loadStories(wordId) {
       // (or the same "≈ estimated" fallback).
       const tokenLabel = storyTokenLabel(s);
       if (tokenLabel) add('fa-solid fa-arrow-down-up', tokenLabel).title = storyTokenTitle(s);
+      // Coverage before density: it is the figure that answers "did it use my words".
+      const covRatio = storyCoverageRatio(s);
+      const covLabel = storyCoverageLabel(s);
+      if (covLabel) {
+        const cls = covRatio != null && covRatio < COVERAGE_WARN_RATIO ? 'is-warning' : '';
+        add('fa-solid fa-list-check', covLabel, cls).title = storyCoverageTitle(s);
+      }
+      const densLabel = storyDensityLabel(s);
+      if (densLabel) add('fa-solid fa-gauge-high', densLabel).title = storyDensityTitle(s);
       if (isTruncated) {
         add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
           .title = "This story hit the model's token limit, so the ending is missing.";

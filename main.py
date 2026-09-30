@@ -204,6 +204,9 @@ def init_db():
         ("prompt_tokens", "INTEGER"),
         ("completion_tokens", "INTEGER"),
         ("reasoning_tokens", "INTEGER"),
+        ("words_used", "INTEGER"),
+        ("words_total", "INTEGER"),
+        ("prose_words", "INTEGER"),
     ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
@@ -819,6 +822,7 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
             cursor.execute(
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
                 "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
+                "words_used = ?, words_total = ?, prose_words = ?, "
                 "status = ?, error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
                 (
@@ -826,6 +830,9 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
                     int(result.get("prompt_tokens") or 0),
                     int(result.get("completion_tokens") or 0),
                     int(result.get("reasoning_tokens") or 0),
+                    int(result.get("words_used") or 0),
+                    int(result.get("words_total") or 0),
+                    int(result.get("prose_words") or 0),
                     final_status,
                     story_id,
                 ),
@@ -939,6 +946,7 @@ def update_config(
 _STORY_FIELDS = (
     "id", "title", "content", "audio_path", "model", "duration_ms", "cost",
     "prompt_tokens", "completion_tokens", "reasoning_tokens",
+    "words_used", "words_total", "prose_words",
     "status", "error", "createdAt", "updatedAt",
 )
 _STORY_SELECT = ", ".join(_STORY_FIELDS)
@@ -1105,6 +1113,30 @@ async def update_story(story_id: int, data: StoryUpdate):
             "WHERE id = ?",
             (title, data.content, story_id),
         )
+        # Coverage is a measurement of the prose, so a hand-edit makes the stored
+        # figures wrong. Re-measure against the story's linked words instead of
+        # leaving a number that describes text that no longer exists.
+        cursor.execute(
+            "SELECT LOWER(d.word) FROM story_words sw "
+            "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ? ORDER BY d.id",
+            (story_id,),
+        )
+        words = [row[0] for row in cursor.fetchall()]
+        if words:
+            cursor.execute(
+                "UPDATE stories SET words_used = ?, words_total = ?, prose_words = ? WHERE id = ?",
+                (
+                    openrouter_agent._count_words_used(data.content, words),
+                    len(words),
+                    openrouter_agent._prose_word_count(openrouter_agent._story_body(data.content)),
+                    story_id,
+                ),
+            )
+        else:
+            cursor.execute(
+                "UPDATE stories SET words_used = NULL, words_total = NULL, prose_words = NULL WHERE id = ?",
+                (story_id,),
+            )
         # Remove orphaned audio file if it existed.
         conn.commit()
         conn.close()

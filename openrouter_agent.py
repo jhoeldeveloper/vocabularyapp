@@ -6,6 +6,7 @@ import time
 import threading
 import requests
 import random
+from functools import lru_cache
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -531,6 +532,17 @@ def _story_body(content):
     return re.sub(r"^\s*Story:\s*", "", body, count=1).strip()
 
 
+def _prose_word_count(body):
+    """Word tokens in the prose, which is the denominator of the density stat.
+
+    One definition, shared by the word-salad guard in _detect_degeneracy and the
+    density figure returned for display, so the number the user sees is by
+    construction the same number that can fail a generation at _MAX_DENSITY.
+    """
+    return len(re.findall(r"\b[\w']+\b", body or ""))
+
+
+@lru_cache(maxsize=4096)
 def _word_pattern(term):
     """Regex matching a word or any inflection of it, as a whole word.
 
@@ -538,6 +550,12 @@ def _word_pattern(term):
     parts, in order, with a couple of words allowed between them. Matching any
     single part would make "of" or "into" count as a used word, which would
     inflate the coverage figure.
+
+    Cached because the alternation is large (21+ branches for one term) and
+    building it dominates the cost of a coverage pass: on a 299-word list,
+    compiling costs ~250ms against ~38ms for the actual searching. Coverage is
+    recomputed on every manual story edit, so this path runs outside generation
+    too.
     """
     normalized = _normalize_term(term)
     if not normalized:
@@ -622,7 +640,7 @@ def _detect_degeneracy(content, words):
     if len(paragraphs) != len({p for p in paragraphs}):
         reasons.append("duplicate paragraph (redraft loop)")
 
-    total_words = len(re.findall(r"\b[\w']+\b", body))
+    total_words = _prose_word_count(body)
     if total_words:
         density = _count_words_used(content, words) / total_words
         if density > _MAX_DENSITY:
@@ -1017,7 +1035,13 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         # story once came back "ready" after 405s and 26.5k reasoning tokens.
         used = _count_words_used(cleaned, words)
         stray_bold = _count_stray_bold(cleaned, words)
+        # Denominator for the density stat shown in the UI. Same helper the
+        # word-salad guard uses, so the displayed percentage and the threshold
+        # that can fail a generation can never drift apart.
+        prose_words = _prose_word_count(_story_body(cleaned))
         health = f"used={used}/{len(words)} stray_bold={stray_bold}"
+        if prose_words:
+            health += f" density={used / prose_words:.0%}"
         if visible_tokens:
             health += f" reason/vis={reasoning_tokens / visible_tokens:.1f}"
 
@@ -1058,7 +1082,15 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             "truncated": truncated,
             "truncated_source": truncate_source,
             "generation_id": generation_id,
+            # Target-word coverage. `words_used` counts a listed word as used
+            # when it appears at least once, counting inflections and phrase
+            # variants (_token_forms); `words_total` is the submitted list, which
+            # can be larger than the story_words rows if a word had no dictionary
+            # entry, so the denominator is stored rather than derived.
             "words_used": used,
+            "words_total": len(words),
+            # Prose word tokens, the denominator of the density the UI shows.
+            "prose_words": prose_words,
             "cost": round(cost, 6),
         }
     except Exception as e:
