@@ -505,8 +505,16 @@
     .story-word-chip:hover { border-color: var(--color-primary); }
     /* A target word the model never used. No click handler is attached, so this
        drops the gradient border and the pointer entirely rather than only
-       looking inert. */
-    .story-word-chip.is-missing {
+       looking inert.
+
+       Scoped to #storyModalWordsChips on purpose. The base .chip rules are
+       (0,1,0) and, for dark mode, [data-theme="dark"] .chip is (0,2,0) --
+       the SAME specificity as a bare .story-word-chip.is-missing, and defined
+       further down the file, so a plain two-class selector loses the tie and
+       the purple gradient plus #c084fc win in dark mode. Only
+       text-decoration survived, which is why the words looked struck-through
+       but otherwise unchanged. The ID makes this (1,2,0) and order-proof. */
+    #storyModalWordsChips .story-word-chip.is-missing {
         /* Gray, not a warning colour: an unused word is absent information, not a
            fault, and tinting it red competed with the words that WERE used. It
            recedes so the used chips read first.
@@ -524,7 +532,9 @@
         font-weight: 400;
         text-decoration: line-through;
     }
-    .story-word-chip.is-missing:hover { border-color: transparent; }
+    /* Same reason for the ID: .story-word-chip:hover is also (0,2,0) and would
+       otherwise put the primary border back on a chip that is not clickable. */
+    #storyModalWordsChips .story-word-chip.is-missing:hover { border-color: transparent; }
     .story-word-loading { color: var(--text-meta); font-size: 0.8em; }
     #storyModalWordsSummary { color: var(--text-meta); font-weight: 400; font-size: 0.85em; }
     mark.story-hl { background-color: #ffe066; color: inherit; border-radius: 3px; padding: 0 2px; }
