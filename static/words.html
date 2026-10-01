@@ -503,6 +503,22 @@
     .modal-tab-panel { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
     .story-word-chip { cursor: pointer; }
     .story-word-chip:hover { border-color: var(--color-primary); }
+    /* A target word the model never used. No click handler is attached, so this
+       drops the gradient border and the pointer entirely rather than only
+       looking inert. Reuses the coverage pill's --poor tone instead of adding a
+       new colour; the strike-through is what makes it read as "excluded" at a
+       glance, since the tint alone just looks different. */
+    .story-word-chip.is-missing {
+        background: var(--poor-bg);
+        border: 2px solid transparent;
+        color: var(--poor-text);
+        cursor: default;
+        opacity: 0.8;
+        text-decoration: line-through;
+    }
+    .story-word-chip.is-missing:hover { border-color: transparent; }
+    .story-word-loading { color: var(--text-meta); font-size: 0.8em; }
+    #storyModalWordsSummary { color: var(--text-meta); font-weight: 400; font-size: 0.85em; }
     mark.story-hl { background-color: #ffe066; color: inherit; border-radius: 3px; padding: 0 2px; }
     .story-meta { font-size: 0.75em; color: var(--text-meta); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-details); }
     /* The stat bar lives OUTSIDE the scrolling tab panel: it is a flex-shrink:0
@@ -895,7 +911,11 @@
             <div id="storyModalBody" class="rendered"></div>
         </div>
         <div id="builtTabPanel" class="modal-tab-panel" style="display:none;">
-            <div class="section-header"><h4>Words used in this story</h4></div>
+            <!-- Not "words used": this lists every target word, with the ones the
+                 model never used struck through. The summary states the split. -->
+            <div class="section-header">
+                <h4>Target words <span id="storyModalWordsSummary"></span></h4>
+            </div>
             <div class="chips" id="storyModalWordsChips"></div>
         </div>
         <div class="story-player" id="storyPlayer" style="display:none;">
@@ -2080,6 +2100,10 @@ async function openStoryModal(id) {
       metaEl.style.display = 'none';
     }
     setReadAloudEnabled(true);
+    // Immediate paint of every target word so the tab is never empty. Which of
+    // them the model actually used is fetched lazily when the tab is opened --
+    // see showBuiltFromTab -- because that per-word match costs 160-380ms on a
+    // 309-word list and most modal opens never look at this tab.
     const chipsBox = document.getElementById('storyModalWordsChips');
     chipsBox.innerHTML = '';
     (s.words || []).forEach(w => {
@@ -2090,6 +2114,7 @@ async function openStoryModal(id) {
       span.onclick = () => { switchStoryTab(); highlightWordInStory(w.word); };
       chipsBox.appendChild(span);
     });
+    document.getElementById('storyModalWordsSummary').textContent = '';
     switchStoryTab();
     document.getElementById('storyModalOverlay').classList.add('open');
   } catch (e) { /* ignore */ }
@@ -2097,9 +2122,73 @@ async function openStoryModal(id) {
 
 function closeStoryModal() {
   document.getElementById('storyModalOverlay').classList.remove('open');
-  if (currentModalStoryId != null) unsubscribeStoryStream(currentModalStoryId);
+  if (currentModalStoryId != null) {
+    unsubscribeStoryStream(currentModalStoryId);
+    // Drop the measurement so re-opening re-derives it. Editing the story text
+    // changes which words are present, and a stale cache would keep showing the
+    // old split. Cheap enough (~160ms warm) and only paid if the tab is opened.
+    delete wordUsageCache[currentModalStoryId];
+  }
   stopAudio();
   hideStoryPlayer();
+}
+
+// --- "Built from" tab: which target words actually appear -------------------
+//
+// The used/missing split is measured server-side (openrouter_agent._word_pattern,
+// the same matcher behind _count_words_used) so the chips cannot disagree with
+// the coverage pill. Fetched on demand for the reason given in openStoryModal.
+
+let wordUsageCache = {};
+
+function renderWordUsageChips(box, usage) {
+  box.innerHTML = '';
+  let missing = 0;
+  usage.forEach(u => {
+    const span = document.createElement('span');
+    span.className = 'chip story-word-chip' + (u.used ? '' : ' is-missing');
+    span.textContent = u.word;
+    if (u.used) {
+      span.title = 'Find "' + u.word + '" in the story';
+      span.onclick = () => { switchStoryTab(); highlightWordInStory(u.word); };
+    } else {
+      // No handler at all: the word is genuinely absent, so there is nothing to
+      // jump to and highlighting would just look like a broken click.
+      span.title = '"' + u.word + '" does not appear in this story';
+      missing += 1;
+    }
+    box.appendChild(span);
+  });
+  const used = usage.length - missing;
+  document.getElementById('storyModalWordsSummary').textContent =
+    ` — ${used} of ${usage.length} used`
+    + (missing ? `, ${missing} not used` : '');
+}
+
+async function showBuiltFromTab() {
+  const id = currentModalStoryId;
+  if (id == null) return;
+  const box = document.getElementById('storyModalWordsChips');
+  const cached = wordUsageCache[id];
+  if (cached) {
+    renderWordUsageChips(box, cached);
+    return;
+  }
+  box.innerHTML = '<span class="story-word-loading">Checking which words appear…</span>';
+  try {
+    const res = await fetch(`/api/stories/${id}/word-usage`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const usage = await res.json();
+    wordUsageCache[id] = usage;
+    // The modal may have closed, or moved to another story, while this was in
+    // flight -- painting now would put one story's chips under another's text.
+    if (currentModalStoryId !== id) return;
+    renderWordUsageChips(box, usage);
+  } catch (e) {
+    if (currentModalStoryId === id) {
+      box.innerHTML = '<span class="story-word-loading">Could not check the word list.</span>';
+    }
+  }
 }
 
 // --- Meanings model picker modal ---
@@ -3442,6 +3531,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.modal-tab').forEach(x => x.classList.toggle('active', x === t));
       document.getElementById('storyTabPanel').style.display = (tab === 'story') ? 'block' : 'none';
       document.getElementById('builtTabPanel').style.display = (tab === 'built') ? 'block' : 'none';
+      if (tab === 'built') showBuiltFromTab();
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && document.getElementById('storyModalOverlay').classList.contains('open')) closeStoryModal();

@@ -1016,6 +1016,48 @@ def api_get_story(story_id: int):
     return story
 
 
+@app.get("/api/stories/{story_id}/word-usage")
+def api_story_word_usage(story_id: int):
+    """Per-word "did it appear" flags for the "Built from" tab.
+
+    Uses openrouter_agent._word_pattern -- the same matcher behind
+    _count_words_used -- so these chips can never disagree with the coverage
+    pill, which matters because that matcher handles inflections, irregulars
+    and multi-word phrases.
+
+    A separate endpoint rather than extra fields on api_get_story because the
+    per-word pass costs ~160-380ms on a 309-word list, and most modal opens
+    never look at the tab. Being on demand also means it works for rows whose
+    words_used is still NULL (pre-migration stories): it measures rather than
+    reading a stored figure.
+
+    Synchronous, like its neighbours, so FastAPI runs it in the threadpool.
+    """
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    cursor.execute("SELECT content FROM stories WHERE id = ?", (story_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Story not found")
+    content = row[0]
+    cursor.execute(
+        "SELECT d.word FROM story_words sw "
+        "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ? ORDER BY d.id",
+        (story_id,),
+    )
+    words = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    if not words:
+        return []
+    body = openrouter_agent._story_body(content)
+    used = []
+    for word in words:
+        pattern = openrouter_agent._word_pattern(word)
+        used.append({"word": word, "used": bool(pattern and pattern.search(body))})
+    return used
+
+
 @app.post("/api/stories/{story_id}/retry")
 async def retry_story(story_id: int):
     """Re-run background generation for a failed or truncated story.
