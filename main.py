@@ -776,11 +776,16 @@ def api_preview_story(data: StoryPreview):
     preset = _active_preset()
     reasoning = openrouter_agent.use_reasoning_status(model, preset.get("reasoning", "auto"))
 
+    # Resolve the style ONCE here and pass it down. build_prompt would draw its
+    # own random entry internally, which is fine for the prompt but means the
+    # config grid could only say "random". Resolving up front lets the preview
+    # show a concrete style while the prompt still carries exactly that string.
+    style = openrouter_agent._resolve_style(preset.get("style"))
     # Reuse the stored template so the preview cannot drift from what
-    # create_story would render, but keep the random style honest.
+    # create_story would render.
     messages = openrouter_agent.build_messages(
         words, template=preset.get("template"),
-        style=(preset.get("style") or "").strip(),  # empty -> drawn from REDDIT_STYLES
+        style=style,
         system=preset.get("system"),
     )
     return {
@@ -788,6 +793,10 @@ def api_preview_story(data: StoryPreview):
         "model": model,
         "provider": data.provider or "auto",
         "style": (preset.get("style") or "").strip() or "random",
+        # The concrete entry when the preset has none, so the config grid can
+        # show the style the preview actually rendered. It is a SAMPLE: the real
+        # request draws its own, so the UI must label it as one.
+        "resolved_style": style,
         "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
         "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
         "reasoning": reasoning,

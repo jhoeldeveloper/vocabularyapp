@@ -4338,9 +4338,9 @@ function genPreviewConfigItem(label, value, cls) {
 // since picking the model and provider is what the preview depends on.
 function fillGenPreview(cfgBox, body, d, noteId) {
   const r = d.reasoning || {};
-  const styleLabel = d.style === 'random'
-    ? 'random (drawn when the story starts)' : d.style;
   cfgBox.innerHTML = '';
+  const styleIsRandom = d.style === 'random';
+  const styleLabel = styleIsRandom ? (d.resolved_style || d.style) : d.style;
   [
     ['Prompt preset', d.preset],
     ['Model', d.model],
@@ -4353,6 +4353,22 @@ function fillGenPreview(cfgBox, body, d, noteId) {
     // rather than assumed.
     ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
   ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
+
+  // Referenced by name, never by child index: adding a row above Style would
+  // silently attach this tooltip to the wrong cell.
+  const styleItem = Array.from(cfgBox.children)
+    .find(el => el.firstElementChild && el.firstElementChild.textContent === 'Style');
+  // A drawn style is a SAMPLE, not a promise: the real request draws its own
+  // entry, so saying so in the tooltip keeps an honest row from reading as a
+  // guarantee. genPreviewConfigItem already set the full value as the tooltip
+  // when it was long enough to truncate, so prepend rather than overwrite.
+  if (styleItem && styleIsRandom && d.resolved_style) {
+    const caveat = 'Random: this is one style drawn for this preview. Your story '
+      + 'will draw its own.';
+    const own = styleItem.getAttribute('title');
+    styleItem.title = own ? caveat + ' — ' + own : caveat;
+    styleItem.classList.add('has-note');
+  }
 
   // The reasoning caveat and the model's level list are reference detail, not
   // a call to action, so they hang off the Reasoning item as a tooltip. They
