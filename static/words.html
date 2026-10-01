@@ -984,23 +984,6 @@
        hidden in a tooltip. Only rendered when the server flags the reasoning
        note as a warning (reasoning.warn), so "this model does not reason" stays
        quiet. grid-column spans every cell so it sits under the whole grid. */
-    /* The Style cell is a live control, not a read-out: picking an entry here is
-       what gets sent, so the preview and the request cannot drift. Sized like
-       the value cells around it and kept to one line (no growth on focus) so the
-       grid rows stay uniform. */
-    .gen-preview-select {
-        flex: 1 1 auto; min-width: 0; max-width: 100%;
-        font: inherit; color: var(--text-secondary);
-        background: var(--bg-card); border: 1px solid var(--border-card);
-        border-radius: 4px; padding: 0 2px;
-        /* Match the height of a text cell exactly. A taller control made this one
-           row 20px against 15px everywhere else, which is the same defect the
-           item rule above already guards against for wrapped values: rows stop
-           lining up and the grid reads as broken rather than full. */
-        height: 17px; box-sizing: border-box; line-height: 13px;
-        text-overflow: ellipsis;
-    }
-    .gen-preview-select:focus { outline: 1px solid var(--color-primary); }
     .gen-preview-warn {
         grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 6px;
         font-size: 0.78em; line-height: 1.45; color: var(--warn-text);
@@ -2050,6 +2033,15 @@ function applyStoryPills(s, add, opts) {
         add('fa-solid fa-circle-exclamation', warnLabel, 'is-warning')
             .title = storyWarningTitle(s);
     }
+    // The Reddit style this story was written in, before the model and preset
+    // pills. Only the subreddit goes in the pill: the full entry is a sentence
+    // long and would blow the meta row apart, so it lives in the tooltip. Hidden
+    // when NULL (rows written before the column existed).
+    if (s.style) {
+        const sub = (s.style.split(':')[0] || '').trim() || s.style;
+        add('fa-solid fa-masks-theater', sub, '')
+            .title = `Style: ${s.style}`;
+    }
     if (showCutOff && s.status === 'truncated') {
         add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
             .title = "This story hit the model's token limit, so the ending is missing.";
@@ -2878,14 +2870,16 @@ function restoreStoryModel() {
 
 // --- Story Setup Modal (model + provider picker) ---
 let storyProviderSelection = "";  // "" = Default (auto-route), or a provider tag
-// "" = no per-story pick (the preset decides, or a fresh draw); otherwise a
-// REDDIT_STYLES entry, which is sent verbatim and is what the story gets.
-let storyStylePick = "";
+// The concrete style the preview is currently showing. There is no control for
+// it -- the row is read-only -- so this exists purely so the generate request
+// can carry the style the user just read, making the preview literally what is
+// sent. Empty means the preview has not rendered yet; the server then draws.
+let storyStyleShown = "";
 let setupProvidersCache = {};  // {model_id: [...]}
 
 function openStorySetupModal() {
   const overlay = document.getElementById('storySetupModalOverlay');
-  storyStylePick = '';  // a per-story pick must not leak into the next story
+  storyStyleShown = '';  // a stale style must not leak into the next story
   // Show model step (also hides the preview step)
   showSetupModelStep();
   // Restore previous model selection
@@ -2957,7 +2951,6 @@ async function renderSetupPreview() {
         words: words,
         model: resolveStoryModel(),
         provider: storyProviderSelection || null,
-        style: storyStylePick || null,
       }),
     }).then(r => r.json());
     if (d.detail) { body.textContent = d.detail; return; }
@@ -3154,7 +3147,7 @@ async function _doGenerateStory(words, model, provider) {
     const res = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ words, model, provider, style: storyStylePick || null })
+      body: JSON.stringify({ words, model, provider, style: storyStyleShown || null })
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -4365,50 +4358,17 @@ function genPreviewConfigItem(label, value, cls) {
   return div;
 }
 
-// The Style cell is a <select> rather than text: the chosen value is sent with
-// the generate request, which is what makes the preview honest. Reuses the row
-// builder so the label and the truncation behaviour match the other cells.
-function genPreviewStyleSelect(current, styles, onChange) {
-  const div = document.createElement('div');
-  div.className = 'gen-preview-item';
-  const b = document.createElement('b');
-  b.textContent = 'Style';
-  div.appendChild(b);
-  const sel = document.createElement('select');
-  sel.className = 'gen-preview-select';
-  // Sentinel for "no per-story pick": the preset decides, or a fresh draw.
-  const auto = document.createElement('option');
-  auto.value = '';
-  auto.textContent = 'Random (per story)';
-  sel.appendChild(auto);
-  (styles || []).forEach(entry => {
-    const opt = document.createElement('option');
-    opt.value = entry;
-    opt.textContent = entry;
-    sel.appendChild(opt);
-  });
-  sel.value = current || '';
-  sel.addEventListener('change', () => onChange(sel.value));
-  div.appendChild(sel);
-  return div;
-}
-
 // Renders a /api/story/preview payload into a config grid + prompt body.
 // Used by step 3 of Story Setup — the only place the prompt is previewed,
 // since picking the model and provider is what the preview depends on.
 function fillGenPreview(cfgBox, body, d, noteId) {
   const r = d.reasoning || {};
   cfgBox.innerHTML = '';
-  const styleItem = genPreviewStyleSelect(
-    d.style_source === 'picked' ? d.resolved_style : '', d.styles,
-    (value) => {
-      storyStylePick = value;
-      renderSetupPreview();
-    });
   [
     ['Prompt preset', d.preset],
     ['Model', d.model],
     ['Provider', d.provider],
+    ['Style', d.resolved_style || d.style],
     ['Temperature', String(d.temperature)],
     ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
     ['Words', String(d.words_total)],
@@ -4416,10 +4376,12 @@ function fillGenPreview(cfgBox, body, d, noteId) {
     // rather than assumed.
     ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
   ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
-  // Back in its original slot, after Provider: the grid is read left to right,
-  // top to bottom, and a control that jumps to the front of the row it lives in
-  // is disorienting for no benefit.
-  cfgBox.insertBefore(styleItem, cfgBox.children[3]);
+
+  // The style on screen is the style that will be sent, so remember it for the
+  // generate request. Without this the generation would draw its own style and
+  // the preview would be a sample again, which is the whole thing this cell
+  // exists to prevent.
+  if (d.resolved_style) storyStyleShown = d.resolved_style;
 
   // The reasoning caveat and the model's level list are reference detail, not
   // a call to action, so they hang off the Reasoning item as a tooltip. They

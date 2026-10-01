@@ -210,6 +210,7 @@ def init_db():
         ("warnings", "TEXT"),
         ("prompt_used", "TEXT"),
         ("prompt_preset", "TEXT"),
+        ("style", "TEXT"),
     ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
@@ -951,6 +952,7 @@ async def generate_story_job(story_id: int, words: List[str], model: str,
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
                 "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
                 "words_used = ?, words_total = ?, prose_words = ?, warnings = ?, "
+                "style = ?, "
                 "status = ?, error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
                 (
@@ -962,6 +964,10 @@ async def generate_story_job(story_id: int, words: List[str], model: str,
                     int(result.get("words_total") or 0),
                     int(result.get("prose_words") or 0),
                     warnings,
+                    # The style actually sent, from the frozen recipe rather than
+                    # the settings table: the row must describe THIS run even if
+                    # the preset has been edited since.
+                    (gen_kwargs or {}).get("style"),
                     final_status,
                     story_id,
                 ),
@@ -1334,6 +1340,12 @@ _STORY_FIELDS = (
     # and is deliberately NOT here -- it would ride along on every list fetch.
     # It has its own endpoint, _STORY_PROMPT_SELECT below.
     "prompt_preset",
+    # The REDDIT_STYLES entry this story was written in. A bare TEXT column
+    # because it has to render on the list row alongside the title, where the
+    # snapshot is not fetched -- parsing it back out of prompt_used would be a
+    # regex over prose the user may have edited. NULL on rows written before
+    # the column existed, and the pill hides rather than guesses.
+    "style",
     "status", "error", "createdAt", "updatedAt",
 )
 _STORY_SELECT = ", ".join(_STORY_FIELDS)
