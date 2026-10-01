@@ -505,15 +505,23 @@
     .story-word-chip:hover { border-color: var(--color-primary); }
     /* A target word the model never used. No click handler is attached, so this
        drops the gradient border and the pointer entirely rather than only
-       looking inert. Reuses the coverage pill's --poor tone instead of adding a
-       new colour; the strike-through is what makes it read as "excluded" at a
-       glance, since the tint alone just looks different. */
+       looking inert. */
     .story-word-chip.is-missing {
-        background: var(--poor-bg);
+        /* Gray, not a warning colour: an unused word is absent information, not a
+           fault, and tinting it red competed with the words that WERE used. It
+           recedes so the used chips read first.
+
+           --text-secondary rather than --text-meta at reduced opacity: that
+           combination measured 2.9:1 light / 2.3:1 dark against the page, too
+           faint to identify at all, which was the original complaint. This is
+           7.5:1 / 10.1:1 and still recedes because the used chips are bold
+           gradient purple. The strike-through does the rest of the work: it
+           survives greyscale and colour-blindness, where the tint cannot. */
+        background: var(--bg-editable);
         border: 2px solid transparent;
-        color: var(--poor-text);
+        color: var(--text-secondary);
         cursor: default;
-        opacity: 0.8;
+        font-weight: 400;
         text-decoration: line-through;
     }
     .story-word-chip.is-missing:hover { border-color: transparent; }
@@ -2153,8 +2161,11 @@ function renderWordUsageChips(box, usage) {
       span.onclick = () => { switchStoryTab(); highlightWordInStory(u.word); };
     } else {
       // No handler at all: the word is genuinely absent, so there is nothing to
-      // jump to and highlighting would just look like a broken click.
-      span.title = '"' + u.word + '" does not appear in this story';
+      // jump to and highlighting would just look like a broken click. The
+      // tooltip says why it looks muted, since a greyed chip with no pointer
+      // would otherwise read as a disabled control rather than a measurement.
+      span.title = '"' + u.word + '" was not used in this story — struck through '
+        + 'because no form of it appears in the text.';
       missing += 1;
     }
     box.appendChild(span);
