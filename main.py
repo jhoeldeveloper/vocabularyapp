@@ -725,8 +725,28 @@ def api_filter_words(
 
 
 # --- Stories (generated from words via OpenRouter) ---
+def _sanitize_style(raw):
+    """A per-story style override, accepted only if it is a known entry.
+
+    The override arrives from the browser, so it is validated rather than
+    trusted: an unknown string would otherwise be spliced straight into the
+    prompt. Returns None for empty/unknown, which means "no override".
+    """
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if value in openrouter_agent.REDDIT_STYLES:
+        return value
+    print(f"[STORY] ignoring unknown style override: {value[:60]!r}")
+    return None
+
+
 class StoryCreate(BaseModel):
     words: List[str]
+    # The style to use for THIS story, set from the style the preview showed, so
+    # what you read in Story Setup is what gets sent. None means "follow the
+    # preset", which is how a client that predates this field keeps working.
+    style: Optional[str] = None
     # No `title`: the story title is always invented by the model (the prompt
     # carries an explicit instruction, not a placeholder to substitute into), so
     # a title field here could only ever be ignored. Pydantic drops it silently
@@ -744,6 +764,7 @@ class StoryPreview(BaseModel):
     words: List[str] = []
     model: Optional[str] = None
     provider: Optional[str] = None
+    style: Optional[str] = None
 
 
 # Shown in place of the style line when the preset says "random". The draw
@@ -780,7 +801,8 @@ def api_preview_story(data: StoryPreview):
     # own random entry internally, which is fine for the prompt but means the
     # config grid could only say "random". Resolving up front lets the preview
     # show a concrete style while the prompt still carries exactly that string.
-    style = openrouter_agent._resolve_style(preset.get("style"))
+    override = _sanitize_style(data.style)
+    style = override or openrouter_agent._resolve_style(preset.get("style"))
     # Reuse the stored template so the preview cannot drift from what
     # create_story would render.
     messages = openrouter_agent.build_messages(
@@ -793,6 +815,11 @@ def api_preview_story(data: StoryPreview):
         "model": model,
         "provider": data.provider or "auto",
         "style": (preset.get("style") or "").strip() or "random",
+        # Which of the three sources supplied the style: the per-story pick, the
+        # preset, or the draw. The UI needs it to word the row honestly.
+        "style_source": "picked" if override else (
+            "preset" if (preset.get("style") or "").strip() else "random"),
+        "styles": openrouter_agent.REDDIT_STYLES,
         # The concrete entry when the preset has none, so the config grid can
         # show the style the preview actually rendered. It is a SAMPLE: the real
         # request draws its own, so the UI must label it as one.
@@ -822,7 +849,7 @@ async def create_story(data: StoryCreate):
 
     # Freeze the active prompt preset now, so the row records the prompt that
     # produced it and a later preset edit cannot alter this run.
-    recipe = _resolve_prompt_recipe(words)
+    recipe = _resolve_prompt_recipe(words, data.style)
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -1137,7 +1164,7 @@ def _active_preset():
     return _default_preset()
 
 
-def _resolve_prompt_recipe(words):
+def _resolve_prompt_recipe(words, style_override=None):
     """Freeze the active preset into everything one generation needs.
 
     Called once, when the story row is created, for two reasons:
@@ -1151,7 +1178,8 @@ def _resolve_prompt_recipe(words):
     snapshot cannot disagree with what was sent.
     """
     preset = _active_preset()
-    style = openrouter_agent._resolve_style(preset.get("style"))
+    override = _sanitize_style(style_override)
+    style = override or openrouter_agent._resolve_style(preset.get("style"))
     messages = openrouter_agent.build_messages(words, template=preset.get("template"),
                                                style=style, system=preset.get("system"))
     return {
