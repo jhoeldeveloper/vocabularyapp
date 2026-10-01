@@ -233,7 +233,12 @@
         opacity: 0;
         transition: opacity 0.3s, transform 0.3s;
         pointer-events: none;
-        z-index: 1000;
+        /* Above .modal-overlay (2000), which it used to sit under: saving a
+           prompt preset from the Prompt Lab calls showToast(), and at 1000 the
+           toast rendered BEHIND the overlay's dimmed backdrop, so the
+           confirmation was invisible exactly when the user was waiting for it.
+           Nothing else uses a z-index above the overlays, so 3000 is free. */
+        z-index: 3000;
         white-space: nowrap;
     }
     #addWordToast.show {
@@ -681,7 +686,9 @@
     .model-ac-item .model-ac-tag.free { color: var(--color-success); background: rgba(22,163,74,0.12); }
     .model-ac-item .model-ac-tag.recommended { color: var(--color-primary); background: rgba(59,130,246,0.12); }
 
-    .model-picker-modal { width: min(720px, 92vw); height: min(640px, 85vh); max-height: 85vh; display: flex; flex-direction: column; }
+    /* Wide because step 3 of Story Setup now renders the whole prompt in here.
+       The Lab has its own width (.prompt-lab-modal). */
+    .model-picker-modal { width: min(940px, 94vw); height: min(700px, 88vh); max-height: 88vh; display: flex; flex-direction: column; }
     .model-picker-body { padding: 14px 16px; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
     .model-picker-ac { flex: 0 0 auto; }
     .model-picker-current {
@@ -841,7 +848,11 @@
        of the modal -- the template alone cannot show what the model will
        actually receive, because the word list, the style line and the whole
        Title:/Story: contract are added around it server-side. */
-    .prompt-lab-modal { width: min(1040px, 94vw); height: min(780px, 88vh); max-height: 88vh; display: flex; flex-direction: column; }
+    /* Story Prompt and Story Setup reuse the story modal's box exactly
+       (90vw x 88vh, from the base .modal rule) so moving between the three
+       dialogs does not resize the world under the cursor. Only the internal
+       layout differs. */
+    .prompt-lab-modal, .story-setup-modal { width: 90vw; height: 88vh; max-width: none; max-height: none; display: flex; flex-direction: column; }
     .prompt-lab-bar { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
     .prompt-lab-bar .sort-btn { font-size: 0.8em; }
     #promptLabPreset { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 0.9em; padding: 5px 8px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
@@ -860,12 +871,22 @@
     .prompt-lab-hint.is-warn { color: var(--warn-text); }
 
     .prompt-lab-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    /* Editor and preview are tabs, not stacked panes: sharing the column left
+       the template ~200px tall, which is a scroll-and-squint editor. The
+       findings strip stays below both tabs, because that is the safety net
+       you need *while* typing. */
+    .prompt-lab-tabs { display: flex; gap: 4px; padding: 6px 12px 0 12px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
+    .prompt-lab-edit-pane { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
     /* The system message sits above the template: it is the outer envelope, and
        reading it first is the order the model sees. Fixed height, because it is
        short by nature and the template is what needs the room. */
     .prompt-lab-system { flex: 0 0 auto; display: flex; flex-direction: column; padding: 10px 12px 0 12px; }
     .prompt-lab-system textarea {
-        height: 74px; resize: vertical; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /* Tall enough for the shipped default so it is not clipped on open: it
+           wraps to 6 lines at this width (the "Reply with exactly this…"
+           sentence is long), which is ~130px at the 0.78em line height.
+           Still resizable, and the template below keeps the room. */
+        height: 132px; resize: vertical; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.78em; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--border-input);
         border-radius: 6px; background: var(--bg-card); color: var(--text-primary);
     }
@@ -873,14 +894,17 @@
     .prompt-lab-system code { font-size: 0.95em; }
     /* Editor and preview split the column; the preview is the one that matters,
        so it gets the larger share (see the flex ratios). */
-    .prompt-lab-editor { flex: 1 1 45%; min-height: 90px; display: flex; padding: 10px 12px 4px 12px; }
+    .prompt-lab-editor { flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column; padding: 10px 12px 6px 12px; }
+    /* One line above the textarea, saying what happens to the text: nothing. */
+    .prompt-lab-cheatsheet { flex-shrink: 0; font-size: 0.73em; line-height: 1.45; color: var(--text-meta); padding: 0 2px 7px 2px; }
+    .prompt-lab-cheatsheet code { font-size: 0.95em; color: var(--text-secondary); }
     #promptLabTemplate {
         flex: 1 1 auto; resize: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.78em; line-height: 1.55; padding: 10px 12px; border: 1px solid var(--border-input);
         border-radius: 6px; background: var(--bg-card); color: var(--text-primary);
     }
     #promptLabTemplate:read-only { background: var(--bg-meta); color: var(--text-secondary); }
-    .prompt-lab-preview-wrap { flex: 1 1 55%; min-height: 90px; display: flex; flex-direction: column; border-top: 1px solid var(--border-details); }
+    .prompt-lab-preview-wrap { flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column; }
     .prompt-lab-preview-head { display: flex; gap: 8px; align-items: baseline; padding: 8px 12px 4px 12px; font-size: 0.74em; color: var(--text-meta); flex-shrink: 0; }
     .prompt-lab-preview-head .prompt-lab-preview-title { text-transform: uppercase; letter-spacing: 0.04em; }
     #promptLabPreview {
@@ -912,21 +936,49 @@
     .prompt-lab-modal.is-asused .prompt-lab-bar,
     .prompt-lab-modal.is-asused .prompt-lab-props,
     .prompt-lab-modal.is-asused .prompt-lab-editor,
-    .prompt-lab-modal.is-asused .prompt-lab-system { display: none; }
+    .prompt-lab-modal.is-asused .prompt-lab-system,
+    .prompt-lab-modal.is-asused .prompt-lab-tabs { display: none; }
     .prompt-lab-modal.is-asused .prompt-lab-preview-wrap { flex: 1 1 auto; border-top: none; }
     .prompt-lab-modal.is-asused #promptLabPreview { font-size: 0.8em; }
 
     /* Pre-generation preview: the config grid above the prompt. Wide items span
        the row so a long caveat (the reasoning one) gets the width it needs. */
+    /* Wider cells and one line each. A wrapping value used to make its whole
+       grid row taller, so the items beside it ended up top-aligned over two
+       different baselines -- the grid looked broken rather than full. Now a
+       long value truncates with an ellipsis and the full text is in the item's
+       tooltip (genPreviewConfigItem), so rows stay uniform and nothing is
+       hidden without a way to see it. */
     .gen-preview-config {
-        flex-shrink: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-        gap: 6px 14px; padding: 12px 16px; border-bottom: 1px solid var(--border-details);
-        background: var(--bg-meta);
+        flex-shrink: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+        gap: 7px 22px; padding: 12px 16px; border-bottom: 1px solid var(--border-details);
+        background: var(--bg-meta); align-items: center;
     }
-    .gen-preview-item { font-size: 0.78em; color: var(--text-secondary); }
-    .gen-preview-item b { color: var(--text-meta); font-weight: 600; margin-right: 5px; }
-    .gen-preview-item.is-wide { grid-column: 1 / -1; color: var(--warn-text); }
-    .gen-preview-item.is-warn { color: var(--warn-text); }
+    /* min-width:0 is load-bearing: a grid item defaults to min-content width,
+       which would defeat the ellipsis entirely. */
+    .gen-preview-item {
+        font-size: 0.78em; color: var(--text-secondary); min-width: 0;
+        display: flex; align-items: baseline; gap: 5px;
+    }
+    .gen-preview-item b { color: var(--text-meta); font-weight: 600; flex-shrink: 0; }
+    .gen-preview-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Dotted underline = "there is more here", so a caveat hidden in a tooltip
+       is at least discoverable. */
+    .gen-preview-item.has-note { cursor: help; }
+    /* text-decoration rather than border-bottom: a 1px border made this item a
+       pixel taller than its neighbours and broke the row's baseline alignment. */
+    .gen-preview-item.has-note .gen-preview-value {
+        text-decoration: underline dotted var(--warn-text); text-underline-offset: 2px;
+    }
+    /* A limitation the user is about to pay for, stated in full rather than
+       hidden in a tooltip. Only rendered when the server flags the reasoning
+       note as a warning (reasoning.warn), so "this model does not reason" stays
+       quiet. grid-column spans every cell so it sits under the whole grid. */
+    .gen-preview-warn {
+        grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 6px;
+        font-size: 0.78em; line-height: 1.45; color: var(--warn-text);
+    }
+    .gen-preview-warn i { flex-shrink: 0; margin-top: 0.15em; }
     .gen-preview-body {
         flex: 1 1 auto; overflow-y: auto; margin: 12px 16px; padding: 12px 14px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76em;
@@ -934,6 +986,10 @@
         background: var(--bg-meta); border: 1px solid var(--border-details); border-radius: 6px; color: var(--text-secondary);
     }
     .gen-preview-body .lab-system { color: var(--text-meta); font-style: italic; }
+    /* Step 3 is the only step with nothing to scroll, so it stretches: the
+       prompt takes the height the model/provider lists would have used. */
+    .setup-preview-step { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .setup-preview-step .gen-preview-body { flex: 1 1 auto; min-height: 180px; }
 
     /* In Stories view, hide the word-mode controls but keep the view toggle. */
     body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
@@ -1093,8 +1149,6 @@
     <div id="filterResults" class="filter-results"></div>
     <div class="gen-actions">
       <button id="generateStoryBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
-      <!-- Visual check of exactly what will be sent, before spending a generation. -->
-      <button id="genPreviewBtn" class="sort-btn" title="See the prompt and settings this story would use"><i class="fa-solid fa-eye"></i> Preview</button>
       <!-- OpenRouter-only, like the model pickers: the story prompt is an
            OpenRouter construct. It lives with Generate because the prompt is
            what Generate runs, and the label is the active preset's name, so
@@ -1115,14 +1169,12 @@
 </div>
 
 <div id="storySetupModalOverlay" class="modal-overlay">
-    <div class="modal model-picker-modal">
+    <div class="modal story-setup-modal">
         <div class="modal-header">
             <h3>Story Setup</h3>
             <button id="setupCloseBtn" class="modal-close" title="Close">&times;</button>
         </div>
         <div class="model-picker-body">
-            <label class="setup-title-label" for="setupTitle">Title (optional)</label>
-            <input type="text" id="setupTitle" class="setup-title-input" placeholder="Optional title">
 
             <!-- STEP 1: Model list -->
             <div id="setupModelStep">
@@ -1152,7 +1204,7 @@
             </div>
 
             <!-- STEP 3: the prompt that will be sent (visual check, no request) -->
-            <div id="setupPreviewStep" style="display:none;">
+            <div id="setupPreviewStep" class="setup-preview-step" style="display:none;">
                 <div class="setup-model-summary">
                     <span>Model:</span>
                     <span class="model-name" id="setupPreviewModelLabel"></span>
@@ -1160,7 +1212,7 @@
                 </div>
                 <div class="gen-preview-config" id="setupPreviewConfig" style="border:1px solid var(--border-details); border-radius:6px; margin-bottom:10px;"></div>
                 <div class="prompt-lab-hint" id="setupPreviewNote" style="margin-bottom:6px;"></div>
-                <div id="setupPreviewBody" class="gen-preview-body" style="margin:0; min-height:180px; max-height:38vh;"></div>
+                <div id="setupPreviewBody" class="gen-preview-body" style="margin:0;"></div>
             </div>
         </div>
         <div class="modal-footer">
@@ -1219,6 +1271,11 @@
                 </div>
             </div>
             <div class="prompt-lab-main">
+                <div class="prompt-lab-tabs">
+                    <button class="modal-tab prompt-lab-tab active" data-labtab="edit">Prompt</button>
+                    <button class="modal-tab prompt-lab-tab" data-labtab="preview">Preview</button>
+                </div>
+                <div class="prompt-lab-edit-pane" id="promptLabEditPane">
                 <div class="prompt-lab-system">
                     <div class="prompt-lab-preview-head">
                         <span class="prompt-lab-preview-title">System message</span>
@@ -1227,15 +1284,21 @@
                     <textarea id="promptLabSystem" spellcheck="false"></textarea>
                 </div>
                 <div class="prompt-lab-editor">
-                    <!-- The editable middle of the prompt. {title} is the one
-                         placeholder: it expands to the title instruction, and
-                         picking where it goes is the user's call. The word
-                         list, the style line and the Title:/Story: contract
-                         are added around this and are not editable here. -->
+                    <!-- The editable middle of the prompt, sent verbatim: no
+                         placeholders, nothing substituted. The word list and
+                         the style line are added after it; the Title:/Story:
+                         contract lives in the system message above. -->
+                    <div class="prompt-lab-cheatsheet">
+                        Write the rules freely &mdash; this text is sent exactly as written,
+                        with nothing substituted. The word list and the style line are
+                        added after it, and the <code>Title:</code>/<code>Story:</code>
+                        output labels live in the system message above.
+                    </div>
                     <textarea id="promptLabTemplate" spellcheck="false"
                               placeholder="Write the rules the story must follow…"></textarea>
                 </div>
-                <div class="prompt-lab-preview-wrap">
+                </div>
+                <div class="prompt-lab-preview-wrap" id="promptLabPreviewPane" style="display:none;">
                     <div class="prompt-lab-preview-head">
                         <span class="prompt-lab-preview-title">Preview</span>
                         <span id="promptLabPreviewWords"></span>
@@ -1249,29 +1312,6 @@
             <span class="prompt-lab-footer-note" id="promptLabFooterNote"></span>
             <button id="promptLabCancelBtn" class="sort-btn">Cancel</button>
             <button id="promptLabSaveBtn" class="sort-btn"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-        </div>
-    </div>
-</div>
-
-<!-- Pre-generation preview (visual only): the exact prompt plus the resolved
-     request config, so nothing is spent to find out what was going to be sent. -->
-<div id="genPreviewOverlay" class="modal-overlay">
-    <div class="modal prompt-lab-modal is-asused" id="genPreviewModal">
-        <div class="modal-header">
-            <h3>About to generate</h3>
-            <button id="genPreviewCloseBtn" class="modal-close" title="Close">&times;</button>
-        </div>
-        <div class="gen-preview-config" id="genPreviewConfig"></div>
-        <div class="prompt-lab-preview-wrap">
-            <div class="prompt-lab-preview-head">
-                <span class="prompt-lab-preview-title">Prompt</span>
-                <span>exactly what will be sent</span>
-            </div>
-            <div id="genPreviewBody" class="gen-preview-body"></div>
-        </div>
-        <div class="modal-footer">
-            <span class="prompt-lab-footer-note" id="genPreviewNote"></span>
-            <button id="genPreviewCancelBtn" class="sort-btn">Close</button>
         </div>
     </div>
 </div>
@@ -2815,9 +2855,6 @@ let setupProvidersCache = {};  // {model_id: [...]}
 
 function openStorySetupModal() {
   const overlay = document.getElementById('storySetupModalOverlay');
-  // Restore title from the old input (now removed from DOM)
-  const titleInput = document.getElementById('setupTitle');
-  titleInput.value = '';
   // Show model step (also hides the preview step)
   showSetupModelStep();
   // Restore previous model selection
@@ -2887,7 +2924,6 @@ async function renderSetupPreview() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         words: words,
-        title: document.getElementById('setupTitle').value.trim() || null,
         model: resolveStoryModel(),
         provider: storyProviderSelection || null,
       }),
@@ -3070,14 +3106,13 @@ function setupSelectProvider(tag) {
 function setupGenerateStory() {
   const words = Array.from(selectedWords);
   if (!words.length) { showToast('Select at least one word first'); return; }
-  const title = document.getElementById('setupTitle').value.trim() || null;
   const model = resolveStoryModel();
   const provider = storyProviderSelection || null;
   closeStorySetupModal();
-  _doGenerateStory(words, title, model, provider);
+  _doGenerateStory(words, model, provider);
 }
 
-async function _doGenerateStory(words, title, model, provider) {
+async function _doGenerateStory(words, model, provider) {
   const btn = document.getElementById('generateStoryBtn');
   const status = document.getElementById('genStatus');
   btn.disabled = true;
@@ -3087,7 +3122,7 @@ async function _doGenerateStory(words, title, model, provider) {
     const res = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ words, title, model, provider })
+      body: JSON.stringify({ words, model, provider })
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -3781,8 +3816,8 @@ function openStoriesForWord(wordId) {
 //            regex on those labels, so the envelope has to live somewhere the
 //            user cannot delete it. A broken template can produce a wrong title
 //            but never an unparseable story.
-//   template this textarea. Carries one placeholder, {title}, which expands to
-//            the title instruction. Where you put it is your call.
+//   template this textarea, sent exactly as written -- no placeholders and no
+//            substitution, so braces in the text are just text.
 //   tail     the style line and the word list, appended after the template.
 //
 // Consequences the UI has to respect:
@@ -3802,8 +3837,15 @@ const promptLab = {
   defaultSystem: '',
   styles: [],
   reasoningEfforts: [],
+  tab: 'edit',            // 'edit' | 'preview'
   asUsed: null,        // {id, name, text} when opened from a story
   validateTimer: null,
+  // Monotonic counters for the validate/preview round-trips. MUST start at 0:
+  // `++undefined` is NaN, and JSON.stringify(NaN) is null, so an uninitialised
+  // counter makes every response compare unequal and silently discards all of
+  // them -- findings included -- with no error anywhere.
+  validateSeq: 0,
+  previewSeq: 0,
   previewTimer: null,
 };
 
@@ -3814,6 +3856,18 @@ const LAB_SAMPLE_WORDS = ['barn', 'ephemeral', 'piece of cake', 'run', 'dread'];
 function labPreviewWords() {
   const sel = (typeof selectedWords !== 'undefined' && selectedWords) ? Array.from(selectedWords) : [];
   return sel.length ? sel : LAB_SAMPLE_WORDS;
+}
+
+// Editor and preview are tabs. The preview keeps refreshing in the background
+// either way (scheduleLabRefresh), so switching to it always shows the current
+// text rather than a stale render.
+function switchLabTab(name) {
+  promptLab.tab = name;
+  document.getElementById('promptLabEditPane').style.display = name === 'edit' ? '' : 'none';
+  document.getElementById('promptLabPreviewPane').style.display = name === 'preview' ? '' : 'none';
+  document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.labtab === name);
+  });
 }
 
 function labCurrentPreset() {
@@ -3863,7 +3917,12 @@ function renderLabReasoningOptions() {
     ['off', 'Off'],
     ['minimal', 'Minimal'],
   ];
-  (promptLab.reasoningEfforts || []).forEach(e => modes.push([e, e]));
+  // "minimal" is both a named mode and a level some models list in their
+  // catalogue, so the level list has to skip names the modes already cover or
+  // the dropdown shows it twice.
+  (promptLab.reasoningEfforts || []).forEach(e => {
+    if (!modes.some(m => m[0] === e)) modes.push([e, e]);
+  });
   modes.forEach(([value, label]) => {
     const opt = document.createElement('option');
     opt.value = value;
@@ -3973,6 +4032,7 @@ function renderLabPreviewText(system, user) {
 }
 
 function refreshLabPreview() {
+  const seq = ++promptLab.previewSeq;
   if (promptLab.asUsed) {
     document.getElementById('promptLabPreview').textContent = promptLab.asUsed.text;
     return;
@@ -3987,32 +4047,32 @@ function refreshLabPreview() {
       template: document.getElementById('promptLabTemplate').value,
       system: document.getElementById('promptLabSystem').value,
       words: words,
-      title: labTitleForPreview(),
       style: document.getElementById('promptLabStyle').value,
+      seq: seq,
     }),
   }).then(r => r.json()).then(d => {
+    // Drop out-of-order replies. Two refreshes can be in flight at once (typing
+    // while a slow preview resolves), and without this the older one lands last
+    // and paints a preview of text the user has already changed.
+    if (d.seq !== promptLab.previewSeq) return;
     if (d.user !== undefined) renderLabPreviewText(d.system, d.user);
   }).catch(() => {});
-}
-
-// The title the preview renders with. Must be what will ACTUALLY be sent: with
-// nothing in Story Setup the branch is "invent one", so previewing a hardcoded
-// sample made the preview describe a run that would never happen. An empty
-// field now previews the invented-title branch.
-function labTitleForPreview() {
-  const input = document.getElementById('setupTitle');
-  return (input && input.value.trim()) || null;
 }
 
 function scheduleLabRefresh() {
   clearTimeout(promptLab.previewTimer);
   promptLab.previewTimer = setTimeout(() => {
     const tpl = document.getElementById('promptLabTemplate').value;
+    const seq = ++promptLab.validateSeq;
     fetch('/api/prompts/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template: tpl, system: document.getElementById('promptLabSystem').value }),
+      body: JSON.stringify({ template: tpl, system: document.getElementById('promptLabSystem').value, seq: seq }),
     }).then(r => r.json()).then(d => {
+      // Same out-of-order guard as the preview: a finding about text the user has
+      // already deleted is worse than no finding, because it cannot be located
+      // and it looks like the current prompt is broken.
+      if (d.seq !== promptLab.validateSeq) return;
       if (d.findings) renderLabFindings(d.findings);
     }).catch(() => {});
     refreshLabPreview();
@@ -4083,6 +4143,7 @@ async function openPromptLab(storyId) {
       document.getElementById('promptLabPreviewWords').textContent = 'as sent';
       document.getElementById('promptLabPreview').textContent = res.prompt_used;
       setLabReadonly(true);
+      switchLabTab('preview');
       document.getElementById('promptLabFooterNote').textContent =
         'Stored on the story row when it was created. Stories made before prompt presets existed have none.';
       overlay.classList.add('open');
@@ -4105,6 +4166,7 @@ async function openPromptLab(storyId) {
     const preset = labCurrentPreset();
     if (preset) fillLabForm(preset);
     document.getElementById('promptLabFooterNote').textContent = '';
+    switchLabTab('edit');
     overlay.classList.add('open');
   } catch (e) { /* leave the modal closed */ }
 }
@@ -4259,13 +4321,21 @@ function genPreviewConfigItem(label, value, cls) {
   const b = document.createElement('b');
   b.textContent = label;
   div.appendChild(b);
-  div.appendChild(document.createTextNode(value));
+  // The value needs its own element: `text-overflow: ellipsis` cannot apply to
+  // a bare text node inside a flex container.
+  const span = document.createElement('span');
+  span.className = 'gen-preview-value';
+  span.textContent = value;
+  div.appendChild(span);
+  // A truncated value must still be readable, so anything long enough to be
+  // cut off carries the full text as its tooltip.
+  if (String(value).length > 24) div.title = String(value);
   return div;
 }
 
 // Renders a /api/story/preview payload into a config grid + prompt body.
-// Shared by the Generate panel's Preview button and step 3 of Story Setup, so
-// the two can never describe different stories.
+// Used by step 3 of Story Setup — the only place the prompt is previewed,
+// since picking the model and provider is what the preview depends on.
 function fillGenPreview(cfgBox, body, d, noteId) {
   const r = d.reasoning || {};
   const styleLabel = d.style === 'random'
@@ -4279,14 +4349,42 @@ function fillGenPreview(cfgBox, body, d, noteId) {
     ['Temperature', String(d.temperature)],
     ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
     ['Words', String(d.words_total)],
-    ['Title', d.title],
     // Asked vs. effective, so a request the provider will ignore is visible
     // rather than assumed.
     ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
   ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
-  if (r.note) cfgBox.appendChild(genPreviewConfigItem('', r.note, 'is-wide'));
-  if (r.supported && r.supported.length) {
-    cfgBox.appendChild(genPreviewConfigItem('Model levels', r.supported.join(', ')));
+
+  // The reasoning caveat and the model's level list are reference detail, not
+  // a call to action, so they hang off the Reasoning item as a tooltip. They
+  // used to be two extra rows (one of them a full-width amber line) and pushed
+  // the actual prompt below the fold.
+  const reasoningItem = cfgBox.lastElementChild;
+  if (reasoningItem) {
+    const bits = [];
+    if (r.note) bits.push(r.note);
+    if (r.supported && r.supported.length) bits.push('This model offers: ' + r.supported.join(', ') + '.');
+    if (bits.length) {
+      // Keep whatever tooltip the value itself earned -- the value is the
+      // first thing anyone wants from a truncated cell.
+      const own = reasoningItem.getAttribute('title');
+      reasoningItem.title = (own ? own + ' — ' : '') + bits.join(' ');
+      reasoningItem.classList.add('has-note');
+    }
+  }
+
+  // A warning about what this request will cost, shown as text the user cannot
+  // miss. It was tooltip-only, which is the worst place for it: the tooltip is
+  // invisible until hovered, and this is the case where the user is about to
+  // pay for reasoning they cannot switch off. The supported-effort list stays
+  // in the tooltip -- it is reference detail, not a call to action.
+  if (r.warn && r.note) {
+    const warnRow = document.createElement('div');
+    warnRow.className = 'gen-preview-warn';
+    warnRow.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+    const warnText = document.createElement('span');
+    warnText.textContent = r.note;
+    warnRow.appendChild(warnText);
+    cfgBox.appendChild(warnRow);
   }
 
   const note = document.getElementById(noteId);
@@ -4309,38 +4407,6 @@ function fillGenPreview(cfgBox, body, d, noteId) {
   body.innerHTML = '';
   body.appendChild(sys);
   body.appendChild(usr);
-}
-
-async function openGenPreview() {
-  const words = Array.from((typeof selectedWords !== 'undefined' && selectedWords) || []);
-  if (!words.length) { showToast('Select at least one word first'); return; }
-  const overlay = document.getElementById('genPreviewOverlay');
-  const cfgBox = document.getElementById('genPreviewConfig');
-  const body = document.getElementById('genPreviewBody');
-  cfgBox.innerHTML = '';
-  body.textContent = 'Rendering…';
-  document.getElementById('genPreviewNote').textContent = '';
-  overlay.classList.add('open');
-  try {
-    const d = await fetch('/api/story/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        words: words,
-        title: (document.getElementById('setupTitle') || {}).value || null,
-        model: resolveStoryModel(),
-        provider: storyProviderSelection || null,
-      }),
-    }).then(r => r.json());
-    if (d.detail) { body.textContent = d.detail; return; }
-    fillGenPreview(cfgBox, body, d, 'genPreviewNote');
-  } catch (e) {
-    body.textContent = 'Could not render the preview.';
-  }
-}
-
-function closeGenPreview() {
-  document.getElementById('genPreviewOverlay').classList.remove('open');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -4629,24 +4695,18 @@ document.addEventListener('DOMContentLoaded', () => {
             closeMeaningsModelModal();
         }
     });
-    // Click outside the modal box closes it.
-    document.getElementById('modelPickerModalOverlay').addEventListener('click', (e) => {
-        if (e.target.id === 'modelPickerModalOverlay') closeMeaningsModelModal();
-    });
+    // Deliberately NO click-outside-to-close on any modal. It is a real hazard
+    // here and not just an annoyance: opening the Prompt Lab, deleting a
+    // finding line and clicking slightly off to copy the text closed the editor
+    // and silently threw away the edit. The X button and Escape are the two
+    // deliberate ways out.
 
     // --- Story Setup Modal wiring ---
     document.getElementById('setupCloseBtn').addEventListener('click', closeStorySetupModal);    document.getElementById('setupCancelBtn').addEventListener('click', closeStorySetupModal);
     document.getElementById('setupGenerateBtn').addEventListener('click', setupGenerateStory);
     document.getElementById('setupChangeModelBtn').addEventListener('click', setupBackToModels);
     document.getElementById('setupBackToProvidersBtn').addEventListener('click', setupBackToProviders);
-    document.getElementById('setupTitle').addEventListener('input', () => {
-        // The title picks which {title} branch is sent, so the preview has to
-        // follow it rather than describe a run that will not happen.
-        if (document.getElementById('setupPreviewStep').style.display !== 'none') renderSetupPreview();
-    });
-    document.getElementById('storySetupModalOverlay').addEventListener('click', (e) => {
-        if (e.target.id === 'storySetupModalOverlay') closeStorySetupModal();
-    });
+    // No click-outside-to-close: see the note on the model picker above.
     const setupModelInput = document.getElementById('setupModelInput');
     setupModelInput.addEventListener('input', () => renderSetupModelList(setupModelInput.value));
     setupModelInput.addEventListener('keydown', (e) => {
@@ -4673,6 +4733,12 @@ document.addEventListener('DOMContentLoaded', () => {
     ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
     document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
+    document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (promptLab.asUsed) return;
+            switchLabTab(btn.dataset.labtab);
+        });
+    });
     // Ctrl/Cmd+S saves instead of the browser's "save page" dialog.
     document.getElementById('promptLabTemplate').addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -4680,23 +4746,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!promptLab.asUsed) savePromptLab();
         }
     });
-    labOverlay.addEventListener('click', (e) => {
-        if (e.target === labOverlay) closePromptLab();
-    });
+    // No click-outside-to-close: see the note on the model picker above.
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && labOverlay.classList.contains('open')) closePromptLab();
-    });
-
-    // --- Pre-generation preview wiring ---
-    const genPreviewOverlay = document.getElementById('genPreviewOverlay');
-    document.getElementById('genPreviewBtn').addEventListener('click', openGenPreview);
-    document.getElementById('genPreviewCloseBtn').addEventListener('click', closeGenPreview);
-    document.getElementById('genPreviewCancelBtn').addEventListener('click', closeGenPreview);
-    genPreviewOverlay.addEventListener('click', (e) => {
-        if (e.target === genPreviewOverlay) closeGenPreview();
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && genPreviewOverlay.classList.contains('open')) closeGenPreview();
     });
 
     fetchData(currentSort, currentOrder);

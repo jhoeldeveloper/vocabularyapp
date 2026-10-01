@@ -268,6 +268,9 @@ def get_story_counts():
 
 
 def _extract_title(content: str, fallback=None):
+    """Read the Title: line the model emitted. The system message requires that
+    label, and validate_prompt refuses a system message without it, so the
+    fallback is only reached if a provider ignored the contract entirely."""
     for line in content.splitlines():
         if line.lower().startswith("title:"):
             return line.split(":", 1)[1].strip()
@@ -724,7 +727,10 @@ def api_filter_words(
 # --- Stories (generated from words via OpenRouter) ---
 class StoryCreate(BaseModel):
     words: List[str]
-    title: Optional[str] = None
+    # No `title`: the story title is always invented by the model (the prompt
+    # carries an explicit instruction, not a placeholder to substitute into), so
+    # a title field here could only ever be ignored. Pydantic drops it silently
+    # if an old client still sends one.
     model: Optional[str] = None
     provider: Optional[str] = None
 
@@ -736,7 +742,6 @@ class StoryUpdate(BaseModel):
 
 class StoryPreview(BaseModel):
     words: List[str] = []
-    title: Optional[str] = None
     model: Optional[str] = None
     provider: Optional[str] = None
 
@@ -744,7 +749,14 @@ class StoryPreview(BaseModel):
 # Shown in place of the style line when the preset says "random". The draw
 # happens at generation time, so a preview that named a style would be a guess;
 # this says what is actually true at that point.
-_RANDOM_STYLE_MARKER = "(random — one is drawn when the story starts)"
+# No random-style marker any more. main.py used to pass this literal string as
+# the style to the preview endpoints, and _resolve_style() correctly treats a
+# non-empty string as a concrete style -- so the PREVIEW rendered "Style for this
+# story: (random -- one is drawn when the story starts)." and asked the model, in
+# the preview at least, to imitate a sentence in parentheses. A preview is more
+# useful showing a real REDDIT_STYLES entry, which is what the real request will
+# carry anyway. The UI still says "random" on its own, from the empty preset
+# field, so nothing needs to survive in the prompt text.
 
 
 @app.post("/api/story/preview")
@@ -767,8 +779,8 @@ def api_preview_story(data: StoryPreview):
     # Reuse the stored template so the preview cannot drift from what
     # create_story would render, but keep the random style honest.
     messages = openrouter_agent.build_messages(
-        words, data.title, template=preset.get("template"),
-        style=(preset.get("style") or "").strip() or _RANDOM_STYLE_MARKER,
+        words, template=preset.get("template"),
+        style=(preset.get("style") or "").strip(),  # empty -> drawn from REDDIT_STYLES
         system=preset.get("system"),
     )
     return {
@@ -780,7 +792,6 @@ def api_preview_story(data: StoryPreview):
         "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
         "reasoning": reasoning,
         "words_total": len(words),
-        "title": data.title or "(invented by the model)",
         "system": messages[0]["content"],
         "user": messages[1]["content"],
         "findings": openrouter_agent.validate_prompt(preset.get("template"), preset.get("system")),
@@ -802,7 +813,7 @@ async def create_story(data: StoryCreate):
 
     # Freeze the active prompt preset now, so the row records the prompt that
     # produced it and a later preset edit cannot alter this run.
-    recipe = _resolve_prompt_recipe(words, data.title)
+    recipe = _resolve_prompt_recipe(words)
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -814,7 +825,7 @@ async def create_story(data: StoryCreate):
             "INSERT INTO stories (title, content, audio_path, model, duration_ms, cost, status, "
             "prompt_used, prompt_preset) "
             "VALUES (?, NULL, NULL, ?, NULL, NULL, 'generating', ?, ?)",
-            (data.title or "Generating story...", actual_model,
+            ("Generating story...", actual_model,
              recipe["prompt_used"], _active_preset().get("name", "")),
         )
         story_id = cursor.lastrowid
@@ -832,13 +843,13 @@ async def create_story(data: StoryCreate):
     # Heavy AI generation runs as a background task so a page refresh or
     # dropped connection can't lose the result — it is written to the DB
     # and announced over the WebSocket when done.
-    _start_story_job(story_id, words, data.title, actual_model, actual_provider,
+    _start_story_job(story_id, words, actual_model, actual_provider,
                      recipe["gen_kwargs"])
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 
 
-async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str,
+async def generate_story_job(story_id: int, words: List[str], model: str,
                              provider_tag: Optional[str] = None, gen_kwargs: Optional[dict] = None):
     """Generate story content in the background and persist it when done."""
     token = _new_story_stream_token()
@@ -854,7 +865,7 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
     try:
         result = await run_in_threadpool(
             openrouter_agent.sync_generate_story,
-            words, title_hint, model, provider_tag, story_id, on_delta,
+            words, model, provider_tag, story_id, on_delta,
             **(gen_kwargs or {}),
         )
         # Always ship the tail of the stream before the terminal event so the UI
@@ -880,7 +891,10 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
         # the model produced, and re-running the density check on hand-edited
         # prose would flag the user's own writing as word salad.
         warnings = "; ".join(result.get("warnings") or []) or None
-        title = _extract_title(content, title_hint)
+        # The model always writes the Title: line (the system message requires
+        # it), so this is a read, not a request. There is no user-supplied title
+        # to fall back to any more.
+        title = _extract_title(content)
         # A story that hit max_tokens stops mid-sentence. Publish it anyway --
         # most of it is readable -- but as 'truncated' so the UI can say so and
         # offer a retry. A plain 'ready' would hide the missing ending.
@@ -959,11 +973,11 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
             _story_tasks.pop(story_id, None)
 
 
-def _start_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str,
-                      provider_tag: Optional[str] = None, gen_kwargs: Optional[dict] = None):
+def _start_story_job(story_id: int, words: List[str], model: str,
+                     provider_tag: Optional[str] = None, gen_kwargs: Optional[dict] = None):
     """Create the background generation task and remember it for cancel/delete."""
     task = asyncio.create_task(
-        generate_story_job(story_id, words, title_hint, model, provider_tag, gen_kwargs)
+        generate_story_job(story_id, words, model, provider_tag, gen_kwargs)
     )
     _story_tasks[story_id] = task
     return task
@@ -1114,7 +1128,7 @@ def _active_preset():
     return _default_preset()
 
 
-def _resolve_prompt_recipe(words, title):
+def _resolve_prompt_recipe(words):
     """Freeze the active preset into everything one generation needs.
 
     Called once, when the story row is created, for two reasons:
@@ -1129,7 +1143,7 @@ def _resolve_prompt_recipe(words, title):
     """
     preset = _active_preset()
     style = openrouter_agent._resolve_style(preset.get("style"))
-    messages = openrouter_agent.build_messages(words, title, template=preset.get("template"),
+    messages = openrouter_agent.build_messages(words, template=preset.get("template"),
                                                style=style, system=preset.get("system"))
     return {
         "prompt_used": f"[system]\n{messages[0]['content']}\n\n[user]\n{messages[1]['content']}",
@@ -1228,6 +1242,11 @@ def api_delete_preset(preset_id: str):
 
 
 class PromptValidate(BaseModel):
+    # Echoed straight back. The Lab keeps a counter and drops any response whose
+    # seq is not the newest, so two overlapping requests cannot paint a result
+    # for text the user has already edited. Without the echo the client sees
+    # undefined and discards EVERY response, findings included.
+    seq: Optional[int] = None
     template: str
     system: Optional[str] = None
 
@@ -1235,15 +1254,16 @@ class PromptValidate(BaseModel):
 @app.post("/api/prompts/validate")
 def api_validate_prompt(payload: PromptValidate):
     """Check a template without saving it. The UI calls this on a debounce."""
-    return {"findings": openrouter_agent.validate_prompt(payload.template, payload.system)}
+    return {"findings": openrouter_agent.validate_prompt(payload.template, payload.system),
+            "seq": payload.seq}
 
 
 class PromptPreview(BaseModel):
     template: str
     words: List[str] = []
-    title: Optional[str] = None
     style: str = ""
     system: Optional[str] = None
+    seq: Optional[int] = None
 
 
 @app.post("/api/prompts/preview")
@@ -1254,13 +1274,14 @@ def api_preview_prompt(payload: PromptPreview):
     the two things a reimplementation in JS would silently get wrong.
     """
     words = payload.words or ["barn", "ephemeral", "piece of cake", "run", "dread"]
-    messages = openrouter_agent.build_messages(words, payload.title, template=payload.template,
+    messages = openrouter_agent.build_messages(words, template=payload.template,
                                                style=payload.style or None,
                                                system=payload.system)
     return {
         "system": messages[0]["content"],
         "user": messages[1]["content"],
         "findings": openrouter_agent.validate_prompt(payload.template, payload.system),
+        "seq": payload.seq,
     }
 
 
@@ -1446,20 +1467,11 @@ async def retry_story(story_id: int):
 
     actual_model = model or "openrouter/free"
 
-    # Fresh title: let the AI invent one unless the user supplied a custom one
-    # (placeholder titles like 'Generating story...' are treated as no hint).
-    title_hint = None
-    conn = sqlite3.connect(DATABASE_URL)
-    row = conn.execute("SELECT title FROM stories WHERE id = ?", (story_id,)).fetchone()
-    conn.close()
-    if row and row[0] and row[0] != "Generating story...":
-        title_hint = row[0]
-
     # A retry regenerates the content, so it snapshots the CURRENT active preset
     # and overwrites the old snapshot. The invariant is "prompt_used describes
     # the content currently in this row", not "the first prompt ever tried" --
     # keeping the old one would misdescribe the prose the user is now reading.
-    recipe = _resolve_prompt_recipe(words, title_hint)
+    recipe = _resolve_prompt_recipe(words)
     conn = sqlite3.connect(DATABASE_URL)
     conn.execute(
         "UPDATE stories SET prompt_used = ?, prompt_preset = ? WHERE id = ?",
@@ -1468,7 +1480,7 @@ async def retry_story(story_id: int):
     conn.commit()
     conn.close()
 
-    _start_story_job(story_id, words, title_hint, actual_model, None, recipe["gen_kwargs"])
+    _start_story_job(story_id, words, actual_model, None, recipe["gen_kwargs"])
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 

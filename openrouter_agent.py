@@ -282,6 +282,12 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
     not claim reasoning is off when the model will think anyway."""
     config = _get_reasoning_config(model_id, mode)
     note = ""
+    # Whether the note is a limitation the user should SEE, or just reference
+    # detail. "This model does not reason, so nothing is sent" is information;
+    # "there is no off switch, expect several times the time and tokens" is a
+    # cost the user is about to pay and cannot avoid. The UI must not have to
+    # decide that from the wording, so it is decided here.
+    warn = False
     model = _reasoning_model(model_id)
     reasoning_meta = (model or {}).get("reasoning") or {}
     supported = reasoning_meta.get("supported_efforts") or []
@@ -290,9 +296,34 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
         chosen, _ = _resolve_effort(mode, supported)
         note = (f"This model does not offer “{mode}”. The nearest it supports "
                 f"(“{chosen}”) was requested instead.")
+        # Deliberately NOT a warning. The user chose this level; it is simply not
+        # on the menu for this model, and substituting the nearest one is the
+        # expected outcome of picking a model rather than a surprise. It stays in
+        # the tooltip with the other reference detail. Only a cost the user did
+        # not choose AND cannot avoid earns an inline row (the mandatory branches
+        # below), so the amber line keeps its meaning.
     elif mode == "off" and mandatory:
         note = ("This model always reasons, so 'off' cannot be honoured — the "
                 "cheapest effort it supports is requested instead.")
+        warn = True
+    elif mandatory:
+        # The case that was silent, and the one that matters most: "auto" on a
+        # mandatory-reasoning model resolves to its cheapest effort, so the model
+        # WILL think and nothing said so. The only clue was a small
+        # "auto -> low" in the config grid. This is the configuration where the
+        # user is about to pay for reasoning they cannot avoid, so it is the one
+        # that gets a plain warning.
+        if mode in all_reasoning_efforts():
+            # They picked the level on purpose, so do not lecture them about an
+            # off switch -- just say what this level costs.
+            note = (f"This model always reasons. “{mode}” is one of its "
+                    f"heaviest settings: expect the longest waits and the "
+                    f"largest bills.")
+        else:
+            note = ("This model always reasons — there is no off switch. It "
+                    "will think at its cheapest effort; expect several times "
+                    "the time and tokens.")
+        warn = True
     elif mode == "off" and model is None:
         note = "Model not in the catalogue, so 'off' is sent as a request only."
     elif config is None:
@@ -303,6 +334,7 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
         "supported": supported,
         "config": config,
         "note": note,
+        "warn": warn,
     }
 
 
@@ -461,8 +493,8 @@ REDDIT_STYLES = [
 #            _extract_title (main.py) and stripStoryLabels (words.html) regex
 #            on cannot be edited away by a user.
 #   template The prose rules. Stored in the settings table and editable from
-#            the UI without touching this file. Carries exactly one
-#            placeholder, {title}.
+#            the UI without touching this file. Sent verbatim: no placeholders,
+#            so braces in the text are just text.
 #   tail     The chosen style and the word list, appended AFTER the template.
 #            Words are bulk data and belong last, where recency helps the model
 #            hold them. Rendering them here (rather than letting the template
@@ -477,13 +509,6 @@ _STORY_MAX_TOKENS = 20000
 # Print the full rendered prompt for every story request. Off by default; turn
 # it on while editing the template so what is sent can be read in the log.
 _DEBUG_PROMPT = os.environ.get("STORY_DEBUG_PROMPT", "").strip() not in ("", "0", "false")
-
-TITLE_PLACEHOLDER = "{title}"
-
-_TASK_LINE = (
-    "Write one enjoyable, coherent story that reads like a real post on Reddit, "
-    "and that uses every word in this list:"
-)
 
 _SYSTEM_ROLE = (
     "You are a creative writing assistant that weaves words into engaging, "
@@ -511,7 +536,22 @@ _DEFAULT_SYSTEM = f"{_SYSTEM_ROLE}\n\n{_SYSTEM_CONTRACT}"
 # The editable middle. "Reset to code default" in the UI restores exactly this,
 # so it must stay the shipped prompt and not drift from what is documented in
 # AGENTS.md.
-_DEFAULT_TEMPLATE = """PLOT
+#
+# The title is a plain instruction in the template. It used to be a "{title}"
+# placeholder that expanded to one of two branches, so a user could force a
+# title from Story Setup; that is gone by request, because a placeholder in
+# prose is one more thing to explain and one more thing to get wrong. The
+# "Title:" label in the SYSTEM message is what the parsers need, and that is
+# still enforced -- only the user-supplied-title path was removed.
+# The task sentence is INSIDE the template, not prepended by build_prompt. It
+# used to be a hardcoded _TASK_LINE, which meant the one sentence that framed the
+# whole request was the one thing a user could not edit -- delete it from their
+# preset and it still came back in the preview. Everything the server adds now is
+# the tail (style line + word list), which has a real reason to be fixed: the
+# list must stay un-numbered, quoted and last.
+_DEFAULT_TEMPLATE = """Write one enjoyable, coherent story that reads like a real post on Reddit, and that uses every word in this list:
+
+PLOT
 - First person, casual and conversational, like telling a friend what happened. Open with a hook in the first two sentences.
 - One narrator with a clear goal, one place that changes as the story moves, a problem in the middle, and an unexpected ending whose twist is set up by details planted earlier.
 - Every scene follows from the previous one. No restarting, no unrelated jumps.
@@ -541,15 +581,7 @@ LANGUAGE
 - Plain prose only: no headings, lists, block quotes, code fences or commentary around the story.
 
 TITLE
-{title}"""
-
-
-def render_title_instruction(title):
-    """The text {title} expands to. One branch, decided here, not in the
-    template: the template cannot know whether a title was supplied."""
-    if title:
-        return f"Use exactly this title, word for word: '{title}'."
-    return "Invent a short, catchy title of at most 8 words."
+Invent a short, catchy title of at most 8 words."""
 
 
 def _render_word_list(words):
@@ -571,29 +603,36 @@ def _resolve_style(style=None):
     return (style or "").strip() or random.choice(REDDIT_STYLES)
 
 
-def build_prompt(words, title=None, template=None, style=None):
+def build_prompt(words, template=None, style=None):
     """Render the user message from the editable template.
 
-    ``style`` empty means "draw a random one from REDDIT_STYLES", which is the
-    shipped behaviour. Substitution uses str.replace and never str.format: a
-    template is prose, so a stray "{" (a JSON example, some maths) must not
-    raise KeyError/IndexError and take down a generation.
+    The template is sent as written -- no placeholders, no substitution. That
+    is what makes braces safe in prose: a template mentioning JSON or a set
+    literal is just text. (It used to be str.replace, never str.format, for the
+    same reason.)
+    ``style`` empty means "draw a random one from REDDIT_STYLES", the shipped
+    behaviour.
+
+    Only the TAIL is generated: the style line and the word list. The task
+    sentence is part of the template, so it is editable like everything else the
+    model reads -- an empty template therefore produces no opening sentence at
+    all, which is the user's choice, not a bug.
     """
     if template is None:
         template = _DEFAULT_TEMPLATE
     style = _resolve_style(style)
-    body = template.replace(TITLE_PLACEHOLDER, render_title_instruction(title))
-    return f"""{_TASK_LINE}
+    # Joined from parts rather than one f-string so an empty template cannot
+    # leave leading blank lines at the top of the message. The header and the
+    # list share ONE part: joining them like the others would put a blank line
+    # between "WORDS TO USE" and the list, which is not what shipped.
+    parts = [template.strip(),
+             f"Style for this story: {style}.",
+             "WORDS TO USE\n" + _render_word_list(words)]
+    return "\n\n".join(p for p in parts if p)
 
-{body.strip()}
-
-Style for this story: {style}.
-
-WORDS TO USE
-{_render_word_list(words)}"""
 
 
-def build_messages(words, title=None, template=None, style=None, system=None):
+def build_messages(words, template=None, style=None, system=None):
     """The full message list for a story request.
 
     `system` overrides the editable system message; the two labels the parsers
@@ -602,7 +641,7 @@ def build_messages(words, title=None, template=None, style=None, system=None):
     """
     return [
         {"role": "system", "content": (system or _DEFAULT_SYSTEM).strip()},
-        {"role": "user", "content": build_prompt(words, title, template, style)},
+        {"role": "user", "content": build_prompt(words, template, style)},
     ]
 
 
@@ -620,6 +659,12 @@ def build_messages(words, title=None, template=None, style=None, system=None):
 # reasoning model to check its own work was measured at 405s / 26,518 reasoning
 # tokens for a 286-word story, versus 68s for the same model and length without
 # the sentence. So it is a warning, not a rule we enforce.
+#
+# There are three patterns rather than one combined regex, so each can be added
+# and its coverage measured on its own. Probing 18 paraphrases of the same
+# instruction: the keyword list alone caught 11 and missed 7, and every addition
+# since has been driven by a specific miss. Keep the probe set in this project's
+# history -- a check nobody measures is a check that quietly stops working.
 _SELF_CHECK_RE = re.compile(
     r"\b(verify|verif\w+|double[- ]check|make sure (you|that) (use|every|all)|"
     r"ensure (you|that|every|all)|check (that|your|each|every|off)|"
@@ -627,12 +672,52 @@ _SELF_CHECK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Match the SHAPE as well as the keyword, so a paraphrase cannot silence the
+# warning: "silently verify that every word appears" became "silently review
+# that every word appears" in a single edit, which costs nothing and keeps the
+# 405s behaviour. A checking verb aimed at the work, plus the "fix it silently"
+# tell that no honest writing prompt contains. Narrow enough to leave ordinary
+# prose alone ("she reviewed the contract" is not a check).
+_SELF_CHECK_SHAPE_RE = re.compile(
+    r"\b(review|proofread|go through)\s+(that|your|each|every|the)\b"
+    r"|\bfix\s+(any|it|them|your|the)\b[^.]{0,40}\bsilently\b",
+    re.IGNORECASE,
+)
+
+# The measured second pass. Every alternative here is one of the seven misses:
+# "make sure each word", "make sure you have used every word", "ensure each
+# listed word", "before answering, confirm the list", "do a final pass",
+# "be sure every word". The sub-unit is always a check TARGET (a word, the
+# list), so ordinary prose still cannot match -- 0 false positives on the probe.
+_SELF_CHECK_GAP_RE = re.compile(
+    r"\b(make sure|be sure)\s+(each|you have|you|all|every)\b"
+    r"|\bensure\s+(each|all|every)\b"
+    r"|\bconfirm\s+(the|your|it|that)\b"
+    r"|\bfinal pass\b",
+    re.IGNORECASE,
+)
+
+_SELF_CHECK_PATTERNS = (_SELF_CHECK_RE, _SELF_CHECK_SHAPE_RE, _SELF_CHECK_GAP_RE)
+
+
+def _self_check_hit(text):
+    """The match asking the model to check its own output, whichever way it is
+    phrased, or None. One entry point so the template and system checks cannot
+    drift apart. Deliberately incomplete -- see the note on the patterns about
+    what a text check can never cover."""
+    for rx in _SELF_CHECK_PATTERNS:
+        hit = rx.search(text)
+        if hit:
+            return hit
+    return None
+
+
 # A target length for the story. The prompt sets none on purpose (max_tokens is
 # the only bound), and a length target in the prompt is what pushes a model to
-# race through the word list. Sentence-level limits are a different rule and are
-# fine, so a match sitting next to the word "sentence" is not counted -- without
-# that carve-out the shipped default ("short-to-medium sentences (under 25
-# words)") would warn on itself.
+# race through the word list. Limits on a SUB-unit are a different rule and are
+# fine, so a match on a line that names a sub-unit is not counted.
+# That carve-out is not cosmetic: without it the shipped default warns on itself
+# twice over -- "sentences (under 25 words)" and "a title of at most 8 words".
 _LENGTH_RE = re.compile(
     r"\b(\d{2,5}\s*[-–]?\s*words?\b|under \d+|at least \d+ words|"
     r"no more than \d+ words|at most \d+ words|around \d+ words|about \d+ words|"
@@ -641,14 +726,63 @@ _LENGTH_RE = re.compile(
 )
 
 
-def _sets_story_length(text):
-    """True if the text asks for a length for the story itself."""
+# A limit on a sub-unit (a sentence, a line, the title) is a different rule from
+# a limit on the story, so the check looks at the match's OWN LINE only. An
+# earlier version used a +/-60 character window, which was wrong in both
+# directions: it warned on the shipped default's own sentence and title limits,
+# and once those were carved out it also swallowed a real "Keep the story under
+# 300 words" that happened to sit under the title line.
+_SUBUNIT_WORDS = ("sentence", "line", "title")
+
+
+def _line_bounds(text):
+    """Byte offset where each line starts, so a match maps back to its line."""
+    starts, pos = [], 0
+    for line in text.splitlines():
+        starts.append(pos)
+        pos += len(line) + 1
+    return starts
+
+
+def _line_index(starts, offset):
+    idx = 0
+    for i, start in enumerate(starts):
+        if start <= offset:
+            idx = i
+        else:
+            break
+    return idx
+
+
+def _where(text, match, starts=None):
+    """Locate a regex match for the user: 1-based line number plus the trimmed
+    line it sits on. A finding that cannot be located is a finding the user
+    cannot act on: the prompt is a wall of forty lines, and being told that a
+    check crept in somewhere is no use at all."""
+    starts = _line_bounds(text) if starts is None else starts
+    lines = text.splitlines()
+    idx = _line_index(starts, match.start())
+    line = lines[idx].strip() if idx < len(lines) else ""
+    if len(line) > 110:
+        line = line[:110] + "..."
+    return f"Line {idx + 1}: {line}"
+
+
+def _story_length_hit(text):
+    """The regex match that asks for a length for the story itself, or None.
+
+    Returns the match rather than a bool so the caller can point at it. The
+    decision and the report must come from the same walk: an earlier version
+    had the carve-out in two places and they could have drifted apart."""
+    lines = text.splitlines()
+    starts = _line_bounds(text)
     for m in _LENGTH_RE.finditer(text):
-        window = text[max(0, m.start() - 60):m.end() + 30].lower()
-        if "sentence" in window or "line" in window:
+        idx = _line_index(starts, m.start())
+        line = lines[idx].lower() if idx < len(lines) else ""
+        if any(w in line for w in _SUBUNIT_WORDS):
             continue
-        return True
-    return False
+        return m
+    return None
 
 # Re-introducing a numbered list was measured leaking indices into the prose.
 _NUMBERED_RE = re.compile(
@@ -656,9 +790,6 @@ _NUMBERED_RE = re.compile(
     r"numbered list)\b",
     re.IGNORECASE,
 )
-
-_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
 
 def validate_prompt(template, system=None):
     """Check an editable template (and optionally the system message).
@@ -693,38 +824,31 @@ def validate_prompt(template, system=None):
                     + " and ".join(f'"{m}"' for m in missing)
                     + " label(s). Without them the title cannot be read back and "
                       "the labels would end up in the spoken text.")
-            if _SELF_CHECK_RE.search(str(system)):
+            system_hit = _self_check_hit(str(system))
+            if system_hit:
                 add("warning", "self_check_system",
                     "The system message asks the model to check its own work. See "
-                    "the note in the prompt about what that costs on a reasoning model.")
+                    "the note in the prompt about what that costs on a reasoning "
+                    "model. -- " + _where(str(system), system_hit))
 
-    # Unbalanced braces would leave a half-substituted prompt in the request.
-    if text.count("{") != text.count("}"):
-        add("error", "unbalanced_braces",
-            "Unbalanced { or }. The prompt cannot be rendered as written.")
-
-    unknown = sorted({m for m in _PLACEHOLDER_RE.findall(text)} - {TITLE_PLACEHOLDER.strip("{}")})
-    for name in unknown:
-        add("warning", "unknown_placeholder",
-            f"{{{name}}} is not a placeholder. It is sent to the model literally; "
-            f"the only one that gets substituted is {TITLE_PLACEHOLDER}.")
-
-    if TITLE_PLACEHOLDER not in text:
-        add("warning", "no_title_placeholder",
-            f"No {TITLE_PLACEHOLDER} in the prompt. A title typed in Story Setup "
-            f"will be ignored and the model will invent one instead.")
-
-    if _SELF_CHECK_RE.search(text):
+    # No placeholder checks, and deliberately no brace check either: the template
+    # is sent verbatim, so "{" carries no meaning and a prompt that mentions
+    # JSON or a set literal must not be refused for being unbalanced.
+    self_hit = _self_check_hit(text)
+    if self_hit:
         add("warning", "self_check",
             "This asks the model to check its own work. On a reasoning model that "
             "was measured at 405s and 26,518 reasoning tokens for a 286-word story, "
-            "against 68s without it. Say nothing about checking instead.")
+            "against 68s without it. Say nothing about checking instead. -- "
+            + _where(text, self_hit))
 
-    if _sets_story_length(text):
+    length_hit = _story_length_hit(text)
+    if length_hit is not None:
         add("warning", "length_target",
             "This sets a target length. The prompt deliberately sets none, and a "
             "length target tends to make the model rush the word list. max_tokens "
-            "is the output budget and is set separately.")
+            "is the output budget and is set separately. -- "
+            + _where(text, length_hit))
 
     if _NUMBERED_RE.search(text):
         add("warning", "numbered_list",
@@ -1197,7 +1321,7 @@ def _read_story_stream(response, started, model, story_id, on_delta):
     }, None
 
 
-def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None,
+def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
                         on_delta=None, template=None, style=None, system=None,
                         temperature=None, max_tokens=None, reasoning=None):
     """Generate one story.
@@ -1217,7 +1341,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         temperature = _STORY_TEMPERATURE
     if max_tokens is None:
         max_tokens = _STORY_MAX_TOKENS
-    prompt = build_prompt(words, title, template=template, style=style)
+    prompt = build_prompt(words, template=template, style=style)
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -1237,7 +1361,7 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
     payload = {
         "model": model,
         "provider": provider_config,
-        "messages": build_messages(words, title, template=template, style=style,
+        "messages": build_messages(words, template=template, style=style,
                                    system=system),
         "temperature": temperature,
         # Output budget. It is the only length bound: the prompt deliberately
