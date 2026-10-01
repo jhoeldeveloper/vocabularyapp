@@ -142,20 +142,75 @@ def cancel_story_request(story_id: int) -> bool:
 
 
 # Reasoning modes a preset can ask for. "auto" is the shipped behaviour and the
-# default; the other two exist because the auto rules are invisible from the UI
-# -- you cannot tell from the outside whether a model reasons at all.
-REASONING_MODES = ("auto", "minimal", "off")
+# default; the rest exist because the auto rules are invisible from the UI --
+# you cannot tell from the outside whether a model reasons at all, or how hard.
+#
+# The first three are names, the rest are effort levels. A level is a REQUEST:
+# a model only supports a subset (grok-4.7 has no "medium", for one), and
+# mandatory-reasoning models have no "none" at all. _resolve_effort() clamps to
+# what the chosen model actually supports and use_reasoning_status() reports
+# the substitution.
+REASONING_MODES = ("auto", "off", "minimal")
+# Canonical cheap-to-expensive order, used to pick the nearest effort a model
+# supports. Kept here rather than per model because each model's own
+# supported_efforts list is a subset in an arbitrary order.
+EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def all_reasoning_efforts():
+    """Every effort level any catalogue model supports, cheap to expensive.
+
+    The Lab's dropdown is built from this so the levels offered are the ones
+    that exist somewhere, instead of a hardcoded list that would drift from the
+    catalogue. Which of them the *chosen* model honours is resolved at
+    generation time.
+    """
+    models, _ = _fetch_models()
+    seen, extra = set(), []
+    for m in models or []:
+        for effort in ((m.get("reasoning") or {}).get("supported_efforts") or []):
+            if effort in EFFORT_ORDER:
+                seen.add(effort)
+            elif effort not in extra:
+                # Levels outside the canonical order still exist ("max"), and a
+                # model that has one should be able to ask for it.
+                extra.append(effort)
+    return [e for e in EFFORT_ORDER if e in seen] + extra
+
+
+def _resolve_effort(requested, supported):
+    """Clamp a requested effort to what the model supports.
+
+    Returns ``(effort, substituted)``. The clamp prefers a level at or below
+    what was asked for, so an unsupported "high" never silently costs more than
+    requested; if every supported level is dearer, the cheapest is used and the
+    caller reports it.
+    """
+    supported = list(supported or [])
+    if not supported:
+        return None, True
+    if requested in supported:
+        return requested, False
+    def rank(name):
+        # An unrecognised level (deepseek calls its most expensive "max") sorts
+        # ABOVE every known one, so it is never picked as a cheaper substitute.
+        return EFFORT_ORDER.index(name) if name in EFFORT_ORDER else len(EFFORT_ORDER)
+
+    if requested in supported:
+        return requested, False
+    want = rank(requested)
+    at_or_below = [e for e in supported if rank(e) <= want]
+    if at_or_below:
+        return max(at_or_below, key=rank), True
+    return min(supported, key=rank), True
+
 
 
 def _get_reasoning_config(model_id: str, mode: str = "auto"):
     """Return the reasoning config dict for a model, or None if not a reasoning model.
 
-    mode:
-    - "auto"    (default) derive it from the model catalogue, as before
-    - "minimal" ask for the lowest effort the model supports
-    - "off"     ask for no reasoning at all
-
-    The catalogue-derived logic:
+    mode is "auto", "off", "minimal", or an effort level ("low", "medium", ...).
+    Anything else falls back to "auto".
     - No reasoning field -> non-reasoning model, return None
     - mandatory=False -> disable reasoning (effort: "none")
     - mandatory=True -> can't disable, use lowest supported effort
@@ -169,7 +224,12 @@ def _get_reasoning_config(model_id: str, mode: str = "auto"):
     preview can say so rather than quietly lying.
     """
     model = _reasoning_model(model_id)
-    if mode not in REASONING_MODES:
+    # A mode is either a named mode or an effort level the catalogue knows --
+    # including levels outside the canonical order, like deepseek's "max".
+    # Anything else (an old preset value, a typo) falls back to "auto" rather
+    # than being sent as-is, because a misread level would be clamped to the
+    # most expensive thing the model offers.
+    if mode not in REASONING_MODES and mode not in all_reasoning_efforts():
         mode = "auto"
 
     if model_id in ("openrouter/free", "openrouter/auto"):
@@ -179,8 +239,11 @@ def _get_reasoning_config(model_id: str, mode: str = "auto"):
 
     if model is None:
         # Unknown model (custom id, catalogue fetch failed). "off" is still
-        # worth sending: a provider that honours it will use it.
-        return {"effort": "none", "exclude": True} if mode == "off" else None
+        # worth sending: a provider that honours it will use it. An explicit
+        # effort goes out as requested -- there is nothing to clamp it to.
+        if mode == "off":
+            return {"effort": "none", "exclude": True}
+        return {"effort": mode, "exclude": True} if mode in EFFORT_ORDER else None
 
     reasoning = model.get("reasoning")
     if not reasoning:
@@ -189,18 +252,21 @@ def _get_reasoning_config(model_id: str, mode: str = "auto"):
         return None
 
     efforts = reasoning.get("supported_efforts") or ["low"]
-    lowest = efforts[-1] if efforts else "low"
     mandatory = bool(reasoning.get("mandatory", False))
 
     if mode == "off" and not mandatory:
         return {"effort": "none", "exclude": True}
-    # A mandatory model has no "none" effort, so asking for one is a request the
-    # provider ignores -- and it ignores it by falling back to its own default,
-    # not by choosing cheaply. Naming the lowest effort explicitly is strictly
-    # better, so that is what goes out, and use_reasoning_status() reports the
-    # substitution.
-    if mode in ("minimal", "off") or mandatory:
-        return {"effort": lowest, "exclude": True}
+    if mode == "minimal":
+        lowest, _ = _resolve_effort("minimal", efforts)
+        return {"effort": lowest or efforts[-1], "exclude": True}
+    if mode not in REASONING_MODES:
+        # An explicit effort level. Clamped to what this model supports.
+        effort, _ = _resolve_effort(mode, efforts)
+        return {"effort": effort, "exclude": True}
+    # mandatory: cannot be turned off, so ask for the cheapest thing available.
+    if mandatory:
+        lowest, _ = _resolve_effort("minimal", efforts)
+        return {"effort": lowest or efforts[-1], "exclude": True}
     return {"effort": "none", "exclude": True}
 
 
@@ -217,8 +283,14 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
     config = _get_reasoning_config(model_id, mode)
     note = ""
     model = _reasoning_model(model_id)
-    mandatory = bool(model and (model.get("reasoning") or {}).get("mandatory"))
-    if mode == "off" and mandatory:
+    reasoning_meta = (model or {}).get("reasoning") or {}
+    supported = reasoning_meta.get("supported_efforts") or []
+    mandatory = bool(reasoning_meta.get("mandatory"))
+    if mode in all_reasoning_efforts() and supported and mode not in supported:
+        chosen, _ = _resolve_effort(mode, supported)
+        note = (f"This model does not offer “{mode}”. The nearest it supports "
+                f"(“{chosen}”) was requested instead.")
+    elif mode == "off" and mandatory:
         note = ("This model always reasons, so 'off' cannot be honoured — the "
                 "cheapest effort it supports is requested instead.")
     elif mode == "off" and model is None:
@@ -226,8 +298,9 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
     elif config is None:
         note = "This model does not reason, so nothing is sent."
     return {
-        "requested": mode if mode in REASONING_MODES else "auto",
+        "requested": mode if mode in REASONING_MODES or mode in all_reasoning_efforts() else "auto",
         "effective": _reason_cfg_label(config),
+        "supported": supported,
         "config": config,
         "note": note,
     }
@@ -417,9 +490,12 @@ _SYSTEM_ROLE = (
     "coherent stories."
 )
 
-# The output envelope. Load-bearing: main.py:_extract_title looks for the
-# "Title:" line and words.html:stripStoryLabels looks for "Story:". Keep this
-# in the system message and out of the editable template.
+# The output envelope, and the reason the system message exists at all. These
+# two labels are load-bearing: main.py:_extract_title looks for the "Title:"
+# line and words.html:stripStoryLabels looks for "Story:". Without them every
+# story is titled "Untitled Story" AND the labels stay in the prose, which TTS
+# then reads aloud ("Title: Barn on Fire. Story: ...") -- so this text is
+# editable, but validate_prompt() refuses a version that drops either label.
 _SYSTEM_CONTRACT = (
     "Reply with exactly this and nothing else, no preamble and no closing "
     "remarks:\n"
@@ -427,6 +503,10 @@ _SYSTEM_CONTRACT = (
     "\n"
     "Story: <the story text>"
 )
+
+# The whole system message, editable per preset. Exposed to the UI as
+# `default_system`; the editable copy lives in the settings table.
+_DEFAULT_SYSTEM = f"{_SYSTEM_ROLE}\n\n{_SYSTEM_CONTRACT}"
 
 # The editable middle. "Reset to code default" in the UI restores exactly this,
 # so it must stay the shipped prompt and not drift from what is documented in
@@ -513,10 +593,15 @@ WORDS TO USE
 {_render_word_list(words)}"""
 
 
-def build_messages(words, title=None, template=None, style=None):
-    """The full message list for a story request."""
+def build_messages(words, title=None, template=None, style=None, system=None):
+    """The full message list for a story request.
+
+    `system` overrides the editable system message; the two labels the parsers
+    need are checked by validate_prompt(), not here, so a bad one is caught at
+    save time rather than turning every story into "Untitled Story".
+    """
     return [
-        {"role": "system", "content": f"{_SYSTEM_ROLE}\n\n{_SYSTEM_CONTRACT}"},
+        {"role": "system", "content": (system or _DEFAULT_SYSTEM).strip()},
         {"role": "user", "content": build_prompt(words, title, template, style)},
     ]
 
@@ -575,8 +660,8 @@ _NUMBERED_RE = re.compile(
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def validate_prompt(template):
-    """Check an editable template. Returns a list of findings.
+def validate_prompt(template, system=None):
+    """Check an editable template (and optionally the system message).
 
     Each finding is ``{"level", "code", "message"}`` with level in
     "error" / "warning" / "info". Only "error" prevents rendering; the UI shows
@@ -591,6 +676,27 @@ def validate_prompt(template):
         findings.append({"level": level, "code": code, "message": message})
 
     text = template
+
+    # --- The system message -------------------------------------------------
+    # Editable, but the two labels are a hard requirement, so this one is an
+    # error rather than advice: without them the title is lost and TTS reads the
+    # labels aloud. Everything else about the wording is the user's call.
+    if system is not None:
+        if not str(system).strip():
+            add("error", "empty_system",
+                "The system message is empty. Reset to the code default to recover it.")
+        else:
+            missing = [label for label in ("Title:", "Story:") if label not in str(system)]
+            if missing:
+                add("error", "missing_labels",
+                    "The system message must keep the "
+                    + " and ".join(f'"{m}"' for m in missing)
+                    + " label(s). Without them the title cannot be read back and "
+                      "the labels would end up in the spoken text.")
+            if _SELF_CHECK_RE.search(str(system)):
+                add("warning", "self_check_system",
+                    "The system message asks the model to check its own work. See "
+                    "the note in the prompt about what that costs on a reasoning model.")
 
     # Unbalanced braces would leave a half-substituted prompt in the request.
     if text.count("{") != text.count("}"):
@@ -1092,12 +1198,12 @@ def _read_story_stream(response, started, model, story_id, on_delta):
 
 
 def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None,
-                        on_delta=None, template=None, style=None,
+                        on_delta=None, template=None, style=None, system=None,
                         temperature=None, max_tokens=None, reasoning=None):
     """Generate one story.
 
-    template/style/temperature/max_tokens override the shipped prompt and
-    request defaults. They are passed in explicitly (rather than read from the
+    template/system/style/temperature/max_tokens/reasoning override the shipped
+    prompt and request defaults. They are passed in explicitly (rather than read from the
     settings table here) so the exact prompt used is fixed when the story row
     is created and cannot shift under a generation already in flight.
     """
@@ -1131,7 +1237,8 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
     payload = {
         "model": model,
         "provider": provider_config,
-        "messages": build_messages(words, title, template=template, style=style),
+        "messages": build_messages(words, title, template=template, style=style,
+                                   system=system),
         "temperature": temperature,
         # Output budget. It is the only length bound: the prompt deliberately
         # sets no target length. A story cut off here is still published, as

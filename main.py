@@ -769,6 +769,7 @@ def api_preview_story(data: StoryPreview):
     messages = openrouter_agent.build_messages(
         words, data.title, template=preset.get("template"),
         style=(preset.get("style") or "").strip() or _RANDOM_STYLE_MARKER,
+        system=preset.get("system"),
     )
     return {
         "preset": preset.get("name", ""),
@@ -782,7 +783,7 @@ def api_preview_story(data: StoryPreview):
         "title": data.title or "(invented by the model)",
         "system": messages[0]["content"],
         "user": messages[1]["content"],
-        "findings": openrouter_agent.validate_prompt(preset.get("template")),
+        "findings": openrouter_agent.validate_prompt(preset.get("template"), preset.get("system")),
     }
 
 
@@ -1043,6 +1044,7 @@ class PromptPreset(BaseModel):
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
     reasoning: str = "auto"
+    system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
 class PresetPayload(BaseModel):
@@ -1054,6 +1056,7 @@ class PresetPayload(BaseModel):
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
     reasoning: str = "auto"
+    system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
 def _default_preset():
@@ -1065,6 +1068,7 @@ def _default_preset():
         "temperature": openrouter_agent._STORY_TEMPERATURE,
         "max_tokens": openrouter_agent._STORY_MAX_TOKENS,
         "reasoning": "auto",
+        "system": openrouter_agent._DEFAULT_SYSTEM,
     }
 
 
@@ -1126,7 +1130,7 @@ def _resolve_prompt_recipe(words, title):
     preset = _active_preset()
     style = openrouter_agent._resolve_style(preset.get("style"))
     messages = openrouter_agent.build_messages(words, title, template=preset.get("template"),
-                                               style=style)
+                                               style=style, system=preset.get("system"))
     return {
         "prompt_used": f"[system]\n{messages[0]['content']}\n\n[user]\n{messages[1]['content']}",
         "gen_kwargs": {
@@ -1135,6 +1139,7 @@ def _resolve_prompt_recipe(words, title):
             "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
             "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
             "reasoning": preset.get("reasoning", "auto"),
+            "system": preset.get("system"),
         },
     }
 
@@ -1146,8 +1151,12 @@ def api_get_prompts():
         "presets": state["presets"],
         "active": state["active"],
         "default_template": openrouter_agent._DEFAULT_TEMPLATE,
+        "default_system": openrouter_agent._DEFAULT_SYSTEM,
         "styles": openrouter_agent.REDDIT_STYLES,
         "reasoning_modes": list(openrouter_agent.REASONING_MODES),
+        # The effort levels any catalogue model supports, so the dropdown offers
+        # what exists rather than a hardcoded list that would drift.
+        "reasoning_efforts": openrouter_agent.all_reasoning_efforts(),
     }
 
 
@@ -1160,7 +1169,8 @@ def api_save_preset(payload: PresetPayload):
     if len(name) > 60:
         raise HTTPException(status_code=400, detail="Preset name is too long (60 characters max).")
 
-    errors = [f for f in openrouter_agent.validate_prompt(payload.template) if f["level"] == "error"]
+    errors = [f for f in openrouter_agent.validate_prompt(payload.template, payload.system)
+              if f["level"] == "error"]
     if errors:
         # Only an unrenderable template is refused. Warnings are advisory and
         # the UI shows them without blocking the save.
@@ -1168,7 +1178,8 @@ def api_save_preset(payload: PresetPayload):
 
     temperature = max(0.0, min(2.0, float(payload.temperature)))
     max_tokens = max(1000, min(32000, int(payload.max_tokens)))
-    reasoning = payload.reasoning if payload.reasoning in openrouter_agent.REASONING_MODES else "auto"
+    reasoning = payload.reasoning if (payload.reasoning in openrouter_agent.REASONING_MODES
+                                      or payload.reasoning in openrouter_agent.EFFORT_ORDER) else "auto"
 
     state = _load_prompt_presets()
     preset = {
@@ -1179,6 +1190,7 @@ def api_save_preset(payload: PresetPayload):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "reasoning": reasoning,
+        "system": payload.system,
     }
     existing = next((p for p in state["presets"] if p.get("id") == preset["id"]), None)
     if existing:
@@ -1215,10 +1227,15 @@ def api_delete_preset(preset_id: str):
     return {"ok": True, "presets": state["presets"], "active": state["active"]}
 
 
+class PromptValidate(BaseModel):
+    template: str
+    system: Optional[str] = None
+
+
 @app.post("/api/prompts/validate")
-def api_validate_prompt(template: str = Body(..., embed=True)):
+def api_validate_prompt(payload: PromptValidate):
     """Check a template without saving it. The UI calls this on a debounce."""
-    return {"findings": openrouter_agent.validate_prompt(template)}
+    return {"findings": openrouter_agent.validate_prompt(payload.template, payload.system)}
 
 
 class PromptPreview(BaseModel):
@@ -1226,6 +1243,7 @@ class PromptPreview(BaseModel):
     words: List[str] = []
     title: Optional[str] = None
     style: str = ""
+    system: Optional[str] = None
 
 
 @app.post("/api/prompts/preview")
@@ -1237,11 +1255,12 @@ def api_preview_prompt(payload: PromptPreview):
     """
     words = payload.words or ["barn", "ephemeral", "piece of cake", "run", "dread"]
     messages = openrouter_agent.build_messages(words, payload.title, template=payload.template,
-                                               style=payload.style or None)
+                                               style=payload.style or None,
+                                               system=payload.system)
     return {
         "system": messages[0]["content"],
         "user": messages[1]["content"],
-        "findings": openrouter_agent.validate_prompt(payload.template),
+        "findings": openrouter_agent.validate_prompt(payload.template, payload.system),
     }
 
 

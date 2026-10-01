@@ -860,6 +860,17 @@
     .prompt-lab-hint.is-warn { color: var(--warn-text); }
 
     .prompt-lab-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    /* The system message sits above the template: it is the outer envelope, and
+       reading it first is the order the model sees. Fixed height, because it is
+       short by nature and the template is what needs the room. */
+    .prompt-lab-system { flex: 0 0 auto; display: flex; flex-direction: column; padding: 10px 12px 0 12px; }
+    .prompt-lab-system textarea {
+        height: 74px; resize: vertical; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.78em; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--border-input);
+        border-radius: 6px; background: var(--bg-card); color: var(--text-primary);
+    }
+    #promptLabSystem:read-only { background: var(--bg-meta); color: var(--text-secondary); }
+    .prompt-lab-system code { font-size: 0.95em; }
     /* Editor and preview split the column; the preview is the one that matters,
        so it gets the larger share (see the flex ratios). */
     .prompt-lab-editor { flex: 1 1 45%; min-height: 90px; display: flex; padding: 10px 12px 4px 12px; }
@@ -900,7 +911,8 @@
        greyed-out form would just read as a broken panel. */
     .prompt-lab-modal.is-asused .prompt-lab-bar,
     .prompt-lab-modal.is-asused .prompt-lab-props,
-    .prompt-lab-modal.is-asused .prompt-lab-editor { display: none; }
+    .prompt-lab-modal.is-asused .prompt-lab-editor,
+    .prompt-lab-modal.is-asused .prompt-lab-system { display: none; }
     .prompt-lab-modal.is-asused .prompt-lab-preview-wrap { flex: 1 1 auto; border-top: none; }
     .prompt-lab-modal.is-asused #promptLabPreview { font-size: 0.8em; }
 
@@ -1138,10 +1150,23 @@
                     <i class="fa-solid fa-spinner fa-spin"></i> Loading providers…
                 </div>
             </div>
+
+            <!-- STEP 3: the prompt that will be sent (visual check, no request) -->
+            <div id="setupPreviewStep" style="display:none;">
+                <div class="setup-model-summary">
+                    <span>Model:</span>
+                    <span class="model-name" id="setupPreviewModelLabel"></span>
+                    <button id="setupBackToProvidersBtn" class="sort-btn" style="margin-left:auto; font-size:0.78em;">&#8592; Provider</button>
+                </div>
+                <div class="gen-preview-config" id="setupPreviewConfig" style="border:1px solid var(--border-details); border-radius:6px; margin-bottom:10px;"></div>
+                <div class="prompt-lab-hint" id="setupPreviewNote" style="margin-bottom:6px;"></div>
+                <div id="setupPreviewBody" class="gen-preview-body" style="margin:0; min-height:180px; max-height:38vh;"></div>
+            </div>
         </div>
         <div class="modal-footer">
             <button id="setupCancelBtn" class="sort-btn">Cancel</button>
             <button id="setupGenerateBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
+          <span class="prompt-lab-hint" id="setupStepHint" style="margin-right:auto; align-self:center;">Pick a model, then a provider.</span>
         </div>
     </div>
 </div>
@@ -1162,6 +1187,7 @@
             <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
             <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
             <button id="promptLabResetBtn" class="sort-btn" title="Restore the shipped prompt in this preset">Reset</button>
+            <button id="promptLabResetSysBtn" class="sort-btn" title="Restore the shipped system message">Reset sys</button>
         </div>
         <div class="prompt-lab-body">
             <div class="prompt-lab-props">
@@ -1180,11 +1206,7 @@
                 </div>
                 <div class="prompt-lab-field">
                     <label for="promptLabReasoning">Reasoning</label>
-                    <select id="promptLabReasoning">
-                        <option value="auto">Auto (from the model)</option>
-                        <option value="minimal">Minimal</option>
-                        <option value="off">Off</option>
-                    </select>
+                    <select id="promptLabReasoning"></select>
                     <div class="prompt-lab-hint" id="promptLabReasoningHint">Auto reads the model
                         catalogue: reasoning off when it can be, cheapest effort when it cannot.</div>
                 </div>
@@ -1197,6 +1219,13 @@
                 </div>
             </div>
             <div class="prompt-lab-main">
+                <div class="prompt-lab-system">
+                    <div class="prompt-lab-preview-head">
+                        <span class="prompt-lab-preview-title">System message</span>
+                        <span>editable, but it must keep the <code>Title:</code> and <code>Story:</code> labels</span>
+                    </div>
+                    <textarea id="promptLabSystem" spellcheck="false"></textarea>
+                </div>
                 <div class="prompt-lab-editor">
                     <!-- The editable middle of the prompt. {title} is the one
                          placeholder: it expands to the title instruction, and
@@ -2789,7 +2818,7 @@ function openStorySetupModal() {
   // Restore title from the old input (now removed from DOM)
   const titleInput = document.getElementById('setupTitle');
   titleInput.value = '';
-  // Show model step
+  // Show model step (also hides the preview step)
   showSetupModelStep();
   // Restore previous model selection
   const modelInput = document.getElementById('setupModelInput');
@@ -2808,14 +2837,70 @@ function closeStorySetupModal() {
   document.getElementById('storySetupModalOverlay').classList.remove('open');
 }
 
+function setSetupStepHint(text) {
+  const el = document.getElementById('setupStepHint');
+  if (el) el.textContent = text;
+}
+
 function showSetupModelStep() {
+  setSetupStepHint('Pick a model, then a provider.');
   document.getElementById('setupModelStep').style.display = '';
   document.getElementById('setupProviderStep').style.display = 'none';
+  document.getElementById('setupPreviewStep').style.display = 'none';
 }
 
 function showSetupProviderStep() {
+  setSetupStepHint('Pick a provider to see the exact prompt.');
   document.getElementById('setupModelStep').style.display = 'none';
+  document.getElementById('setupPreviewStep').style.display = 'none';
   document.getElementById('setupProviderStep').style.display = '';
+}
+
+// Step 3. Reached by picking a provider, so the thing on screen is always the
+// prompt for the model+provider actually chosen -- not a preview of defaults.
+function showSetupPreviewStep() {
+  setSetupStepHint('This is exactly what will be sent.');
+  document.getElementById('setupModelStep').style.display = 'none';
+  document.getElementById('setupProviderStep').style.display = 'none';
+  document.getElementById('setupPreviewStep').style.display = '';
+  document.getElementById('setupPreviewModelLabel').textContent =
+    (ALL_MODELS.find(x => x.id === storyModelSelection) || {}).label
+      || storyModelSelection || '(default)';
+  renderSetupPreview();
+}
+
+// The same payload and the same renderer as the standalone Preview button --
+// one code path, so the two cannot describe different stories.
+async function renderSetupPreview() {
+  const words = Array.from(selectedWords);
+  const cfgBox = document.getElementById('setupPreviewConfig');
+  const body = document.getElementById('setupPreviewBody');
+  if (!words.length) {
+    cfgBox.innerHTML = '';
+    body.textContent = 'No words are selected.';
+    return;
+  }
+  body.textContent = 'Rendering…';
+  try {
+    const d = await fetch('/api/story/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        words: words,
+        title: document.getElementById('setupTitle').value.trim() || null,
+        model: resolveStoryModel(),
+        provider: storyProviderSelection || null,
+      }),
+    }).then(r => r.json());
+    if (d.detail) { body.textContent = d.detail; return; }
+    fillGenPreview(cfgBox, body, d, 'setupPreviewNote');
+  } catch (e) {
+    body.textContent = 'Could not render the preview.';
+  }
+}
+
+function setupBackToProviders() {
+  showSetupProviderStep();
 }
 
 function renderSetupModelList(filter) {
@@ -2976,6 +3061,10 @@ function setupSelectProvider(tag) {
   if (items.length) {
     items[0].className = 'provider-item' + (tag === '' ? ' selected' : '');
   }
+  // Last step: show the prompt this exact model + provider will send. Skipped
+  // when the list came back empty (no providers to pick), because there is
+  // nothing to confirm and it would be a dead end.
+  if (items.length) showSetupPreviewStep();
 }
 
 function setupGenerateStory() {
@@ -3710,7 +3799,9 @@ const promptLab = {
   activeId: null,
   currentId: null,
   defaultTemplate: '',
+  defaultSystem: '',
   styles: [],
+  reasoningEfforts: [],
   asUsed: null,        // {id, name, text} when opened from a story
   validateTimer: null,
   previewTimer: null,
@@ -3738,6 +3829,7 @@ function labPayload() {
     temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
     max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
     reasoning: document.getElementById('promptLabReasoning').value,
+    system: document.getElementById('promptLabSystem').value,
   };
 }
 
@@ -3753,8 +3845,33 @@ const LAB_REASONING_HINTS = {
 
 function updateLabReasoningHint() {
   const mode = document.getElementById('promptLabReasoning').value;
-  document.getElementById('promptLabReasoningHint').textContent =
-    LAB_REASONING_HINTS[mode] || LAB_REASONING_HINTS.auto;
+  const hint = LAB_REASONING_HINTS[mode];
+  document.getElementById('promptLabReasoningHint').textContent = hint
+    || 'An effort level. Not every model offers every level — the preview shows the nearest one the chosen model supports.';
+}
+
+// Effort levels come from the catalogue (GET /api/prompts.reasoning_efforts),
+// not a hardcoded list, so the dropdown only ever offers levels that exist
+// somewhere. Which of them the *chosen* model honours is resolved at
+// generation time and reported in the preview.
+function renderLabReasoningOptions() {
+  const sel = document.getElementById('promptLabReasoning');
+  const current = sel.value;
+  sel.innerHTML = '';
+  const modes = [
+    ['auto', 'Auto (from the model)'],
+    ['off', 'Off'],
+    ['minimal', 'Minimal'],
+  ];
+  (promptLab.reasoningEfforts || []).forEach(e => modes.push([e, e]));
+  modes.forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+  updateLabReasoningHint();
 }
 
 // "in use" tag, so it is always obvious which preset Generate will pick up.
@@ -3868,6 +3985,7 @@ function refreshLabPreview() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       template: document.getElementById('promptLabTemplate').value,
+      system: document.getElementById('promptLabSystem').value,
       words: words,
       title: labTitleForPreview(),
       style: document.getElementById('promptLabStyle').value,
@@ -3877,12 +3995,13 @@ function refreshLabPreview() {
   }).catch(() => {});
 }
 
-// A title in the preview makes the {title} branch visible, which is the whole
-// reason to preview server-side. Taken from Story Setup when that modal is
-// open, otherwise a fixed sample.
+// The title the preview renders with. Must be what will ACTUALLY be sent: with
+// nothing in Story Setup the branch is "invent one", so previewing a hardcoded
+// sample made the preview describe a run that would never happen. An empty
+// field now previews the invented-title branch.
 function labTitleForPreview() {
   const input = document.getElementById('setupTitle');
-  return (input && input.value.trim()) || 'The Barn on Fire';
+  return (input && input.value.trim()) || null;
 }
 
 function scheduleLabRefresh() {
@@ -3892,7 +4011,7 @@ function scheduleLabRefresh() {
     fetch('/api/prompts/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template: tpl }),
+      body: JSON.stringify({ template: tpl, system: document.getElementById('promptLabSystem').value }),
     }).then(r => r.json()).then(d => {
       if (d.findings) renderLabFindings(d.findings);
     }).catch(() => {});
@@ -3903,8 +4022,10 @@ function scheduleLabRefresh() {
 function fillLabForm(preset) {
   document.getElementById('promptLabName').value = preset.name || '';
   document.getElementById('promptLabTemplate').value = preset.template || '';
+  document.getElementById('promptLabSystem').value = preset.system || promptLab.defaultSystem || '';
   document.getElementById('promptLabTemp').value = preset.temperature != null ? preset.temperature : 0.7;
   document.getElementById('promptLabMaxTokens').value = preset.max_tokens != null ? preset.max_tokens : 20000;
+  renderLabReasoningOptions();
   document.getElementById('promptLabReasoning').value = preset.reasoning || 'auto';
   updateLabReasoningHint();
   renderLabStyleOptions();
@@ -3921,13 +4042,14 @@ function setLabReadonly(on) {
   // note): the stored snapshot is the only thing to show.
   modal.classList.toggle('is-asused', !!promptLab.asUsed);
   modal.classList.toggle('is-readonly', on);
-  ['promptLabName', 'promptLabTemplate', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle', 'promptLabReasoning']
+  ['promptLabName', 'promptLabTemplate', 'promptLabSystem', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle', 'promptLabReasoning']
     .forEach(id => document.getElementById(id).disabled = on);
   document.getElementById('promptLabSaveBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabCopyBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabDeleteBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabResetBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabResetSysBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabPreset').disabled = on;
 }
 
@@ -3973,9 +4095,12 @@ async function openPromptLab(storyId) {
     promptLab.presets = data.presets || [];
     promptLab.activeId = data.active;
     promptLab.defaultTemplate = data.default_template || '';
+    promptLab.defaultSystem = data.default_system || '';
     promptLab.styles = data.styles || [];
+    promptLab.reasoningEfforts = data.reasoning_efforts || [];
     promptLab.currentId = promptLab.activeId || (promptLab.presets[0] && promptLab.presets[0].id);
     renderLabPresetList();
+    renderLabReasoningOptions();
     renderLabStyleOptions();
     const preset = labCurrentPreset();
     if (preset) fillLabForm(preset);
@@ -4043,6 +4168,7 @@ async function duplicatePromptLabPreset() {
         temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
         max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
         reasoning: document.getElementById('promptLabReasoning').value || 'auto',
+        system: document.getElementById('promptLabSystem').value,
       }),
     });
     if (!res.ok) {
@@ -4098,6 +4224,15 @@ function resetPromptLabTemplate() {
   showToast('Restored the shipped prompt — press Save to apply');
 }
 
+// The system message has its own reset because it is a separate contract with
+// the parsers: the shipped one is the version known to produce a parseable title.
+function resetPromptLabSystem() {
+  if (!window.confirm('Replace the system message with the shipped default? The output labels are what the title and Read Aloud depend on. Save to apply.')) return;
+  document.getElementById('promptLabSystem').value = promptLab.defaultSystem;
+  scheduleLabRefresh();
+  showToast('Restored the shipped system message — press Save to apply');
+}
+
 function updatePromptLabToolbarLabel() {
   const label = document.getElementById('promptLabToolbarLabel');
   const btn = document.getElementById('promptLabToolbarBtn');
@@ -4128,16 +4263,63 @@ function genPreviewConfigItem(label, value, cls) {
   return div;
 }
 
+// Renders a /api/story/preview payload into a config grid + prompt body.
+// Shared by the Generate panel's Preview button and step 3 of Story Setup, so
+// the two can never describe different stories.
+function fillGenPreview(cfgBox, body, d, noteId) {
+  const r = d.reasoning || {};
+  const styleLabel = d.style === 'random'
+    ? 'random (drawn when the story starts)' : d.style;
+  cfgBox.innerHTML = '';
+  [
+    ['Prompt preset', d.preset],
+    ['Model', d.model],
+    ['Provider', d.provider],
+    ['Style', styleLabel],
+    ['Temperature', String(d.temperature)],
+    ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
+    ['Words', String(d.words_total)],
+    ['Title', d.title],
+    // Asked vs. effective, so a request the provider will ignore is visible
+    // rather than assumed.
+    ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
+  ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
+  if (r.note) cfgBox.appendChild(genPreviewConfigItem('', r.note, 'is-wide'));
+  if (r.supported && r.supported.length) {
+    cfgBox.appendChild(genPreviewConfigItem('Model levels', r.supported.join(', ')));
+  }
+
+  const note = document.getElementById(noteId);
+  if (note) {
+    const warn = (d.findings || []).filter(f => f.level !== 'info');
+    if (warn.length) {
+      note.textContent = `${warn.length} warning${warn.length === 1 ? '' : 's'} on this prompt — open the Prompt Lab for the detail.`;
+      note.classList.add('is-warn');
+    } else {
+      note.textContent = '';
+      note.classList.remove('is-warn');
+    }
+  }
+
+  const sys = document.createElement('div');
+  sys.className = 'lab-system';
+  sys.textContent = '[system]\n' + d.system + '\n';
+  const usr = document.createElement('div');
+  usr.textContent = '\n[user]\n' + d.user;
+  body.innerHTML = '';
+  body.appendChild(sys);
+  body.appendChild(usr);
+}
+
 async function openGenPreview() {
   const words = Array.from((typeof selectedWords !== 'undefined' && selectedWords) || []);
   if (!words.length) { showToast('Select at least one word first'); return; }
   const overlay = document.getElementById('genPreviewOverlay');
   const cfgBox = document.getElementById('genPreviewConfig');
   const body = document.getElementById('genPreviewBody');
-  const note = document.getElementById('genPreviewNote');
   cfgBox.innerHTML = '';
   body.textContent = 'Rendering…';
-  note.textContent = '';
+  document.getElementById('genPreviewNote').textContent = '';
   overlay.classList.add('open');
   try {
     const d = await fetch('/api/story/preview', {
@@ -4151,43 +4333,7 @@ async function openGenPreview() {
       }),
     }).then(r => r.json());
     if (d.detail) { body.textContent = d.detail; return; }
-
-    const r = d.reasoning || {};
-    const styleLabel = d.style === 'random'
-      ? 'random (drawn when the story starts)' : d.style;
-    [
-      ['Prompt preset', d.preset],
-      ['Model', d.model],
-      ['Provider', d.provider],
-      ['Style', styleLabel],
-      ['Temperature', String(d.temperature)],
-      ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
-      ['Words', String(d.words_total)],
-      ['Title', d.title],
-      // Asked vs. effective, so a request the provider will ignore is visible
-      // rather than assumed.
-      ['Reasoning', r.requested === 'auto'
-        ? `auto → ${r.effective}`
-        : `${r.requested} → ${r.effective}`],
-    ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
-    if (r.note) cfgBox.appendChild(genPreviewConfigItem('', r.note, 'is-wide'));
-
-    const warn = (d.findings || []).filter(f => f.level !== 'info');
-    if (warn.length) {
-      note.textContent = `${warn.length} warning${warn.length === 1 ? '' : 's'} on this prompt — open the Prompt Lab for the detail.`;
-      note.classList.add('is-warn');
-    } else {
-      note.classList.remove('is-warn');
-    }
-
-    const sys = document.createElement('div');
-    sys.className = 'lab-system';
-    sys.textContent = '[system]\n' + d.system + '\n';
-    const usr = document.createElement('div');
-    usr.textContent = '\n[user]\n' + d.user;
-    body.innerHTML = '';
-    body.appendChild(sys);
-    body.appendChild(usr);
+    fillGenPreview(cfgBox, body, d, 'genPreviewNote');
   } catch (e) {
     body.textContent = 'Could not render the preview.';
   }
@@ -4492,6 +4638,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('setupCloseBtn').addEventListener('click', closeStorySetupModal);    document.getElementById('setupCancelBtn').addEventListener('click', closeStorySetupModal);
     document.getElementById('setupGenerateBtn').addEventListener('click', setupGenerateStory);
     document.getElementById('setupChangeModelBtn').addEventListener('click', setupBackToModels);
+    document.getElementById('setupBackToProvidersBtn').addEventListener('click', setupBackToProviders);
+    document.getElementById('setupTitle').addEventListener('input', () => {
+        // The title picks which {title} branch is sent, so the preview has to
+        // follow it rather than describe a run that will not happen.
+        if (document.getElementById('setupPreviewStep').style.display !== 'none') renderSetupPreview();
+    });
     document.getElementById('storySetupModalOverlay').addEventListener('click', (e) => {
         if (e.target.id === 'storySetupModalOverlay') closeStorySetupModal();
     });
@@ -4513,11 +4665,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('promptLabCopyBtn').addEventListener('click', duplicatePromptLabPreset);
     document.getElementById('promptLabDeleteBtn').addEventListener('click', deletePromptLabPreset);
     document.getElementById('promptLabResetBtn').addEventListener('click', resetPromptLabTemplate);
+    document.getElementById('promptLabResetSysBtn').addEventListener('click', resetPromptLabSystem);
     document.getElementById('promptLabPreset').addEventListener('change', (e) => {
         if (promptLab.asUsed) return;
         loadPromptLabPreset(e.target.value);
     });
-    ['promptLabTemplate', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
+    ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
     document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
     // Ctrl/Cmd+S saves instead of the browser's "save page" dialog.
