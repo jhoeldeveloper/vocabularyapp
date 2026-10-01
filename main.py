@@ -734,6 +734,58 @@ class StoryUpdate(BaseModel):
     title: Optional[str] = None
 
 
+class StoryPreview(BaseModel):
+    words: List[str] = []
+    title: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+
+
+# Shown in place of the style line when the preset says "random". The draw
+# happens at generation time, so a preview that named a style would be a guess;
+# this says what is actually true at that point.
+_RANDOM_STYLE_MARKER = "(random — one is drawn when the story starts)"
+
+
+@app.post("/api/story/preview")
+def api_preview_story(data: StoryPreview):
+    """Everything a story generation will send, without sending it.
+
+    Visual confirmation only: the same prompt the row will snapshot, plus the
+    resolved request config. Unlike POST /api/prompts/preview this knows the
+    model, so it can also report the reasoning config that will actually go out
+    -- a preset asking for "off" against a mandatory-reasoning model cannot be
+    honoured, and silently showing "off" there would be a lie.
+    """
+    words = [w.lower().strip() for w in data.words if w.strip()]
+    if not words:
+        raise HTTPException(status_code=400, detail="No words provided.")
+    model = data.model or "openrouter/free"
+    preset = _active_preset()
+    reasoning = openrouter_agent.use_reasoning_status(model, preset.get("reasoning", "auto"))
+
+    # Reuse the stored template so the preview cannot drift from what
+    # create_story would render, but keep the random style honest.
+    messages = openrouter_agent.build_messages(
+        words, data.title, template=preset.get("template"),
+        style=(preset.get("style") or "").strip() or _RANDOM_STYLE_MARKER,
+    )
+    return {
+        "preset": preset.get("name", ""),
+        "model": model,
+        "provider": data.provider or "auto",
+        "style": (preset.get("style") or "").strip() or "random",
+        "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
+        "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
+        "reasoning": reasoning,
+        "words_total": len(words),
+        "title": data.title or "(invented by the model)",
+        "system": messages[0]["content"],
+        "user": messages[1]["content"],
+        "findings": openrouter_agent.validate_prompt(preset.get("template")),
+    }
+
+
 @app.post("/api/story")
 async def create_story(data: StoryCreate):
     if not openrouter_agent.is_ready():
@@ -795,7 +847,8 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
         # produced the run, and "which preset is better" is answered by
         # comparing health lines across presets.
         print(f"[STORY] story {story_id} using prompt preset "
-              f"temp={gen_kwargs.get('temperature')} max_tokens={gen_kwargs.get('max_tokens')}",
+              f"temp={gen_kwargs.get('temperature')} max_tokens={gen_kwargs.get('max_tokens')} "
+              f"reasoning={gen_kwargs.get('reasoning', 'auto')}",
               flush=True)
     try:
         result = await run_in_threadpool(
@@ -989,6 +1042,7 @@ class PromptPreset(BaseModel):
     style: str = ""
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
+    reasoning: str = "auto"
 
 
 class PresetPayload(BaseModel):
@@ -999,6 +1053,7 @@ class PresetPayload(BaseModel):
     style: str = ""
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
+    reasoning: str = "auto"
 
 
 def _default_preset():
@@ -1009,6 +1064,7 @@ def _default_preset():
         "style": "",  # empty = draw a random REDDIT_STYLES entry per story
         "temperature": openrouter_agent._STORY_TEMPERATURE,
         "max_tokens": openrouter_agent._STORY_MAX_TOKENS,
+        "reasoning": "auto",
     }
 
 
@@ -1078,6 +1134,7 @@ def _resolve_prompt_recipe(words, title):
             "style": style,
             "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
             "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
+            "reasoning": preset.get("reasoning", "auto"),
         },
     }
 
@@ -1090,6 +1147,7 @@ def api_get_prompts():
         "active": state["active"],
         "default_template": openrouter_agent._DEFAULT_TEMPLATE,
         "styles": openrouter_agent.REDDIT_STYLES,
+        "reasoning_modes": list(openrouter_agent.REASONING_MODES),
     }
 
 
@@ -1110,6 +1168,7 @@ def api_save_preset(payload: PresetPayload):
 
     temperature = max(0.0, min(2.0, float(payload.temperature)))
     max_tokens = max(1000, min(32000, int(payload.max_tokens)))
+    reasoning = payload.reasoning if payload.reasoning in openrouter_agent.REASONING_MODES else "auto"
 
     state = _load_prompt_presets()
     preset = {
@@ -1119,6 +1178,7 @@ def api_save_preset(payload: PresetPayload):
         "style": (payload.style or "").strip(),
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "reasoning": reasoning,
     }
     existing = next((p for p in state["presets"] if p.get("id") == preset["id"]), None)
     if existing:

@@ -904,6 +904,25 @@
     .prompt-lab-modal.is-asused .prompt-lab-preview-wrap { flex: 1 1 auto; border-top: none; }
     .prompt-lab-modal.is-asused #promptLabPreview { font-size: 0.8em; }
 
+    /* Pre-generation preview: the config grid above the prompt. Wide items span
+       the row so a long caveat (the reasoning one) gets the width it needs. */
+    .gen-preview-config {
+        flex-shrink: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 6px 14px; padding: 12px 16px; border-bottom: 1px solid var(--border-details);
+        background: var(--bg-meta);
+    }
+    .gen-preview-item { font-size: 0.78em; color: var(--text-secondary); }
+    .gen-preview-item b { color: var(--text-meta); font-weight: 600; margin-right: 5px; }
+    .gen-preview-item.is-wide { grid-column: 1 / -1; color: var(--warn-text); }
+    .gen-preview-item.is-warn { color: var(--warn-text); }
+    .gen-preview-body {
+        flex: 1 1 auto; overflow-y: auto; margin: 12px 16px; padding: 12px 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76em;
+        line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+        background: var(--bg-meta); border: 1px solid var(--border-details); border-radius: 6px; color: var(--text-secondary);
+    }
+    .gen-preview-body .lab-system { color: var(--text-meta); font-style: italic; }
+
     /* In Stories view, hide the word-mode controls but keep the view toggle. */
     body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
   </style>
@@ -930,14 +949,6 @@
                 onclick="openMeaningsModelModal()" style="display:none;">
             <i class="fa-solid fa-robot"></i>
             <span id="meaningsModelToolbarLabel">Model</span>
-        </button>
-        <!-- OpenRouter-only, like the model pickers: the story prompt is an
-             OpenRouter construct. Label shows the active preset's name, so the
-             prompt in use is visible without opening the Lab. -->
-        <button id="promptLabToolbarBtn" class="sort-btn" title="Edit the story prompt"
-                onclick="openPromptLab()" style="display:none;">
-            <i class="fa-solid fa-pen-to-square"></i>
-            <span id="promptLabToolbarLabel">Prompt</span>
         </button>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
@@ -1070,6 +1081,17 @@
     <div id="filterResults" class="filter-results"></div>
     <div class="gen-actions">
       <button id="generateStoryBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
+      <!-- Visual check of exactly what will be sent, before spending a generation. -->
+      <button id="genPreviewBtn" class="sort-btn" title="See the prompt and settings this story would use"><i class="fa-solid fa-eye"></i> Preview</button>
+      <!-- OpenRouter-only, like the model pickers: the story prompt is an
+           OpenRouter construct. It lives with Generate because the prompt is
+           what Generate runs, and the label is the active preset's name, so
+           the prompt in use is visible without opening the Lab. -->
+      <button id="promptLabToolbarBtn" class="sort-btn" title="Edit the story prompt"
+              onclick="openPromptLab()" style="display:none;">
+        <i class="fa-solid fa-pen-to-square"></i>
+        <span id="promptLabToolbarLabel">Prompt</span>
+      </button>
     </div>
     <div id="genStatus" class="gen-status" style="display:none;"></div>
   </div>
@@ -1157,6 +1179,16 @@
                     <div class="prompt-lab-hint">Higher is looser. 0.7 is the default.</div>
                 </div>
                 <div class="prompt-lab-field">
+                    <label for="promptLabReasoning">Reasoning</label>
+                    <select id="promptLabReasoning">
+                        <option value="auto">Auto (from the model)</option>
+                        <option value="minimal">Minimal</option>
+                        <option value="off">Off</option>
+                    </select>
+                    <div class="prompt-lab-hint" id="promptLabReasoningHint">Auto reads the model
+                        catalogue: reasoning off when it can be, cheapest effort when it cannot.</div>
+                </div>
+                <div class="prompt-lab-field">
                     <label for="promptLabMaxTokens">Output budget (max tokens)</label>
                     <input type="number" id="promptLabMaxTokens" min="1000" max="32000" step="500">
                     <div class="prompt-lab-hint" id="promptLabBudgetHint">The only length bound. It does <em>not</em> bound
@@ -1188,6 +1220,29 @@
             <span class="prompt-lab-footer-note" id="promptLabFooterNote"></span>
             <button id="promptLabCancelBtn" class="sort-btn">Cancel</button>
             <button id="promptLabSaveBtn" class="sort-btn"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Pre-generation preview (visual only): the exact prompt plus the resolved
+     request config, so nothing is spent to find out what was going to be sent. -->
+<div id="genPreviewOverlay" class="modal-overlay">
+    <div class="modal prompt-lab-modal is-asused" id="genPreviewModal">
+        <div class="modal-header">
+            <h3>About to generate</h3>
+            <button id="genPreviewCloseBtn" class="modal-close" title="Close">&times;</button>
+        </div>
+        <div class="gen-preview-config" id="genPreviewConfig"></div>
+        <div class="prompt-lab-preview-wrap">
+            <div class="prompt-lab-preview-head">
+                <span class="prompt-lab-preview-title">Prompt</span>
+                <span>exactly what will be sent</span>
+            </div>
+            <div id="genPreviewBody" class="gen-preview-body"></div>
+        </div>
+        <div class="modal-footer">
+            <span class="prompt-lab-footer-note" id="genPreviewNote"></span>
+            <button id="genPreviewCancelBtn" class="sort-btn">Close</button>
         </div>
     </div>
 </div>
@@ -3682,7 +3737,24 @@ function labPayload() {
     style: document.getElementById('promptLabStyle').value,
     temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
     max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+    reasoning: document.getElementById('promptLabReasoning').value,
   };
+}
+
+// The reasoning hint has to say what each mode actually does, because "Off"
+// reads as a guarantee and is not one: a mandatory-reasoning model has no way
+// to switch it off. The pre-generation preview reports the effective value for
+// the chosen model, so this is the general statement, not the per-model one.
+const LAB_REASONING_HINTS = {
+  auto: 'Auto reads the model catalogue: reasoning off when it can be, cheapest effort when it cannot.',
+  minimal: 'Minimal asks for the lowest effort the model supports. On a model that does not reason, nothing is sent.',
+  off: 'Off is a request, not a guarantee — a model that always reasons (reasoning.mandatory) will think anyway. The preview shows what will really be sent.',
+};
+
+function updateLabReasoningHint() {
+  const mode = document.getElementById('promptLabReasoning').value;
+  document.getElementById('promptLabReasoningHint').textContent =
+    LAB_REASONING_HINTS[mode] || LAB_REASONING_HINTS.auto;
 }
 
 // "in use" tag, so it is always obvious which preset Generate will pick up.
@@ -3833,6 +3905,8 @@ function fillLabForm(preset) {
   document.getElementById('promptLabTemplate').value = preset.template || '';
   document.getElementById('promptLabTemp').value = preset.temperature != null ? preset.temperature : 0.7;
   document.getElementById('promptLabMaxTokens').value = preset.max_tokens != null ? preset.max_tokens : 20000;
+  document.getElementById('promptLabReasoning').value = preset.reasoning || 'auto';
+  updateLabReasoningHint();
   renderLabStyleOptions();
   document.getElementById('promptLabStyle').value = preset.style || '';
   updateLabStyleHint();
@@ -3847,8 +3921,8 @@ function setLabReadonly(on) {
   // note): the stored snapshot is the only thing to show.
   modal.classList.toggle('is-asused', !!promptLab.asUsed);
   modal.classList.toggle('is-readonly', on);
-  ['promptLabName', 'promptLabTemplate', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle']
-    .forEach(id => { document.getElementById(id).disabled = on; });
+  ['promptLabName', 'promptLabTemplate', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle', 'promptLabReasoning']
+    .forEach(id => document.getElementById(id).disabled = on);
   document.getElementById('promptLabSaveBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabCopyBtn').style.display = on ? 'none' : '';
@@ -3955,7 +4029,7 @@ async function usePromptLabPreset() {
 // (tweak the copy, generate, compare health lines).
 async function duplicatePromptLabPreset() {
   const src = labCurrentPreset();
-  const base = src || { name: 'New preset', template: promptLab.defaultTemplate, style: '', temperature: 0.7, max_tokens: 20000 };
+  const base = src || { name: 'New preset', template: promptLab.defaultTemplate, style: '', temperature: 0.7, max_tokens: 20000, reasoning: 'auto' };
   const name = window.prompt('Name for the new preset:', `${base.name} copy`);
   if (name == null) return;
   try {
@@ -3968,6 +4042,7 @@ async function duplicatePromptLabPreset() {
         style: document.getElementById('promptLabStyle').value,
         temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
         max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+        reasoning: document.getElementById('promptLabReasoning').value || 'auto',
       }),
     });
     if (!res.ok) {
@@ -4030,6 +4105,96 @@ function updatePromptLabToolbarLabel() {
   if (!label) return;
   label.textContent = name || 'Prompt';
   if (btn) btn.title = `Story prompt in use: ${name || 'default'}. Click to edit.`;
+}
+
+// ===========================================================================
+// Pre-generation preview -- visual only, sends nothing.
+// ===========================================================================
+//
+// Shows the prompt that would be snapshotted on the row plus the resolved
+// request config. Two honest details it exists to get right:
+//  - A "random" style is labelled as random. The draw happens at generation
+//    time, so naming a style here would be a guess.
+//  - Reasoning shows the EFFECTIVE value for the chosen model, not the
+//    requested one. A preset asking for "off" against a mandatory-reasoning
+//    model cannot be honoured, and showing "off" would be a lie.
+function genPreviewConfigItem(label, value, cls) {
+  const div = document.createElement('div');
+  div.className = 'gen-preview-item' + (cls ? ' ' + cls : '');
+  const b = document.createElement('b');
+  b.textContent = label;
+  div.appendChild(b);
+  div.appendChild(document.createTextNode(value));
+  return div;
+}
+
+async function openGenPreview() {
+  const words = Array.from((typeof selectedWords !== 'undefined' && selectedWords) || []);
+  if (!words.length) { showToast('Select at least one word first'); return; }
+  const overlay = document.getElementById('genPreviewOverlay');
+  const cfgBox = document.getElementById('genPreviewConfig');
+  const body = document.getElementById('genPreviewBody');
+  const note = document.getElementById('genPreviewNote');
+  cfgBox.innerHTML = '';
+  body.textContent = 'Rendering…';
+  note.textContent = '';
+  overlay.classList.add('open');
+  try {
+    const d = await fetch('/api/story/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        words: words,
+        title: (document.getElementById('setupTitle') || {}).value || null,
+        model: resolveStoryModel(),
+        provider: storyProviderSelection || null,
+      }),
+    }).then(r => r.json());
+    if (d.detail) { body.textContent = d.detail; return; }
+
+    const r = d.reasoning || {};
+    const styleLabel = d.style === 'random'
+      ? 'random (drawn when the story starts)' : d.style;
+    [
+      ['Prompt preset', d.preset],
+      ['Model', d.model],
+      ['Provider', d.provider],
+      ['Style', styleLabel],
+      ['Temperature', String(d.temperature)],
+      ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
+      ['Words', String(d.words_total)],
+      ['Title', d.title],
+      // Asked vs. effective, so a request the provider will ignore is visible
+      // rather than assumed.
+      ['Reasoning', r.requested === 'auto'
+        ? `auto → ${r.effective}`
+        : `${r.requested} → ${r.effective}`],
+    ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
+    if (r.note) cfgBox.appendChild(genPreviewConfigItem('', r.note, 'is-wide'));
+
+    const warn = (d.findings || []).filter(f => f.level !== 'info');
+    if (warn.length) {
+      note.textContent = `${warn.length} warning${warn.length === 1 ? '' : 's'} on this prompt — open the Prompt Lab for the detail.`;
+      note.classList.add('is-warn');
+    } else {
+      note.classList.remove('is-warn');
+    }
+
+    const sys = document.createElement('div');
+    sys.className = 'lab-system';
+    sys.textContent = '[system]\n' + d.system + '\n';
+    const usr = document.createElement('div');
+    usr.textContent = '\n[user]\n' + d.user;
+    body.innerHTML = '';
+    body.appendChild(sys);
+    body.appendChild(usr);
+  } catch (e) {
+    body.textContent = 'Could not render the preview.';
+  }
+}
+
+function closeGenPreview() {
+  document.getElementById('genPreviewOverlay').classList.remove('open');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -4354,6 +4519,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     ['promptLabTemplate', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
+    document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
     // Ctrl/Cmd+S saves instead of the browser's "save page" dialog.
     document.getElementById('promptLabTemplate').addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -4366,6 +4532,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && labOverlay.classList.contains('open')) closePromptLab();
+    });
+
+    // --- Pre-generation preview wiring ---
+    const genPreviewOverlay = document.getElementById('genPreviewOverlay');
+    document.getElementById('genPreviewBtn').addEventListener('click', openGenPreview);
+    document.getElementById('genPreviewCloseBtn').addEventListener('click', closeGenPreview);
+    document.getElementById('genPreviewCancelBtn').addEventListener('click', closeGenPreview);
+    genPreviewOverlay.addEventListener('click', (e) => {
+        if (e.target === genPreviewOverlay) closeGenPreview();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && genPreviewOverlay.classList.contains('open')) closeGenPreview();
     });
 
     fetchData(currentSort, currentOrder);

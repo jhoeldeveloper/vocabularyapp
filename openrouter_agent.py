@@ -141,29 +141,96 @@ def cancel_story_request(story_id: int) -> bool:
     return True
 
 
-def _get_reasoning_config(model_id: str):
+# Reasoning modes a preset can ask for. "auto" is the shipped behaviour and the
+# default; the other two exist because the auto rules are invisible from the UI
+# -- you cannot tell from the outside whether a model reasons at all.
+REASONING_MODES = ("auto", "minimal", "off")
+
+
+def _get_reasoning_config(model_id: str, mode: str = "auto"):
     """Return the reasoning config dict for a model, or None if not a reasoning model.
 
-    Logic:
-    - No reasoning field → non-reasoning model, return None
-    - mandatory=False → disable reasoning (effort: "none")
-    - mandatory=True → can't disable, use lowest supported effort
-    - Meta-routers (openrouter/free, openrouter/auto) → disable reasoning (safe default)
+    mode:
+    - "auto"    (default) derive it from the model catalogue, as before
+    - "minimal" ask for the lowest effort the model supports
+    - "off"     ask for no reasoning at all
+
+    The catalogue-derived logic:
+    - No reasoning field -> non-reasoning model, return None
+    - mandatory=False -> disable reasoning (effort: "none")
+    - mandatory=True -> can't disable, use lowest supported effort
+    - Meta-routers (openrouter/free, openrouter/auto) -> disable reasoning (safe default)
+
+    A caveat that belongs in the UI and not only here: "off" is a REQUEST, not
+    a guarantee. On a mandatory-reasoning model (grok-4.7, glm-5.3-flash, both
+    reasoning.mandatory: true with no "none" effort) there is no off switch, so
+    the lowest supported effort is requested instead of an "off" the provider
+    would ignore. use_reasoning_status() reports that substitution so the
+    preview can say so rather than quietly lying.
     """
+    model = _reasoning_model(model_id)
+    if mode not in REASONING_MODES:
+        mode = "auto"
+
     if model_id in ("openrouter/free", "openrouter/auto"):
+        # Meta-routers pick a backend for you, so there is nothing meaningful to
+        # hold on or off; reasoning stays off whatever was asked.
         return {"effort": "none", "exclude": True}
-    models, _ = _fetch_models()
-    model = next((m for m in models if m["id"] == model_id), None)
-    if not model:
-        return None
+
+    if model is None:
+        # Unknown model (custom id, catalogue fetch failed). "off" is still
+        # worth sending: a provider that honours it will use it.
+        return {"effort": "none", "exclude": True} if mode == "off" else None
+
     reasoning = model.get("reasoning")
     if not reasoning:
+        # Not a reasoning model. Sending "off" would be noise, and "minimal"
+        # has nothing to minimise.
         return None
-    if not reasoning.get("mandatory", False):
-        return {"effort": "none", "exclude": True}
+
     efforts = reasoning.get("supported_efforts") or ["low"]
     lowest = efforts[-1] if efforts else "low"
-    return {"effort": lowest, "exclude": True}
+    mandatory = bool(reasoning.get("mandatory", False))
+
+    if mode == "off" and not mandatory:
+        return {"effort": "none", "exclude": True}
+    # A mandatory model has no "none" effort, so asking for one is a request the
+    # provider ignores -- and it ignores it by falling back to its own default,
+    # not by choosing cheaply. Naming the lowest effort explicitly is strictly
+    # better, so that is what goes out, and use_reasoning_status() reports the
+    # substitution.
+    if mode in ("minimal", "off") or mandatory:
+        return {"effort": lowest, "exclude": True}
+    return {"effort": "none", "exclude": True}
+
+
+def _reasoning_model(model_id: str):
+    """The catalogue entry for a model, or None if it is not known."""
+    models, _ = _fetch_models()
+    return next((m for m in models if m["id"] == model_id), None)
+
+
+def use_reasoning_status(model_id: str, mode: str = "auto"):
+    """What will actually be sent for (model, mode), plus a note when the
+    request cannot be honoured. Used by the pre-generation preview, which must
+    not claim reasoning is off when the model will think anyway."""
+    config = _get_reasoning_config(model_id, mode)
+    note = ""
+    model = _reasoning_model(model_id)
+    mandatory = bool(model and (model.get("reasoning") or {}).get("mandatory"))
+    if mode == "off" and mandatory:
+        note = ("This model always reasons, so 'off' cannot be honoured — the "
+                "cheapest effort it supports is requested instead.")
+    elif mode == "off" and model is None:
+        note = "Model not in the catalogue, so 'off' is sent as a request only."
+    elif config is None:
+        note = "This model does not reason, so nothing is sent."
+    return {
+        "requested": mode if mode in REASONING_MODES else "auto",
+        "effective": _reason_cfg_label(config),
+        "config": config,
+        "note": note,
+    }
 
 
 def _reason_cfg_label(reasoning_config) -> str:
@@ -1026,7 +1093,7 @@ def _read_story_stream(response, started, model, story_id, on_delta):
 
 def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None,
                         on_delta=None, template=None, style=None,
-                        temperature=None, max_tokens=None):
+                        temperature=None, max_tokens=None, reasoning=None):
     """Generate one story.
 
     template/style/temperature/max_tokens override the shipped prompt and
@@ -1087,8 +1154,9 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
     # provider omits finish_reason.
     max_tokens = payload["max_tokens"]
 
-    # Auto-detect reasoning config from model metadata.
-    reasoning_config = _get_reasoning_config(model)
+    # Reasoning config: derived from the model catalogue, or from the preset's
+    # preference. `reasoning` is only a request -- see use_reasoning_status().
+    reasoning_config = _get_reasoning_config(model, reasoning)
     if reasoning_config:
         payload["reasoning"] = reasoning_config
 
@@ -1109,7 +1177,8 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
         id_part = f"id={story_id} " if story_id is not None else ""
         print(
             f"story: {id_part}requesting model '{model}' for {len(words)} words "
-            f"| reason_cfg={_reason_cfg_label(reasoning_config)}",
+            f"| reason_cfg={_reason_cfg_label(reasoning_config)}"
+            + (f" (asked: {reasoning})" if reasoning and reasoning != "auto" else ""),
             flush=True,
         )
         try:
