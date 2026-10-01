@@ -208,6 +208,8 @@ def init_db():
         ("words_total", "INTEGER"),
         ("prose_words", "INTEGER"),
         ("warnings", "TEXT"),
+        ("prompt_used", "TEXT"),
+        ("prompt_preset", "TEXT"),
     ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
@@ -745,6 +747,10 @@ async def create_story(data: StoryCreate):
     actual_model = data.model or "openrouter/free"
     actual_provider = data.provider or None
 
+    # Freeze the active prompt preset now, so the row records the prompt that
+    # produced it and a later preset edit cannot alter this run.
+    recipe = _resolve_prompt_recipe(words, data.title)
+
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
         cursor = conn.cursor()
@@ -752,9 +758,11 @@ async def create_story(data: StoryCreate):
         cursor.execute(f"SELECT id FROM dictionary WHERE word IN ({placeholders})", words)
         word_ids = [row[0] for row in cursor.fetchall()]
         cursor.execute(
-            "INSERT INTO stories (title, content, audio_path, model, duration_ms, cost, status) "
-            "VALUES (?, NULL, NULL, ?, NULL, NULL, 'generating')",
-            (data.title or "Generating story...", actual_model),
+            "INSERT INTO stories (title, content, audio_path, model, duration_ms, cost, status, "
+            "prompt_used, prompt_preset) "
+            "VALUES (?, NULL, NULL, ?, NULL, NULL, 'generating', ?, ?)",
+            (data.title or "Generating story...", actual_model,
+             recipe["prompt_used"], _active_preset().get("name", "")),
         )
         story_id = cursor.lastrowid
         for wid in word_ids:
@@ -771,19 +779,29 @@ async def create_story(data: StoryCreate):
     # Heavy AI generation runs as a background task so a page refresh or
     # dropped connection can't lose the result — it is written to the DB
     # and announced over the WebSocket when done.
-    _start_story_job(story_id, words, data.title, actual_model, actual_provider)
+    _start_story_job(story_id, words, data.title, actual_model, actual_provider,
+                     recipe["gen_kwargs"])
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 
 
-async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str, provider_tag: Optional[str] = None):
+async def generate_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str,
+                             provider_tag: Optional[str] = None, gen_kwargs: Optional[dict] = None):
     """Generate story content in the background and persist it when done."""
     token = _new_story_stream_token()
     on_delta = _make_story_delta_sink(story_id, token)
+    if gen_kwargs:
+        # Logged because the health line further down cannot say which prompt
+        # produced the run, and "which preset is better" is answered by
+        # comparing health lines across presets.
+        print(f"[STORY] story {story_id} using prompt preset "
+              f"temp={gen_kwargs.get('temperature')} max_tokens={gen_kwargs.get('max_tokens')}",
+              flush=True)
     try:
         result = await run_in_threadpool(
             openrouter_agent.sync_generate_story,
             words, title_hint, model, provider_tag, story_id, on_delta,
+            **(gen_kwargs or {}),
         )
         # Always ship the tail of the stream before the terminal event so the UI
         # never renders a truncated story.
@@ -887,10 +905,11 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
             _story_tasks.pop(story_id, None)
 
 
-def _start_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str, provider_tag: Optional[str] = None):
+def _start_story_job(story_id: int, words: List[str], title_hint: Optional[str], model: str,
+                      provider_tag: Optional[str] = None, gen_kwargs: Optional[dict] = None):
     """Create the background generation task and remember it for cancel/delete."""
     task = asyncio.create_task(
-        generate_story_job(story_id, words, title_hint, model, provider_tag)
+        generate_story_job(story_id, words, title_hint, model, provider_tag, gen_kwargs)
     )
     _story_tasks[story_id] = task
     return task
@@ -928,6 +947,9 @@ def api_config():
         "meanings_model": get_setting("meanings_model") or "openrouter/free",
         "story_model": get_setting("story_model") or "openrouter/free",
         "story_provider": get_setting("story_provider") or "",
+        # Name of the active prompt preset, so the UI can label Generate
+        # without a second request.
+        "story_prompt_preset": _active_preset().get("name", ""),
     }
 
 
@@ -947,6 +969,222 @@ def update_config(
     return {"ok": True}
 
 
+# --- Prompt presets (the editable story prompt) ---
+#
+# A preset is a full generation recipe (template + style + temperature +
+# max_tokens), not just text: "preset A at whatever temperature was current" is
+# not reproducible, and reproducibility is the whole point of storing them.
+# The active preset id lives alongside them in the same settings row so one
+# read/write covers the lot and the two can never disagree.
+#
+# The JSON is written whole (last write wins). That is deliberate and matches
+# how the model picks already behave: single user, one browser in practice.
+_PROMPTS_SETTING_KEY = "story_prompt_presets"
+_DEFAULT_PRESET_ID = "default"
+
+class PromptPreset(BaseModel):
+    id: str
+    name: str
+    template: str
+    style: str = ""
+    temperature: float = openrouter_agent._STORY_TEMPERATURE
+    max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
+
+
+class PresetPayload(BaseModel):
+    """Upsert body for POST /api/prompts. Omit id to create."""
+    id: Optional[str] = None
+    name: str
+    template: str
+    style: str = ""
+    temperature: float = openrouter_agent._STORY_TEMPERATURE
+    max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
+
+
+def _default_preset():
+    return {
+        "id": _DEFAULT_PRESET_ID,
+        "name": "Reddit default",
+        "template": openrouter_agent._DEFAULT_TEMPLATE,
+        "style": "",  # empty = draw a random REDDIT_STYLES entry per story
+        "temperature": openrouter_agent._STORY_TEMPERATURE,
+        "max_tokens": openrouter_agent._STORY_MAX_TOKENS,
+    }
+
+
+def _load_prompt_presets():
+    """Read the preset store, seeding the code default on first use.
+
+    Also self-heals: a row that is not valid JSON, or one whose active id no
+    longer exists, falls back to the default preset rather than leaving the UI
+    with nothing selected. A corrupt prompt store must never be able to stop
+    story generation, so the fallback is always a working preset.
+    """
+    raw = get_setting(_PROMPTS_SETTING_KEY)
+    state = None
+    if raw:
+        try:
+            state = json.loads(raw)
+        except (ValueError, TypeError):
+            print("[PROMPTS] stored presets are not valid JSON; using the code default.")
+            state = None
+    if not isinstance(state, dict) or not isinstance(state.get("presets"), list) or not state["presets"]:
+        state = {"presets": [_default_preset()], "active": _DEFAULT_PRESET_ID}
+        _save_prompt_presets(state)
+    presets = [p for p in state["presets"] if isinstance(p, dict) and p.get("template") is not None]
+    if not presets:
+        presets = [_default_preset()]
+    ids = {p.get("id") for p in presets}
+    active = state.get("active")
+    if active not in ids:
+        active = presets[0].get("id")
+    return {"presets": presets, "active": active}
+
+
+def _save_prompt_presets(state):
+    set_setting(_PROMPTS_SETTING_KEY, json.dumps(state))
+
+
+def _active_preset():
+    state = _load_prompt_presets()
+    active = state["active"]
+    for p in state["presets"]:
+        if p.get("id") == active:
+            return p
+    return _default_preset()
+
+
+def _resolve_prompt_recipe(words, title):
+    """Freeze the active preset into everything one generation needs.
+
+    Called once, when the story row is created, for two reasons:
+
+    1. The prompt stored on the row is then exactly the prompt sent, so a story
+       stays reproducible after the preset is edited or deleted.
+    2. Editing the preset (or deleting the active preset) mid-generation cannot
+       change a request already in flight.
+
+    The random style is resolved here rather than inside the generation, so the
+    snapshot cannot disagree with what was sent.
+    """
+    preset = _active_preset()
+    style = openrouter_agent._resolve_style(preset.get("style"))
+    messages = openrouter_agent.build_messages(words, title, template=preset.get("template"),
+                                               style=style)
+    return {
+        "prompt_used": f"[system]\n{messages[0]['content']}\n\n[user]\n{messages[1]['content']}",
+        "gen_kwargs": {
+            "template": preset.get("template"),
+            "style": style,
+            "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
+            "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
+        },
+    }
+
+
+@app.get("/api/prompts")
+def api_get_prompts():
+    state = _load_prompt_presets()
+    return {
+        "presets": state["presets"],
+        "active": state["active"],
+        "default_template": openrouter_agent._DEFAULT_TEMPLATE,
+        "styles": openrouter_agent.REDDIT_STYLES,
+    }
+
+
+@app.post("/api/prompts")
+def api_save_preset(payload: PresetPayload):
+    """Create or update one preset. Whole-object upsert keyed by id."""
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A preset needs a name.")
+    if len(name) > 60:
+        raise HTTPException(status_code=400, detail="Preset name is too long (60 characters max).")
+
+    errors = [f for f in openrouter_agent.validate_prompt(payload.template) if f["level"] == "error"]
+    if errors:
+        # Only an unrenderable template is refused. Warnings are advisory and
+        # the UI shows them without blocking the save.
+        raise HTTPException(status_code=400, detail=errors[0]["message"])
+
+    temperature = max(0.0, min(2.0, float(payload.temperature)))
+    max_tokens = max(1000, min(32000, int(payload.max_tokens)))
+
+    state = _load_prompt_presets()
+    preset = {
+        "id": payload.id or uuid.uuid4().hex[:8],
+        "name": name,
+        "template": payload.template,
+        "style": (payload.style or "").strip(),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    existing = next((p for p in state["presets"] if p.get("id") == preset["id"]), None)
+    if existing:
+        existing.update(preset)
+    else:
+        state["presets"].append(preset)
+        # A newly created preset does not steal activation; that stays an
+        # explicit act so a stray click cannot change what Generate uses.
+    _save_prompt_presets(state)
+    return {"ok": True, "preset": preset, "active": state["active"]}
+
+
+@app.post("/api/prompts/{preset_id}/activate")
+def api_activate_preset(preset_id: str):
+    state = _load_prompt_presets()
+    if not any(p.get("id") == preset_id for p in state["presets"]):
+        raise HTTPException(status_code=404, detail="No such preset.")
+    state["active"] = preset_id
+    _save_prompt_presets(state)
+    return {"ok": True, "active": preset_id}
+
+
+@app.delete("/api/prompts/{preset_id}")
+def api_delete_preset(preset_id: str):
+    state = _load_prompt_presets()
+    if len(state["presets"]) <= 1:
+        raise HTTPException(status_code=400, detail="The last preset cannot be deleted.")
+    state["presets"] = [p for p in state["presets"] if p.get("id") != preset_id]
+    if state["active"] == preset_id:
+        # Deleting the active preset falls back rather than leaving a dangling
+        # id that the generate path would have to special-case.
+        state["active"] = state["presets"][0]["id"]
+    _save_prompt_presets(state)
+    return {"ok": True, "presets": state["presets"], "active": state["active"]}
+
+
+@app.post("/api/prompts/validate")
+def api_validate_prompt(template: str = Body(..., embed=True)):
+    """Check a template without saving it. The UI calls this on a debounce."""
+    return {"findings": openrouter_agent.validate_prompt(template)}
+
+
+class PromptPreview(BaseModel):
+    template: str
+    words: List[str] = []
+    title: Optional[str] = None
+    style: str = ""
+
+
+@app.post("/api/prompts/preview")
+def api_preview_prompt(payload: PromptPreview):
+    """Render the exact messages that would be sent, for the live preview.
+
+    Server-side on purpose: the word list format and the system contract are
+    the two things a reimplementation in JS would silently get wrong.
+    """
+    words = payload.words or ["barn", "ephemeral", "piece of cake", "run", "dread"]
+    messages = openrouter_agent.build_messages(words, payload.title, template=payload.template,
+                                               style=payload.style or None)
+    return {
+        "system": messages[0]["content"],
+        "user": messages[1]["content"],
+        "findings": openrouter_agent.validate_prompt(payload.template),
+    }
+
+
 # Columns returned by the story read endpoints. Defined once so the list view,
 # the word-filtered view and the detail view cannot drift apart when a column is
 # added (the token columns are easy to forget in one of the three).
@@ -954,10 +1192,17 @@ _STORY_FIELDS = (
     "id", "title", "content", "audio_path", "model", "duration_ms", "cost",
     "prompt_tokens", "completion_tokens", "reasoning_tokens",
     "words_used", "words_total", "prose_words", "warnings",
+    # Name only: cheap enough for the list view, and it is how you later tell
+    # which prompt produced which story. The prompt text itself is several KB
+    # and is deliberately NOT here -- it would ride along on every list fetch.
+    # It has its own endpoint, _STORY_PROMPT_SELECT below.
+    "prompt_preset",
     "status", "error", "createdAt", "updatedAt",
 )
 _STORY_SELECT = ", ".join(_STORY_FIELDS)
 _STORY_SELECT_PREFIXED = ", ".join(f"s.{f}" for f in _STORY_FIELDS)
+# The full prompt is fetched on demand, never with the list.
+_STORY_PROMPT_SELECT = "prompt_used, prompt_preset"
 
 
 @app.get("/api/stories")
@@ -1014,6 +1259,24 @@ def api_get_story(story_id: int):
     story["words"] = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return story
+
+
+@app.get("/api/stories/{story_id}/prompt")
+def api_story_prompt(story_id: int):
+    """The exact prompt that produced this story, for the Lab's as-used view.
+
+    NULL for stories generated before the column existed; the UI hides the link
+    rather than showing an empty panel. Never backfilled -- a reconstructed
+    prompt would be indistinguishable from a real one.
+    """
+    conn = sqlite3.connect(DATABASE_URL)
+    row = conn.execute(
+        f"SELECT {_STORY_PROMPT_SELECT} FROM stories WHERE id = ?", (story_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Story not found")
+    return {"id": story_id, "prompt_used": row[0], "prompt_preset": row[1]}
 
 
 @app.get("/api/stories/{story_id}/word-usage")
@@ -1113,7 +1376,20 @@ async def retry_story(story_id: int):
     if row and row[0] and row[0] != "Generating story...":
         title_hint = row[0]
 
-    _start_story_job(story_id, words, title_hint, actual_model)
+    # A retry regenerates the content, so it snapshots the CURRENT active preset
+    # and overwrites the old snapshot. The invariant is "prompt_used describes
+    # the content currently in this row", not "the first prompt ever tried" --
+    # keeping the old one would misdescribe the prose the user is now reading.
+    recipe = _resolve_prompt_recipe(words, title_hint)
+    conn = sqlite3.connect(DATABASE_URL)
+    conn.execute(
+        "UPDATE stories SET prompt_used = ?, prompt_preset = ? WHERE id = ?",
+        (recipe["prompt_used"], _active_preset().get("name", ""), story_id),
+    )
+    conn.commit()
+    conn.close()
+
+    _start_story_job(story_id, words, title_hint, actual_model, None, recipe["gen_kwargs"])
     manager.broadcast_from_sync("update_stories")
     return {"id": story_id, "status": "generating"}
 

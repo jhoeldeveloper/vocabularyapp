@@ -311,26 +311,60 @@ REDDIT_STYLES = [
     "r/relationships: a personal situation with a friend, partner or family, told honestly and emotionally",
 ]
 
-def _build_prompt(words, title):
-    style = random.choice(REDDIT_STYLES)
-    # Comma-separated, with multi-word phrases quoted so they stay one item.
-    # Deliberately NOT numbered: a numbered list (1. scavenge, 2. traits, ...)
-    # was measured leaking into the output as "**scavenge** 1", and it also
-    # invited the model to work through the list in order, which the prompt
-    # explicitly forbids. See _detect_degeneracy's index-fusion check.
-    word_list = ", ".join(f'"{w}"' if " " in w else w for w in words)
-    title_instruction = (
-        f"Use exactly this title, word for word: '{title}'." if title
-        else "Invent a short, catchy title of at most 8 words."
-    )
-    return f"""Write one enjoyable, coherent story that reads like a real post on Reddit, and that uses every word in this list:
+# ---------------------------------------------------------------------------
+# Prompt construction.
+#
+# The prompt is three parts and only the middle one is editable:
+#
+#   system   Fixed role plus the output contract (the "Title:"/"Story:" labels).
+#            It is NOT part of the editable template, so the shape that
+#            _extract_title (main.py) and stripStoryLabels (words.html) regex
+#            on cannot be edited away by a user.
+#   template The prose rules. Stored in the settings table and editable from
+#            the UI without touching this file. Carries exactly one
+#            placeholder, {title}.
+#   tail     The chosen style and the word list, appended AFTER the template.
+#            Words are bulk data and belong last, where recency helps the model
+#            hold them. Rendering them here (rather than letting the template
+#            place them) is also what keeps the list un-numbered and quoted,
+#            which is what stops indices leaking out as "**scavenge** 1" and
+#            stops the model working through the list in order.
+# ---------------------------------------------------------------------------
 
-WORDS TO USE
-{word_list}
+_STORY_TEMPERATURE = 0.7
+_STORY_MAX_TOKENS = 20000
 
-Style for this story: {style}.
+# Print the full rendered prompt for every story request. Off by default; turn
+# it on while editing the template so what is sent can be read in the log.
+_DEBUG_PROMPT = os.environ.get("STORY_DEBUG_PROMPT", "").strip() not in ("", "0", "false")
 
-PLOT
+TITLE_PLACEHOLDER = "{title}"
+
+_TASK_LINE = (
+    "Write one enjoyable, coherent story that reads like a real post on Reddit, "
+    "and that uses every word in this list:"
+)
+
+_SYSTEM_ROLE = (
+    "You are a creative writing assistant that weaves words into engaging, "
+    "coherent stories."
+)
+
+# The output envelope. Load-bearing: main.py:_extract_title looks for the
+# "Title:" line and words.html:stripStoryLabels looks for "Story:". Keep this
+# in the system message and out of the editable template.
+_SYSTEM_CONTRACT = (
+    "Reply with exactly this and nothing else, no preamble and no closing "
+    "remarks:\n"
+    "Title: <the title>\n"
+    "\n"
+    "Story: <the story text>"
+)
+
+# The editable middle. "Reset to code default" in the UI restores exactly this,
+# so it must stay the shipped prompt and not drift from what is documented in
+# AGENTS.md.
+_DEFAULT_TEMPLATE = """PLOT
 - First person, casual and conversational, like telling a friend what happened. Open with a hook in the first two sentences.
 - One narrator with a clear goal, one place that changes as the story moves, a problem in the middle, and an unexpected ending whose twist is set up by details planted earlier.
 - Every scene follows from the previous one. No restarting, no unrelated jumps.
@@ -350,7 +384,7 @@ BOLDING (graded strictly)
 - The title must not be bolded.
 
 NEVER NARRATE YOUR OWN WORK
-- Your answer is the story. Nothing else goes in it.
+- Your answer is the title and then the story. Nothing else goes in it.
 - Do not mention the list, the checklist, the draft, or which words you have or have not used. Never write a sentence like "Not a listed word." or "use edible already used" or "not listed".
 - No commentary about your own writing. Fix anything you get wrong silently; never describe the fix.
 
@@ -359,12 +393,185 @@ LANGUAGE
 - No swearing. Never write the word "Reddit". No "Edit" or "Update" line at the end.
 - Plain prose only: no headings, lists, block quotes, code fences or commentary around the story.
 
-{title_instruction}
+TITLE
+{title}"""
 
-OUTPUT — emit exactly this and nothing else, no preamble and no closing remarks:
-Title: <the title>
 
-Story: <the story text>"""
+def render_title_instruction(title):
+    """The text {title} expands to. One branch, decided here, not in the
+    template: the template cannot know whether a title was supplied."""
+    if title:
+        return f"Use exactly this title, word for word: '{title}'."
+    return "Invent a short, catchy title of at most 8 words."
+
+
+def _render_word_list(words):
+    # Comma-separated, with multi-word phrases quoted so they stay one item.
+    # Deliberately NOT numbered: a numbered list (1. scavenge, 2. traits, ...)
+    # was measured leaking into the output as "**scavenge** 1", and it also
+    # invited the model to work through the list in order, which the prompt
+    # explicitly forbids. See _detect_degeneracy's index-fusion check.
+    return ", ".join(f'"{w}"' if " " in w else w for w in words)
+
+
+def _resolve_style(style=None):
+    """A concrete style string. Empty means draw a random one per story.
+
+    Exposed so the caller can resolve it once and pass the result down: if the
+    random draw happened inside the generation, the prompt snapshotted on the
+    story row and the prompt actually sent could name different styles.
+    """
+    return (style or "").strip() or random.choice(REDDIT_STYLES)
+
+
+def build_prompt(words, title=None, template=None, style=None):
+    """Render the user message from the editable template.
+
+    ``style`` empty means "draw a random one from REDDIT_STYLES", which is the
+    shipped behaviour. Substitution uses str.replace and never str.format: a
+    template is prose, so a stray "{" (a JSON example, some maths) must not
+    raise KeyError/IndexError and take down a generation.
+    """
+    if template is None:
+        template = _DEFAULT_TEMPLATE
+    style = _resolve_style(style)
+    body = template.replace(TITLE_PLACEHOLDER, render_title_instruction(title))
+    return f"""{_TASK_LINE}
+
+{body.strip()}
+
+Style for this story: {style}.
+
+WORDS TO USE
+{_render_word_list(words)}"""
+
+
+def build_messages(words, title=None, template=None, style=None):
+    """The full message list for a story request."""
+    return [
+        {"role": "system", "content": f"{_SYSTEM_ROLE}\n\n{_SYSTEM_CONTRACT}"},
+        {"role": "user", "content": build_prompt(words, title, template, style)},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Template validation.
+#
+# The template is user-editable, so validation is a warning strip rather than a
+# gate: only an unrenderable template is an error, everything else is advice.
+# The point is to surface the foot-guns that were once encoded as comments in
+# this file, where an editor could actually read them. Nothing here changes the
+# prompt -- a warning the user ignores still produces a story.
+# ---------------------------------------------------------------------------
+
+# Any self-verification instruction. This is the expensive one: telling a
+# reasoning model to check its own work was measured at 405s / 26,518 reasoning
+# tokens for a 286-word story, versus 68s for the same model and length without
+# the sentence. So it is a warning, not a rule we enforce.
+_SELF_CHECK_RE = re.compile(
+    r"\b(verify|verif\w+|double[- ]check|make sure (you|that) (use|every|all)|"
+    r"ensure (you|that|every|all)|check (that|your|each|every|off)|"
+    r"count (the |your |which )?(words|list)|confirm (you|that|every|all))\b",
+    re.IGNORECASE,
+)
+
+# A target length for the story. The prompt sets none on purpose (max_tokens is
+# the only bound), and a length target in the prompt is what pushes a model to
+# race through the word list. Sentence-level limits are a different rule and are
+# fine, so a match sitting next to the word "sentence" is not counted -- without
+# that carve-out the shipped default ("short-to-medium sentences (under 25
+# words)") would warn on itself.
+_LENGTH_RE = re.compile(
+    r"\b(\d{2,5}\s*[-–]?\s*words?\b|under \d+|at least \d+ words|"
+    r"no more than \d+ words|at most \d+ words|around \d+ words|about \d+ words|"
+    r"short story|long story)",
+    re.IGNORECASE,
+)
+
+
+def _sets_story_length(text):
+    """True if the text asks for a length for the story itself."""
+    for m in _LENGTH_RE.finditer(text):
+        window = text[max(0, m.start() - 60):m.end() + 30].lower()
+        if "sentence" in window or "line" in window:
+            continue
+        return True
+    return False
+
+# Re-introducing a numbered list was measured leaking indices into the prose.
+_NUMBERED_RE = re.compile(
+    r"\b(number(ed)? (the |your )?(list|words|them)|list them (as )?numbered|"
+    r"numbered list)\b",
+    re.IGNORECASE,
+)
+
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def validate_prompt(template):
+    """Check an editable template. Returns a list of findings.
+
+    Each finding is ``{"level", "code", "message"}`` with level in
+    "error" / "warning" / "info". Only "error" prevents rendering; the UI shows
+    the rest and lets the user save anyway.
+    """
+    findings = []
+    if template is None or not template.strip():
+        return [{"level": "error", "code": "empty",
+                 "message": "The prompt is empty. Reset to the code default to recover it."}]
+
+    def add(level, code, message):
+        findings.append({"level": level, "code": code, "message": message})
+
+    text = template
+
+    # Unbalanced braces would leave a half-substituted prompt in the request.
+    if text.count("{") != text.count("}"):
+        add("error", "unbalanced_braces",
+            "Unbalanced { or }. The prompt cannot be rendered as written.")
+
+    unknown = sorted({m for m in _PLACEHOLDER_RE.findall(text)} - {TITLE_PLACEHOLDER.strip("{}")})
+    for name in unknown:
+        add("warning", "unknown_placeholder",
+            f"{{{name}}} is not a placeholder. It is sent to the model literally; "
+            f"the only one that gets substituted is {TITLE_PLACEHOLDER}.")
+
+    if TITLE_PLACEHOLDER not in text:
+        add("warning", "no_title_placeholder",
+            f"No {TITLE_PLACEHOLDER} in the prompt. A title typed in Story Setup "
+            f"will be ignored and the model will invent one instead.")
+
+    if _SELF_CHECK_RE.search(text):
+        add("warning", "self_check",
+            "This asks the model to check its own work. On a reasoning model that "
+            "was measured at 405s and 26,518 reasoning tokens for a 286-word story, "
+            "against 68s without it. Say nothing about checking instead.")
+
+    if _sets_story_length(text):
+        add("warning", "length_target",
+            "This sets a target length. The prompt deliberately sets none, and a "
+            "length target tends to make the model rush the word list. max_tokens "
+            "is the output budget and is set separately.")
+
+    if _NUMBERED_RE.search(text):
+        add("warning", "numbered_list",
+            "Do not ask for a numbered list. It was measured leaking into the "
+            "prose as '**scavenge** 1' and making the model work through the list "
+            "in order. The word list is rendered for you, un-numbered.")
+
+    if "Title:" in text or "Story:" in text:
+        add("warning", "output_shape",
+            "The output shape (the 'Title:' and 'Story:' labels) is set by the "
+            "system message and cannot be changed here. Repeating it in the "
+            "prompt tends to produce a preamble.")
+
+    if "bold" not in text.lower():
+        add("info", "no_bolding_rule",
+            "No bolding rule. The model will probably bold nothing, so the "
+            "highlighted vocabulary in the story will be lost.")
+
+    return findings
+
 
 def _normalize_term(text):
     """Lowercase a word or phrase and keep only its letters and spaces."""
@@ -626,7 +833,7 @@ def _detect_degeneracy(content, words):
     (used=270/310, stray_bold=0, reason/vis=0.4, 148s, 22.8k chars) and threw
     the whole generation away. Those phrases occur in ordinary fiction, and with
     a single-match threshold the false-positive rate scales with story length.
-    Do not re-add it as "cheap insurance" — the prompt rule in _build_prompt is
+    Do not re-add it as "cheap insurance" — the prompt rule in _DEFAULT_TEMPLATE is
     what keeps the meta text out of the output in the first place.
 
     Low coverage is deliberately NOT a reason. It is the most useful signal in
@@ -817,14 +1024,27 @@ def _read_story_stream(response, started, model, story_id, on_delta):
     }, None
 
 
-def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None, on_delta=None):
+def sync_generate_story(words, title=None, model=None, provider_tag=None, story_id=None,
+                        on_delta=None, template=None, style=None,
+                        temperature=None, max_tokens=None):
+    """Generate one story.
+
+    template/style/temperature/max_tokens override the shipped prompt and
+    request defaults. They are passed in explicitly (rather than read from the
+    settings table here) so the exact prompt used is fixed when the story row
+    is created and cannot shift under a generation already in flight.
+    """
     if not OPENROUTER_API_KEY:
         return {"ok": False, "error": "OpenRouter API key not set. Add OPENROUTER_API_KEY to your .env file."}
     if not words:
         return {"ok": False, "error": "No words were provided to build a story."}
 
     model = model or OPENROUTER_MODEL
-    prompt = _build_prompt(words, title)
+    if temperature is None:
+        temperature = _STORY_TEMPERATURE
+    if max_tokens is None:
+        max_tokens = _STORY_MAX_TOKENS
+    prompt = build_prompt(words, title, template=template, style=style)
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -844,24 +1064,24 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
     payload = {
         "model": model,
         "provider": provider_config,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a creative writing assistant that weaves words into engaging, coherent stories.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.7,
+        "messages": build_messages(words, title, template=template, style=style),
+        "temperature": temperature,
         # Output budget. It is the only length bound: the prompt deliberately
         # sets no target length. A story cut off here is still published, as
         # status 'truncated' (see _STORY_MIN_VISIBLE_TOKENS).
-        "max_tokens": 20000,
+        "max_tokens": max_tokens,
         # Stream so the request can be cancelled mid-generation and the UI can
         # render the story as it arrives. include_usage keeps the token/cost
         # accounting identical to the non-streaming path.
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+
+    if _DEBUG_PROMPT:
+        # The whole prompt is the contract with the model, so being able to
+        # read exactly what was sent is worth a debug switch while the
+        # template is being edited from the UI.
+        print(f"--- prompt for story {story_id} ---\n{prompt}\n--- end prompt ---", flush=True)
 
     # Output budget, needed again below to recognise a capped response when the
     # provider omits finish_reason.

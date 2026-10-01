@@ -828,8 +828,81 @@
        to mean something. */
     .story-list-meta-line.is-good { color: var(--ok-text); background: var(--ok-bg); }
     .story-list-meta-line.is-poor { color: var(--poor-text); background: var(--poor-bg); }
+    /* A pill that opens something (the prompt snapshot). Needs an explicit
+       affordance and its own hit area, since it sits inside a clickable row. */
+    .story-list-meta-line.is-clickable { cursor: pointer; border-bottom: 1px dotted currentColor; }
+    .story-list-meta-line.is-clickable:hover { filter: brightness(0.95); }
     .story-card { margin-bottom: 16px; }
     .story-card .word-details { display: block; }
+
+    /* --- Prompt Lab: the editable story prompt --------------------------
+       Two columns: props on the left, the template over its rendered
+       preview on the right. The preview and the findings strip are the point
+       of the modal -- the template alone cannot show what the model will
+       actually receive, because the word list, the style line and the whole
+       Title:/Story: contract are added around it server-side. */
+    .prompt-lab-modal { width: min(1040px, 94vw); height: min(780px, 88vh); max-height: 88vh; display: flex; flex-direction: column; }
+    .prompt-lab-bar { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
+    .prompt-lab-bar .sort-btn { font-size: 0.8em; }
+    #promptLabPreset { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 0.9em; padding: 5px 8px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
+    .prompt-lab-active-tag { font-size: 0.72em; color: var(--ok-text); background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+
+    .prompt-lab-body { flex: 1 1 auto; display: flex; min-height: 0; }
+    .prompt-lab-props { width: 232px; flex-shrink: 0; border-right: 1px solid var(--border-details); padding: 14px 16px; overflow-y: auto; }
+    .prompt-lab-field { margin-bottom: 14px; }
+    .prompt-lab-field > label { display: block; font-size: 0.78em; color: var(--text-meta); margin-bottom: 4px; }
+    .prompt-lab-field input[type="text"], .prompt-lab-field input[type="number"], .prompt-lab-field select, .prompt-lab-field textarea {
+        width: 100%; box-sizing: border-box; font: inherit; font-size: 0.82em; padding: 5px 7px;
+        border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary);
+    }
+    .prompt-lab-field textarea { resize: vertical; min-height: 46px; }
+    .prompt-lab-hint { font-size: 0.72em; color: var(--text-meta); margin-top: 4px; line-height: 1.4; }
+    .prompt-lab-hint.is-warn { color: var(--warn-text); }
+
+    .prompt-lab-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    /* Editor and preview split the column; the preview is the one that matters,
+       so it gets the larger share (see the flex ratios). */
+    .prompt-lab-editor { flex: 1 1 45%; min-height: 90px; display: flex; padding: 10px 12px 4px 12px; }
+    #promptLabTemplate {
+        flex: 1 1 auto; resize: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.78em; line-height: 1.55; padding: 10px 12px; border: 1px solid var(--border-input);
+        border-radius: 6px; background: var(--bg-card); color: var(--text-primary);
+    }
+    #promptLabTemplate:read-only { background: var(--bg-meta); color: var(--text-secondary); }
+    .prompt-lab-preview-wrap { flex: 1 1 55%; min-height: 90px; display: flex; flex-direction: column; border-top: 1px solid var(--border-details); }
+    .prompt-lab-preview-head { display: flex; gap: 8px; align-items: baseline; padding: 8px 12px 4px 12px; font-size: 0.74em; color: var(--text-meta); flex-shrink: 0; }
+    .prompt-lab-preview-head .prompt-lab-preview-title { text-transform: uppercase; letter-spacing: 0.04em; }
+    #promptLabPreview {
+        flex: 1 1 auto; overflow-y: auto; margin: 0 12px 10px 12px; padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74em;
+        line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+        background: var(--bg-meta); border: 1px solid var(--border-details); border-radius: 6px; color: var(--text-secondary);
+    }
+    /* The system block is rendered by the server and is not editable, so it is
+       tinted to make the boundary between "yours" and "fixed" visible. */
+    #promptLabPreview .lab-system { color: var(--text-meta); font-style: italic; }
+
+    /* Findings strip: sibling of the editor column, never inside the scroller.
+       Advisory by design -- only an unrenderable template blocks a save, so an
+       error here is the single case worth a red row. */
+    .prompt-lab-findings { flex-shrink: 0; max-height: 20vh; overflow-y: auto; border-top: 1px solid var(--border-details); padding: 6px 16px; }
+    .prompt-lab-findings:empty { display: none; }
+    .prompt-lab-finding { display: flex; gap: 7px; align-items: flex-start; font-size: 0.78em; line-height: 1.45; padding: 3px 0; color: var(--text-meta); }
+    .prompt-lab-finding .fa-solid { margin-top: 2px; flex-shrink: 0; }
+    .prompt-lab-finding.is-error { color: var(--color-danger); }
+    .prompt-lab-finding.is-warning { color: var(--warn-text); }
+    .prompt-lab-finding.is-ok { color: var(--ok-text); }
+    .prompt-lab-footer-note { margin-right: auto; font-size: 0.78em; color: var(--text-meta); align-self: center; }
+    .prompt-lab-modal.is-readonly .prompt-lab-props { opacity: 0.55; }
+    /* As-used view (opened from a story's pill): there is no preset to pick and
+       nothing to edit, so the bar, the props and the template editor all go and
+       the stored snapshot gets the whole modal. An empty preset dropdown and a
+       greyed-out form would just read as a broken panel. */
+    .prompt-lab-modal.is-asused .prompt-lab-bar,
+    .prompt-lab-modal.is-asused .prompt-lab-props,
+    .prompt-lab-modal.is-asused .prompt-lab-editor { display: none; }
+    .prompt-lab-modal.is-asused .prompt-lab-preview-wrap { flex: 1 1 auto; border-top: none; }
+    .prompt-lab-modal.is-asused #promptLabPreview { font-size: 0.8em; }
 
     /* In Stories view, hide the word-mode controls but keep the view toggle. */
     body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
@@ -857,6 +930,14 @@
                 onclick="openMeaningsModelModal()" style="display:none;">
             <i class="fa-solid fa-robot"></i>
             <span id="meaningsModelToolbarLabel">Model</span>
+        </button>
+        <!-- OpenRouter-only, like the model pickers: the story prompt is an
+             OpenRouter construct. Label shows the active preset's name, so the
+             prompt in use is visible without opening the Lab. -->
+        <button id="promptLabToolbarBtn" class="sort-btn" title="Edit the story prompt"
+                onclick="openPromptLab()" style="display:none;">
+            <i class="fa-solid fa-pen-to-square"></i>
+            <span id="promptLabToolbarLabel">Prompt</span>
         </button>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
@@ -1039,6 +1120,74 @@
         <div class="modal-footer">
             <button id="setupCancelBtn" class="sort-btn">Cancel</button>
             <button id="setupGenerateBtn" class="sort-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Story</button>
+        </div>
+    </div>
+</div>
+
+<!-- Prompt Lab: the editable story prompt. Opened from the toolbar button, or
+     from a story's "prompt" pill to see the prompt that story was made with
+     (read-only). -->
+<div id="promptLabOverlay" class="modal-overlay">
+    <div class="modal prompt-lab-modal" id="promptLabModal">
+        <div class="modal-header">
+            <h3 id="promptLabHeading">Story Prompt</h3>
+            <button id="promptLabCloseBtn" class="modal-close" title="Close">&times;</button>
+        </div>
+        <div class="prompt-lab-bar">
+            <select id="promptLabPreset" title="Prompt presets"></select>
+            <span class="prompt-lab-active-tag" id="promptLabActiveTag" style="display:none;">in use</span>
+            <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
+            <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
+            <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
+            <button id="promptLabResetBtn" class="sort-btn" title="Restore the shipped prompt in this preset">Reset</button>
+        </div>
+        <div class="prompt-lab-body">
+            <div class="prompt-lab-props">
+                <div class="prompt-lab-field">
+                    <label for="promptLabName">Preset name</label>
+                    <input type="text" id="promptLabName" maxlength="60" placeholder="Reddit default">
+                </div>
+                <div class="prompt-lab-field">
+                    <label for="promptLabStyle">Style</label>
+                    <select id="promptLabStyle"></select>
+                    <div class="prompt-lab-hint" id="promptLabStyleHint">One is drawn at random for every story.</div>                </div>
+                <div class="prompt-lab-field">
+                    <label for="promptLabTemp">Temperature</label>
+                    <input type="number" id="promptLabTemp" min="0" max="2" step="0.05">
+                    <div class="prompt-lab-hint">Higher is looser. 0.7 is the default.</div>
+                </div>
+                <div class="prompt-lab-field">
+                    <label for="promptLabMaxTokens">Output budget (max tokens)</label>
+                    <input type="number" id="promptLabMaxTokens" min="1000" max="32000" step="500">
+                    <div class="prompt-lab-hint" id="promptLabBudgetHint">The only length bound. It does <em>not</em> bound
+                        reasoning: a mandatory-reasoning model can spend tens of thousands of tokens thinking and still
+                        hit this, which publishes the story as &ldquo;cut off&rdquo;.</div>
+                </div>
+            </div>
+            <div class="prompt-lab-main">
+                <div class="prompt-lab-editor">
+                    <!-- The editable middle of the prompt. {title} is the one
+                         placeholder: it expands to the title instruction, and
+                         picking where it goes is the user's call. The word
+                         list, the style line and the Title:/Story: contract
+                         are added around this and are not editable here. -->
+                    <textarea id="promptLabTemplate" spellcheck="false"
+                              placeholder="Write the rules the story must follow…"></textarea>
+                </div>
+                <div class="prompt-lab-preview-wrap">
+                    <div class="prompt-lab-preview-head">
+                        <span class="prompt-lab-preview-title">Preview</span>
+                        <span id="promptLabPreviewWords"></span>
+                    </div>
+                    <div id="promptLabPreview"></div>
+                </div>
+            </div>
+        </div>
+        <div class="prompt-lab-findings" id="promptLabFindings"></div>
+        <div class="modal-footer">
+            <span class="prompt-lab-footer-note" id="promptLabFooterNote"></span>
+            <button id="promptLabCancelBtn" class="sort-btn">Cancel</button>
+            <button id="promptLabSaveBtn" class="sort-btn"><i class="fa-solid fa-floppy-disk"></i> Save</button>
         </div>
     </div>
 </div>
@@ -1759,6 +1908,22 @@ function applyStoryPills(s, add, opts) {
         // carries the full provider-qualified id.
         add('fa-solid fa-robot', s.model.replace(/^.*\//, ''), '')
             .title = `Model: ${s.model}`;
+    }
+    // Which prompt preset produced this story. A button rather than a plain
+    // pill: the stored snapshot is the only way to see what the model actually
+    // received, and it is the reference point for judging a prompt edit.
+    // Hidden when NULL (stories generated before prompt presets existed).
+    if (s.prompt_preset || s.prompt_used) {
+        const pill = add('fa-solid fa-pen-to-square', s.prompt_preset || 'prompt', '');
+        pill.title = 'Open the prompt this story was generated with';
+        pill.classList.add('is-clickable');
+        pill.onclick = (e) => {
+            // The list row itself opens the story modal, so the click must not
+            // also bubble into it — otherwise one click opens both modals and
+            // the Lab ends up behind the story.
+            e.stopPropagation();
+            openPromptLab(s.id);
+        };
     }
     if (s.cost != null) {
         add('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free', '').title =
@@ -3383,7 +3548,8 @@ async function loadStories(wordId) {
       }
       titleBox.appendChild(statusLine);
     } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0
-               || s.prompt_tokens || s.completion_tokens || s.words_used != null || s.warnings) {
+               || s.prompt_tokens || s.completion_tokens || s.words_used != null || s.warnings
+               || s.prompt_preset) {
       const metaBox = document.createElement('span');
       metaBox.className = 'story-list-meta';
       const add = (icon, text, cls) => {
@@ -3457,6 +3623,413 @@ function openStoriesForWord(wordId) {
   document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book"></i> Words';
   loadStories(wordId);
   populateModelSelect();
+}
+
+// ===========================================================================
+// Prompt Lab -- editing the story prompt without touching the source.
+// ===========================================================================
+//
+// The prompt is three parts and only the middle one lives in this modal (see
+// openrouter_agent.build_prompt):
+//
+//   system   fixed role + the "Title:"/"Story:" contract. NOT editable, and
+//            not by accident: main.py:_extract_title and stripStoryLabels both
+//            regex on those labels, so the envelope has to live somewhere the
+//            user cannot delete it. A broken template can produce a wrong title
+//            but never an unparseable story.
+//   template this textarea. Carries one placeholder, {title}, which expands to
+//            the title instruction. Where you put it is your call.
+//   tail     the style line and the word list, appended after the template.
+//
+// Consequences the UI has to respect:
+//  - The preview is rendered SERVER-side (POST /api/prompts/preview). The word
+//    list format (un-numbered, multi-word entries quoted) and the system
+//    contract are exactly the two things a JS reimplementation would silently
+//    get wrong, so this never reimplements them.
+//  - Validation is advisory. Only an unrenderable template blocks a save;
+//    everything else is shown and can be ignored. The strip carries the
+//    measurement behind each warning, because that used to live in code
+//    comments an editor of the prompt would never read.
+const promptLab = {
+  presets: [],
+  activeId: null,
+  currentId: null,
+  defaultTemplate: '',
+  styles: [],
+  asUsed: null,        // {id, name, text} when opened from a story
+  validateTimer: null,
+  previewTimer: null,
+};
+
+// Sample words for the preview when the grid has no selection, so the word
+// list is visible in the one case where the user has not chosen any.
+const LAB_SAMPLE_WORDS = ['barn', 'ephemeral', 'piece of cake', 'run', 'dread'];
+
+function labPreviewWords() {
+  const sel = (typeof selectedWords !== 'undefined' && selectedWords) ? Array.from(selectedWords) : [];
+  return sel.length ? sel : LAB_SAMPLE_WORDS;
+}
+
+function labCurrentPreset() {
+  return promptLab.presets.find(p => p.id === promptLab.currentId) || null;
+}
+
+function labPayload() {
+  return {
+    id: promptLab.currentId,
+    name: document.getElementById('promptLabName').value.trim(),
+    template: document.getElementById('promptLabTemplate').value,
+    style: document.getElementById('promptLabStyle').value,
+    temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
+    max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+  };
+}
+
+// "in use" tag, so it is always obvious which preset Generate will pick up.
+function renderLabActiveTag() {
+  const tag = document.getElementById('promptLabActiveTag');
+  const isActive = promptLab.currentId === promptLab.activeId;
+  tag.style.display = isActive ? '' : 'none';
+  document.getElementById('promptLabUseBtn').style.display = isActive ? 'none' : '';
+  document.getElementById('promptLabFooterNote').textContent = isActive
+    ? 'New stories use this preset.'
+    : 'Not in use yet — press “Use” to generate with it.';
+}
+
+function renderLabPresetList() {
+  const sel = document.getElementById('promptLabPreset');
+  sel.innerHTML = '';
+  promptLab.presets.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.id === promptLab.activeId ? `${p.name}  (in use)` : p.name;
+    sel.appendChild(opt);
+  });
+  sel.value = promptLab.currentId || '';
+}
+
+// The hint has to follow the select: "one is drawn at random" is only true
+// while the value is empty, and a hint that is always the same is worse than
+// no hint at all.
+function updateLabStyleHint() {
+  const hint = document.getElementById('promptLabStyleHint');
+  const val = document.getElementById('promptLabStyle').value;
+  hint.textContent = val
+    ? 'Every story from this preset uses this style.'
+    : 'One is drawn at random for every story.';
+}
+
+function renderLabStyleOptions() {
+  const sel = document.getElementById('promptLabStyle');
+  const current = sel.value;
+  sel.innerHTML = '';
+  const randomOpt = document.createElement('option');
+  randomOpt.value = '';
+  randomOpt.textContent = 'Random (per story)';
+  sel.appendChild(randomOpt);
+  promptLab.styles.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s.split(':')[0];
+    sel.appendChild(opt);
+  });
+  // A style that is not in the catalogue (typed by hand, or from an older
+  // preset) would otherwise be silently dropped by the select and lost on the
+  // next save, so it is kept as its own option.
+  if (current && !promptLab.styles.includes(current)) {
+    const opt = document.createElement('option');
+    opt.value = current;
+    opt.textContent = current.split(':')[0] + '  (custom)';
+    sel.appendChild(opt);
+  }
+  sel.value = current;
+  updateLabStyleHint();
+}
+
+function renderLabFindings(findings) {
+  const box = document.getElementById('promptLabFindings');
+  box.innerHTML = '';
+  if (!findings || !findings.length) {
+    const ok = document.createElement('div');
+    ok.className = 'prompt-lab-finding is-ok';
+    ok.innerHTML = '<i class="fa-solid fa-circle-check"></i><span>No issues found in this prompt.</span>';
+    box.appendChild(ok);
+    document.getElementById('promptLabSaveBtn').disabled = false;
+    return;
+  }
+  findings.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'prompt-lab-finding is-' + f.level;
+    const icon = f.level === 'error' ? 'fa-circle-exclamation'
+               : f.level === 'warning' ? 'fa-triangle-exclamation'
+               : 'fa-circle-info';
+    row.innerHTML = `<i class="fa-solid ${icon}"></i><span></span>`;
+    row.querySelector('span').textContent = f.message;
+    box.appendChild(row);
+  });
+  // Only an unrenderable prompt is refused, mirroring the server's rule.
+  document.getElementById('promptLabSaveBtn').disabled = findings.some(f => f.level === 'error');
+}
+
+function renderLabPreviewText(system, user) {
+  const box = document.getElementById('promptLabPreview');
+  box.innerHTML = '';
+  const sys = document.createElement('div');
+  sys.className = 'lab-system';
+  sys.textContent = '[system]\n' + system + '\n';
+  const usr = document.createElement('div');
+  usr.textContent = '\n[user]\n' + user;
+  box.appendChild(sys);
+  box.appendChild(usr);
+}
+
+function refreshLabPreview() {
+  if (promptLab.asUsed) {
+    document.getElementById('promptLabPreview').textContent = promptLab.asUsed.text;
+    return;
+  }
+  const words = labPreviewWords();
+  document.getElementById('promptLabPreviewWords').textContent =
+    `with ${words.length} word${words.length === 1 ? '' : 's'}${words.length === LAB_SAMPLE_WORDS.length && !(typeof selectedWords !== 'undefined' && selectedWords.size) ? ' (sample — select words to use yours)' : ''}`;
+  fetch('/api/prompts/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      template: document.getElementById('promptLabTemplate').value,
+      words: words,
+      title: labTitleForPreview(),
+      style: document.getElementById('promptLabStyle').value,
+    }),
+  }).then(r => r.json()).then(d => {
+    if (d.user !== undefined) renderLabPreviewText(d.system, d.user);
+  }).catch(() => {});
+}
+
+// A title in the preview makes the {title} branch visible, which is the whole
+// reason to preview server-side. Taken from Story Setup when that modal is
+// open, otherwise a fixed sample.
+function labTitleForPreview() {
+  const input = document.getElementById('setupTitle');
+  return (input && input.value.trim()) || 'The Barn on Fire';
+}
+
+function scheduleLabRefresh() {
+  clearTimeout(promptLab.previewTimer);
+  promptLab.previewTimer = setTimeout(() => {
+    const tpl = document.getElementById('promptLabTemplate').value;
+    fetch('/api/prompts/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template: tpl }),
+    }).then(r => r.json()).then(d => {
+      if (d.findings) renderLabFindings(d.findings);
+    }).catch(() => {});
+    refreshLabPreview();
+  }, 300);
+}
+
+function fillLabForm(preset) {
+  document.getElementById('promptLabName').value = preset.name || '';
+  document.getElementById('promptLabTemplate').value = preset.template || '';
+  document.getElementById('promptLabTemp').value = preset.temperature != null ? preset.temperature : 0.7;
+  document.getElementById('promptLabMaxTokens').value = preset.max_tokens != null ? preset.max_tokens : 20000;
+  renderLabStyleOptions();
+  document.getElementById('promptLabStyle').value = preset.style || '';
+  updateLabStyleHint();
+  renderLabActiveTag();
+  renderLabFindings([]);
+  scheduleLabRefresh();
+}
+
+function setLabReadonly(on) {
+  const modal = document.getElementById('promptLabModal');
+  // is-asused also drops the preset bar, the props and the editor (see the CSS
+  // note): the stored snapshot is the only thing to show.
+  modal.classList.toggle('is-asused', !!promptLab.asUsed);
+  modal.classList.toggle('is-readonly', on);
+  ['promptLabName', 'promptLabTemplate', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle']
+    .forEach(id => { document.getElementById(id).disabled = on; });
+  document.getElementById('promptLabSaveBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabCopyBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabDeleteBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabResetBtn').style.display = on ? 'none' : '';
+  document.getElementById('promptLabPreset').disabled = on;
+}
+
+function loadPromptLabPreset(id) {
+  const preset = promptLab.presets.find(p => p.id === id);
+  if (!preset) return;
+  promptLab.currentId = id;
+  renderLabPresetList();
+  fillLabForm(preset);
+}
+
+async function openPromptLab(storyId) {
+  const overlay = document.getElementById('promptLabOverlay');
+  promptLab.asUsed = null;
+  setLabReadonly(false);
+  document.getElementById('promptLabHeading').textContent = 'Story Prompt';
+  document.getElementById('promptLabFindings').innerHTML = '';
+
+  if (storyId != null) {
+    // As-used view: show the prompt a finished story was actually made with.
+    // Read-only, because editing it would change nothing about that story.
+    try {
+      const res = await fetch(`/api/stories/${storyId}/prompt`).then(r => r.ok ? r.json() : null);
+      if (!res || !res.prompt_used) {
+        showToast('This story has no stored prompt (it predates prompt presets).');
+        return;
+      }
+      promptLab.asUsed = { id: storyId, name: res.prompt_preset || '', text: res.prompt_used };
+      document.getElementById('promptLabHeading').textContent =
+        `Prompt used for story #${storyId}${res.prompt_preset ? ' — ' + res.prompt_preset : ''}`;
+      document.getElementById('promptLabPreviewWords').textContent = 'as sent';
+      document.getElementById('promptLabPreview').textContent = res.prompt_used;
+      setLabReadonly(true);
+      document.getElementById('promptLabFooterNote').textContent =
+        'Stored on the story row when it was created. Stories made before prompt presets existed have none.';
+      overlay.classList.add('open');
+      return;
+    } catch (e) { return; }
+  }
+
+  try {
+    const data = await fetch('/api/prompts').then(r => r.json());
+    promptLab.presets = data.presets || [];
+    promptLab.activeId = data.active;
+    promptLab.defaultTemplate = data.default_template || '';
+    promptLab.styles = data.styles || [];
+    promptLab.currentId = promptLab.activeId || (promptLab.presets[0] && promptLab.presets[0].id);
+    renderLabPresetList();
+    renderLabStyleOptions();
+    const preset = labCurrentPreset();
+    if (preset) fillLabForm(preset);
+    document.getElementById('promptLabFooterNote').textContent = '';
+    overlay.classList.add('open');
+  } catch (e) { /* leave the modal closed */ }
+}
+
+function closePromptLab() {
+  document.getElementById('promptLabOverlay').classList.remove('open');
+}
+
+async function savePromptLab() {
+  const payload = labPayload();
+  if (!payload.name) { showToast('Give the preset a name first'); return; }
+  try {
+    const res = await fetch('/api/prompts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast(e.detail || 'Could not save the prompt');
+      return;
+    }
+    const saved = (await res.json()).preset;
+    const i = promptLab.presets.findIndex(p => p.id === saved.id);
+    if (i >= 0) promptLab.presets[i] = saved; else promptLab.presets.push(saved);
+    promptLab.currentId = saved.id;
+    renderLabPresetList();
+    renderLabActiveTag();
+    showToast(`Saved “${saved.name}”`);
+  } catch (e) { showToast('Could not save the prompt'); }
+}
+
+async function usePromptLabPreset() {
+  try {
+    await fetch(`/api/prompts/${promptLab.currentId}/activate`, { method: 'POST' });
+    promptLab.activeId = promptLab.currentId;
+    _serverConfig.story_prompt_preset = (labCurrentPreset() || {}).name || '';
+    updatePromptLabToolbarLabel();
+    renderLabPresetList();
+    renderLabActiveTag();
+    showToast('New stories will use this prompt');
+  } catch (e) { showToast('Could not switch preset'); }
+}
+
+// "New" duplicates rather than creating an empty preset: a blank prompt is
+// never what anyone wants, and duplicating the one in use is the A/B case
+// (tweak the copy, generate, compare health lines).
+async function duplicatePromptLabPreset() {
+  const src = labCurrentPreset();
+  const base = src || { name: 'New preset', template: promptLab.defaultTemplate, style: '', temperature: 0.7, max_tokens: 20000 };
+  const name = window.prompt('Name for the new preset:', `${base.name} copy`);
+  if (name == null) return;
+  try {
+    const res = await fetch('/api/prompts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim() || 'New preset',
+        template: document.getElementById('promptLabTemplate').value || base.template,
+        style: document.getElementById('promptLabStyle').value,
+        temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
+        max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+      }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast(e.detail || 'Could not create the preset');
+      return;
+    }
+    const saved = (await res.json()).preset;
+    promptLab.presets.push(saved);
+    await usePromptLabPresetForId(saved.id);
+  } catch (e) { showToast('Could not create the preset'); }
+}
+
+// Creating a preset does not activate it server-side (a stray click must not
+// change what Generate uses), so a preset made with the "New" button is
+// activated explicitly here -- that is the user's intent, stated by the click.
+async function usePromptLabPresetForId(id) {
+  await fetch(`/api/prompts/${id}/activate`, { method: 'POST' });
+  promptLab.activeId = id;
+  promptLab.currentId = id;
+  const p = promptLab.presets.find(x => x.id === id);
+  _serverConfig.story_prompt_preset = (p || {}).name || '';
+  updatePromptLabToolbarLabel();
+  renderLabPresetList();
+  if (p) fillLabForm(p);
+  showToast(`“${(p || {}).name}” created and set as the prompt in use`);
+}
+
+async function deletePromptLabPreset() {
+  const p = labCurrentPreset();
+  if (!p) return;
+  if (!window.confirm(`Delete the preset “${p.name}”? Stories already made with it keep their stored prompt.`)) return;
+  try {
+    const data = await fetch(`/api/prompts/${p.id}`, { method: 'DELETE' }).then(r => r.json());
+    if (!data || !data.presets) { showToast('Could not delete the preset'); return; }
+    promptLab.presets = data.presets;
+    promptLab.activeId = data.active;
+    promptLab.currentId = data.active;
+    const next = labCurrentPreset();
+    if (next) { renderLabPresetList(); fillLabForm(next); }
+    _serverConfig.story_prompt_preset = (next || {}).name || '';
+    updatePromptLabToolbarLabel();
+    showToast('Preset deleted');
+  } catch (e) { showToast('Could not delete the preset'); }
+}
+
+// Restores the template shipped in openrouter_agent._DEFAULT_TEMPLATE — not a
+// backup of the last save — so "Reset" always means "what the code ships".
+function resetPromptLabTemplate() {
+  if (!window.confirm('Replace this preset\'s prompt with the shipped default? The style and budget are kept. Save to apply.')) return;
+  document.getElementById('promptLabTemplate').value = promptLab.defaultTemplate;
+  scheduleLabRefresh();
+  showToast('Restored the shipped prompt — press Save to apply');
+}
+
+function updatePromptLabToolbarLabel() {
+  const label = document.getElementById('promptLabToolbarLabel');
+  const btn = document.getElementById('promptLabToolbarBtn');
+  const name = _serverConfig.story_prompt_preset;
+  if (!label) return;
+  label.textContent = name || 'Prompt';
+  if (btn) btn.title = `Story prompt in use: ${name || 'default'}. Click to edit.`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -3703,6 +4276,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isOpenRouter) {
             if (toolbarBtn) toolbarBtn.style.display = '';
             updateMeaningsModelButtonTitle();
+            // The story prompt presets are OpenRouter-only too. Labelled with
+            // the active preset so the prompt in use is visible from the grid.
+            const labBtn = document.getElementById('promptLabToolbarBtn');
+            if (labBtn) labBtn.style.display = '';
+            if (typeof updatePromptLabToolbarLabel === 'function') updatePromptLabToolbarLabel();
         }
         // Re-restore models now that DB config is available (handles race
         // with populateModelSelect which may have loaded before config).
@@ -3746,8 +4324,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Story Setup Modal wiring ---
-    document.getElementById('setupCloseBtn').addEventListener('click', closeStorySetupModal);
-    document.getElementById('setupCancelBtn').addEventListener('click', closeStorySetupModal);
+    document.getElementById('setupCloseBtn').addEventListener('click', closeStorySetupModal);    document.getElementById('setupCancelBtn').addEventListener('click', closeStorySetupModal);
     document.getElementById('setupGenerateBtn').addEventListener('click', setupGenerateStory);
     document.getElementById('setupChangeModelBtn').addEventListener('click', setupBackToModels);
     document.getElementById('storySetupModalOverlay').addEventListener('click', (e) => {
@@ -3757,6 +4334,38 @@ document.addEventListener('DOMContentLoaded', () => {
     setupModelInput.addEventListener('input', () => renderSetupModelList(setupModelInput.value));
     setupModelInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { closeStorySetupModal(); }
+    });
+
+    // --- Prompt Lab wiring ---
+    // The Lab is OpenRouter-only, like the model pickers: the prompt is an
+    // OpenRouter construct. It is shown from the same /api/config read that
+    // decides the meanings picker.
+    const labOverlay = document.getElementById('promptLabOverlay');
+    document.getElementById('promptLabCloseBtn').addEventListener('click', closePromptLab);
+    document.getElementById('promptLabCancelBtn').addEventListener('click', closePromptLab);
+    document.getElementById('promptLabSaveBtn').addEventListener('click', savePromptLab);
+    document.getElementById('promptLabUseBtn').addEventListener('click', usePromptLabPreset);
+    document.getElementById('promptLabCopyBtn').addEventListener('click', duplicatePromptLabPreset);
+    document.getElementById('promptLabDeleteBtn').addEventListener('click', deletePromptLabPreset);
+    document.getElementById('promptLabResetBtn').addEventListener('click', resetPromptLabTemplate);
+    document.getElementById('promptLabPreset').addEventListener('change', (e) => {
+        if (promptLab.asUsed) return;
+        loadPromptLabPreset(e.target.value);
+    });
+    ['promptLabTemplate', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
+        .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
+    // Ctrl/Cmd+S saves instead of the browser's "save page" dialog.
+    document.getElementById('promptLabTemplate').addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+            e.preventDefault();
+            if (!promptLab.asUsed) savePromptLab();
+        }
+    });
+    labOverlay.addEventListener('click', (e) => {
+        if (e.target === labOverlay) closePromptLab();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && labOverlay.classList.contains('open')) closePromptLab();
     });
 
     fetchData(currentSort, currentOrder);
