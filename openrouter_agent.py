@@ -604,14 +604,20 @@ def _count_stray_bold(content, words):
 
 
 def _detect_degeneracy(content, words):
-    """Return a list of reasons the output is unusable (empty means fine).
+    """Return a list of reasons the output looks suspect (empty means fine).
 
-    Only checks with an exact, unambiguous signal belong here, because a false
-    positive throws away a good generation and costs the user a retry. Verified
-    against every story in the local database: all of them pass. Three checks
-    were tried and removed — a per-word repetition count (it flagged the title
-    word of ordinary stories, "barn" 7x, "cucumber" 12x), a tight density cap
-    (it flagged a known-good 286-word story at 22%), and self-talk detection
+    ADVISORY ONLY. These reasons are stored on the story and shown as a warning
+    pill; nothing is discarded because of them. The function used to fail the
+    generation outright, and the docstring below explains why that history still
+    matters: every check here was tuned for precision under the assumption that a
+    false positive would cost the user a whole retry. Keep that bar when adding
+    checks — a false positive now costs a misleading pill rather than a lost
+    story, but a noisy flag trains you to ignore the pill.
+
+    Verified against every story in the local database: all of them pass. Three
+    checks were tried and removed — a per-word repetition count (it flagged the
+    title word of ordinary stories, "barn" 7x, "cucumber" 12x), a tight density
+    cap (it flagged a known-good 286-word story at 22%), and self-talk detection
     (see below). The duplicate-paragraph check already catches a redraft loop
     exactly.
 
@@ -623,9 +629,9 @@ def _detect_degeneracy(content, words):
     Do not re-add it as "cheap insurance" — the prompt rule in _build_prompt is
     what keeps the meta text out of the output in the first place.
 
-    Low coverage is deliberately NOT a failure. It is the most useful signal in
-    the health log (`used=n/total`), and a story that used few of the words is
-    still readable, so it is surfaced rather than discarded.
+    Low coverage is deliberately NOT a reason. It is the most useful signal in
+    the health log (`used=n/total`) and is surfaced as its own coverage stat,
+    which is a measurement rather than a judgement.
     """
     reasons = []
     body = _story_body(content)
@@ -1056,17 +1062,13 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             flush=True,
         )
         if degeneracy:
-            # Unusable output. Failing it lets the user retry instead of storing
-            # a story they cannot read; the word list is unchanged by a retry.
-            print(f"[story] {id_part}degenerate output: {'; '.join(degeneracy)}", file=sys.stderr, flush=True)
-            return {
-                "ok": False,
-                "error": (
-                    "Error generating story: the model's output fell apart on this "
-                    f"word list ({degeneracy[0]}). Try again, use fewer words, or "
-                    f"pick a different model."
-                ),
-            }
+            # ADVISORY ONLY. This used to fail the generation and throw the prose
+            # away, but the text was readable in every measured case -- and the
+            # tokens were already spent, so discarding bought nothing and cost the
+            # user a retry. The reasons are stored on the story and shown as a
+            # warning pill instead. The stderr line stays because the health log is
+            # how a bad run gets noticed at all.
+            print(f"[story] {id_part}flagged output: {'; '.join(degeneracy)}", file=sys.stderr, flush=True)
 
         return {
             "ok": True,
@@ -1082,6 +1084,10 @@ def sync_generate_story(words, title=None, model=None, provider_tag=None, story_
             "truncated": truncated,
             "truncated_source": truncate_source,
             "generation_id": generation_id,
+            # Advisory only -- reasons from _detect_degeneracy, empty when the run
+            # was clean. main.py stores them for display; nothing is discarded on
+            # account of them. NOT the same as 'truncated', which is a real status.
+            "warnings": degeneracy,
             # Target-word coverage. `words_used` counts a listed word as used
             # when it appears at least once, counting inflections and phrase
             # variants (_token_forms); `words_total` is the submitted list, which

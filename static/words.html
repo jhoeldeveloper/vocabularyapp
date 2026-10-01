@@ -37,6 +37,16 @@
         --warn-border:    #e0b950;
         --warn-text:      #7a5300;
 
+        /* Stat-pill tones. Amber is "deficient" (thin coverage, flagged output,
+           cut off); green is a healthy coverage grade; red is a poor one. Kept
+           to three hues so a colour always means the same kind of thing. */
+        --ok-bg:          #e3f7e8;
+        --ok-border:      #9ed0af;
+        --ok-text:        #1a6b34;
+        --poor-bg:        #fde8ea;
+        --poor-border:    #f0aeb5;
+        --poor-text:      #a01c28;
+
         --shadow-card:    rgba(0,0,0,0.07);
         --shadow-btn:     rgba(0,0,0,0.1);
         --shadow-search:  rgba(0,123,255,0.15);
@@ -65,6 +75,13 @@
         --warn-bg:        #2a2415;
         --warn-border:    #6b5520;
         --warn-text:      #e3c766;
+
+        --ok-bg:          #1b2a1e;
+        --ok-border:      #3d5c45;
+        --ok-text:        #8fd6a5;
+        --poor-bg:        #2c1a1e;
+        --poor-border:    #5c3238;
+        --poor-text:      #f0a0a8;
 
         --shadow-card:    rgba(0,0,0,0.3);
         --shadow-btn:     rgba(0,0,0,0.3);
@@ -772,6 +789,11 @@
     .story-list-item.is-truncated { border-style: dashed; border-color: var(--warn-border); }
     .story-list-item.is-truncated:hover { border-color: var(--warn-border); }
     .story-list-meta-line.is-warning { color: var(--warn-text); background: var(--warn-bg); }
+    /* Graded coverage tones (see COVERAGE_TIERS). is-good means an excellent
+       grade; is-poor is reserved for the bottom tier so it stays rare enough
+       to mean something. */
+    .story-list-meta-line.is-good { color: var(--ok-text); background: var(--ok-bg); }
+    .story-list-meta-line.is-poor { color: var(--poor-text); background: var(--poor-bg); }
     .story-card { margin-bottom: 16px; }
     .story-card .word-details { display: block; }
 
@@ -1547,7 +1569,18 @@ function storyTokenTitle(s) {
 //
 // Rows generated before the columns existed have NULL here. They are hidden
 // rather than estimated, exactly like the token columns.
-const COVERAGE_WARN_RATIO = 0.8;
+//
+// Coverage is graded, not pass/fail. Stories in this database span 32%–100%
+// coverage, so a single 80% cutoff rendered an excellent run and a mediocre one
+// identically. `min` is inclusive and the list is ordered high to low; the
+// tooltip's adjective and the pill's colour both come from the same row here,
+// which is the only way they can be kept from disagreeing.
+const COVERAGE_TIERS = [
+    { min: 0.95, cls: 'is-good',    word: 'Excellent coverage' },
+    { min: 0.80, cls: '',           word: 'Good coverage'      },
+    { min: 0.60, cls: 'is-warning', word: 'Thin coverage'      },
+    { min: 0.00, cls: 'is-poor',    word: 'Poor coverage'      },
+];
 
 // One shared formatter so the list row and the modal show identical numbers.
 function storyCoverageLabel(s) {
@@ -1563,16 +1596,29 @@ function storyCoverageRatio(s) {
     return (used != null && total) ? used / total : null;
 }
 
+function storyCoverageTier(s) {
+    const ratio = storyCoverageRatio(s);
+    if (ratio == null) return null;
+    return COVERAGE_TIERS.find(t => ratio >= t.min) || COVERAGE_TIERS[COVERAGE_TIERS.length - 1];
+}
+
+function storyCoverageClass(s) {
+    const tier = storyCoverageTier(s);
+    return tier ? tier.cls : '';
+}
+
 function storyCoverageTitle(s) {
     const ratio = storyCoverageRatio(s);
-    if (ratio == null) return '';
+    const tier = storyCoverageTier(s);
+    if (ratio == null || !tier) return '';
     const used = s.words_used.toLocaleString();
     const total = s.words_total.toLocaleString();
-    const low = ratio < COVERAGE_WARN_RATIO;
-    let out = `${used} of the ${total} target words appear at least once (${Math.round(ratio * 100)}%). `
-        + `Inflections and phrase variants count, so "ran" covers "run".`;
-    if (low) {
-        out += ' Below 80% usually means the story padded itself with prose instead of using the word list.';
+    let out = `${tier.word}: ${used} of the ${total} target words appear at least once `
+        + `(${Math.round(ratio * 100)}%). Inflections and phrase variants count, so "ran" `
+        + `covers "run", and each listed word only needs one hit.`;
+    if (tier.cls === 'is-warning' || tier.cls === 'is-poor') {
+        out += ' Below 80% usually means the story padded itself with prose instead of '
+            + 'using the word list.';
     }
     if (s.status === 'truncated') {
         out += ' This story was cut off by the token limit, so the count covers only the text that arrived.';
@@ -1583,7 +1629,13 @@ function storyCoverageTitle(s) {
 
 // Target words as a share of the prose. NOT a quality score in the usual sense:
 // a long word list is inherently dense (a known-good 286-word list measured 22%),
-// which is why the generator only rejects a story above 45% as word salad.
+// which is why the generator only flags a story above 45% as word salad.
+//
+// Mirrors openrouter_agent._MAX_DENSITY -- the number _detect_degeneracy actually
+// compares against. Held as a const so the tooltip and the colour threshold can't
+// disagree; Python remains the authority for the check itself.
+const DENSITY_WARN_RATIO = 0.45;
+
 function storyDensityLabel(s) {
     const used = s.words_used;
     const prose = s.prose_words;
@@ -1591,11 +1643,101 @@ function storyDensityLabel(s) {
     return `${Math.round((used / prose) * 100)}%`;
 }
 
+// Only the top end is coloured. Low density is the healthy case -- observed
+// stories run 6%–29% -- so tinting it would be noise, not signal.
+function storyDensityClass(s) {
+    const used = s.words_used;
+    const prose = s.prose_words;
+    if (used == null || !prose) return '';
+    return (used / prose) > DENSITY_WARN_RATIO ? 'is-warning' : '';
+}
+
 function storyDensityTitle(s) {
     const prose = s.prose_words;
     if (!prose) return '';
-    return `${s.words_used} target words out of ${prose.toLocaleString()} words of prose. `
-        + 'The generator fails a story above 45% as word salad; long word lists are naturally dense.';
+    return `${s.words_used} target words out of ${prose.toLocaleString()} words of prose `
+        + `(${Math.round((s.words_used / prose) * 100)}%). Above `
+        + `${Math.round(DENSITY_WARN_RATIO * 100)}% the story is flagged as word salad, `
+        + 'but long word lists are naturally dense, so this is advisory and the prose '
+        + 'is stored either way.';
+}
+
+// Advisory quality flag from _detect_degeneracy (server-side). The prose is
+// always stored -- nothing is discarded on account of this -- so the pill says
+// "flagged", never "failed". Deliberately a different icon from the amber
+// "cut off" triangle, which means the story really is incomplete.
+function storyWarningLabel(s) {
+    return s.warnings ? 'flagged' : '';
+}
+
+function storyWarningTitle(s) {
+    if (!s.warnings) return '';
+    return 'Saved and readable, but this run tripped a quality check: '
+        + s.warnings + '. Nothing was discarded.';
+}
+
+// Single source for the stat pills. The list row and the modal are identical
+// except for two pills: the list shows "cut off" (the modal uses the sticky
+// #storyTruncatedNote strip instead) and the modal shows the date (the list
+// renders it on the row's right). Both are options rather than forks, so the two
+// surfaces cannot drift apart.
+//
+// `add(icon, text, cls)` returns the pill so a title can be attached.
+function applyStoryPills(s, add, opts) {
+    const { showCutOff = false, showDate = true } = opts || {};
+    const chars = countStoryChars(s.content);
+    if (chars > 0) {
+        add('fa-solid fa-font', `${chars.toLocaleString()} chars`, '')
+            .title = 'Characters of stored Markdown, including the Title and Story labels.';
+    }
+    // Real token counts when the provider reported usage, an estimate otherwise
+    // (see storyTokenLabel).
+    const tokenLabel = storyTokenLabel(s);
+    if (tokenLabel) {
+        add('fa-solid fa-arrow-down-up', tokenLabel, '').title = storyTokenTitle(s);
+    }
+    // Coverage before density: it is the figure that answers "did it use my words".
+    const covLabel = storyCoverageLabel(s);
+    if (covLabel) {
+        add('fa-solid fa-list-check', covLabel, storyCoverageClass(s))
+            .title = storyCoverageTitle(s);
+    }
+    const densLabel = storyDensityLabel(s);
+    if (densLabel) {
+        add('fa-solid fa-gauge-high', densLabel, storyDensityClass(s))
+            .title = storyDensityTitle(s);
+    }
+    const warnLabel = storyWarningLabel(s);
+    if (warnLabel) {
+        add('fa-solid fa-circle-exclamation', warnLabel, 'is-warning')
+            .title = storyWarningTitle(s);
+    }
+    if (showCutOff && s.status === 'truncated') {
+        add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
+            .title = "This story hit the model's token limit, so the ending is missing.";
+    }
+    if (s.model) {
+        // The pill shows only the part after the last "/", so the tooltip
+        // carries the full provider-qualified id.
+        add('fa-solid fa-robot', s.model.replace(/^.*\//, ''), '')
+            .title = `Model: ${s.model}`;
+    }
+    if (s.cost != null) {
+        add('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free', '').title =
+            s.cost > 0
+                ? 'Cost OpenRouter reported for this generation.'
+                : 'OpenRouter reported no cost for this generation.';
+    }
+    const dur = formatDuration(s.duration_ms);
+    if (dur) {
+        add('fa-solid fa-stopwatch', dur, '')
+            .title = 'Wall-clock generation time. Not the length of the audio.';
+    }
+    const dateStr = formatDate(s.createdAt);
+    if (showDate && dateStr) {
+        add('fa-solid fa-calendar', dateStr, '')
+            .title = 'When the story was generated, not last edited.';
+    }
 }
 
 // Show or hide the modal's "cut off" notice. Hidden for everything else,
@@ -1931,30 +2073,7 @@ async function openStoryModal(id) {
       metaEl.appendChild(span);
       return span;
     };
-    const chars = countStoryChars(s.content);
-    if (chars > 0) addMeta('fa-solid fa-font', `${chars.toLocaleString()} chars`);
-    // Real token counts when the provider reported usage, an estimate otherwise
-    // (see storyTokenLabel).
-    const tokenLabel = storyTokenLabel(s);
-    if (tokenLabel) {
-      const pill = addMeta('fa-solid fa-arrow-down-up', tokenLabel);
-      if (pill) pill.title = storyTokenTitle(s);
-    }
-    // Coverage before density: it is the figure that answers "did it use my words".
-    const covRatio = storyCoverageRatio(s);
-    const covLabel = storyCoverageLabel(s);
-    if (covLabel) {
-      const cls = covRatio != null && covRatio < COVERAGE_WARN_RATIO ? 'is-warning' : '';
-      addMeta('fa-solid fa-list-check', covLabel, cls).title = storyCoverageTitle(s);
-    }
-    const densLabel = storyDensityLabel(s);
-    if (densLabel) addMeta('fa-solid fa-gauge-high', densLabel).title = storyDensityTitle(s);
-    if (s.model) addMeta('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
-    if (s.cost != null) addMeta('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
-    const dur = formatDuration(s.duration_ms);
-    if (dur) addMeta('fa-solid fa-stopwatch', dur);
-    const dateStr = formatDate(s.createdAt);
-    if (dateStr) addMeta('fa-solid fa-calendar', dateStr);
+    applyStoryPills(s, addMeta);
     if (metaEl.childElementCount) {
       metaEl.style.display = '';
     } else {
@@ -3154,7 +3273,7 @@ async function loadStories(wordId) {
       }
       titleBox.appendChild(statusLine);
     } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0
-               || s.prompt_tokens || s.completion_tokens || s.words_used != null) {
+               || s.prompt_tokens || s.completion_tokens || s.words_used != null || s.warnings) {
       const metaBox = document.createElement('span');
       metaBox.className = 'story-list-meta';
       const add = (icon, text, cls) => {
@@ -3169,29 +3288,7 @@ async function loadStories(wordId) {
         metaBox.appendChild(span);
         return span;
       };
-      const chars = countStoryChars(s.content);
-      if (chars > 0) add('fa-solid fa-font', `${chars.toLocaleString()} chars`);
-      // Same helper the modal uses, so both surfaces show the same numbers
-      // (or the same "≈ estimated" fallback).
-      const tokenLabel = storyTokenLabel(s);
-      if (tokenLabel) add('fa-solid fa-arrow-down-up', tokenLabel).title = storyTokenTitle(s);
-      // Coverage before density: it is the figure that answers "did it use my words".
-      const covRatio = storyCoverageRatio(s);
-      const covLabel = storyCoverageLabel(s);
-      if (covLabel) {
-        const cls = covRatio != null && covRatio < COVERAGE_WARN_RATIO ? 'is-warning' : '';
-        add('fa-solid fa-list-check', covLabel, cls).title = storyCoverageTitle(s);
-      }
-      const densLabel = storyDensityLabel(s);
-      if (densLabel) add('fa-solid fa-gauge-high', densLabel).title = storyDensityTitle(s);
-      if (isTruncated) {
-        add('fa-solid fa-triangle-exclamation', 'cut off', 'is-warning')
-          .title = "This story hit the model's token limit, so the ending is missing.";
-      }
-      if (s.model) add('fa-solid fa-robot', s.model.replace(/^.*\//, ''));
-      if (s.cost != null) add('fa-solid fa-coins', s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free');
-      const dur = formatDuration(s.duration_ms);
-      if (dur) add('fa-solid fa-stopwatch', dur);
+      applyStoryPills(s, add, { showCutOff: true, showDate: false });
       titleBox.appendChild(metaBox);
     }
     const right = document.createElement('span');

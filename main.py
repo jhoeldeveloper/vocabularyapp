@@ -207,6 +207,7 @@ def init_db():
         ("words_used", "INTEGER"),
         ("words_total", "INTEGER"),
         ("prose_words", "INTEGER"),
+        ("warnings", "TEXT"),
     ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
@@ -802,6 +803,11 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
         content = result["content"]
         duration_ms = int(result.get("elapsed", 0.0) * 1000)
         cost = result.get("cost", 0.0)
+        # Advisory only: display text for the warning pill, NULL when the run was
+        # clean. Deliberately NOT recomputed by update_story — these describe what
+        # the model produced, and re-running the density check on hand-edited
+        # prose would flag the user's own writing as word salad.
+        warnings = "; ".join(result.get("warnings") or []) or None
         title = _extract_title(content, title_hint)
         # A story that hit max_tokens stops mid-sentence. Publish it anyway --
         # most of it is readable -- but as 'truncated' so the UI can say so and
@@ -822,7 +828,7 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
             cursor.execute(
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
                 "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
-                "words_used = ?, words_total = ?, prose_words = ?, "
+                "words_used = ?, words_total = ?, prose_words = ?, warnings = ?, "
                 "status = ?, error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
                 (
@@ -833,6 +839,7 @@ async def generate_story_job(story_id: int, words: List[str], title_hint: Option
                     int(result.get("words_used") or 0),
                     int(result.get("words_total") or 0),
                     int(result.get("prose_words") or 0),
+                    warnings,
                     final_status,
                     story_id,
                 ),
@@ -946,7 +953,7 @@ def update_config(
 _STORY_FIELDS = (
     "id", "title", "content", "audio_path", "model", "duration_ms", "cost",
     "prompt_tokens", "completion_tokens", "reasoning_tokens",
-    "words_used", "words_total", "prose_words",
+    "words_used", "words_total", "prose_words", "warnings",
     "status", "error", "createdAt", "updatedAt",
 )
 _STORY_SELECT = ", ".join(_STORY_FIELDS)
