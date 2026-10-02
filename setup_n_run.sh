@@ -40,6 +40,14 @@ fi
 echo "📥 Ensuring Kokoro ONNX model files..."
 bash "$APP_DIR/download_models.sh"
 
+# 2c. Optional engines (Inflect Micro v2 + Pocket TTS), fetched only when asked.
+#     They are not required: the voice picker lists them as "not downloaded" and
+#     Kokoro stays the default. Run `./download_models.sh alt` by hand to try them.
+if [ "${TTS_ALT_ENGINES:-0}" = "1" ]; then
+  echo "📥 Ensuring alternative TTS engines (inflect, pocket)..."
+  bash "$APP_DIR/download_models.sh" alt
+fi
+
 # 3. Create the Python 3.12 venv only if it's missing or built with the
 #    wrong interpreter — otherwise reuse it so we don't reinstall all
 #    dependencies (torch, kokoro, ...) on every start.

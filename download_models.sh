@@ -26,8 +26,14 @@ if [ -f "$APP_DIR/.env" ]; then
   set +a
 fi
 
+# Alternative-engine sources (used by the `alt` mode below).
+INFLECT_BASE="https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main"
+POCKET_GGUF_BASE="https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/PocketTTS-GGUF/english"
+POCKET_VOICES="alba anna azelma bill_boerst caro_davy charles cosette eponine estelle eve fantine george giovanni jane javert jean juergen lola marius mary michael paul peter_yearsley rafael stuart_bell vera"
+
 MODELS_DIR="$APP_DIR/models/onnx"
 mkdir -p "$MODELS_DIR"
+
 
 VARIANT="${MODEL_VARIANT:-fp32}"
 case "$VARIANT" in
@@ -62,14 +68,64 @@ download() {
   echo "✓ saved $local_path"
 }
 
+# ---------------------------------------------------------------------------
+# Alternative engines:  ./download_models.sh alt
+#
+# Kokoro (above) stays the default and the most expressive. The other two are
+# here for speed and for voice choice; both land in models/alt/ and are picked
+# in the UI (Voice picker) or with TTS_ENGINE in .env.
+#
+#   inflect  37.7 MB ONNX  ~2x faster than Kokoro on the i5-6200U (RTF 0.28 vs
+#                          0.85), one flat voice. Apache-2.0.
+#   pocket   128 MB GGUF   26 English voices + cloning, but RTF 0.88 here --
+#                          the smallest download and the slowest of the three.
+#                          Needs the audio.cpp CPU binary, fetched here.
+#
+# Nothing here is needed to run the app: a missing engine shows up in the
+# picker with the reason instead of breaking startup.
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "alt" ]; then
+  ALT_DIR="$APP_DIR/models/alt"
+  mkdir -p "$ALT_DIR/inflect/onnx" "$ALT_DIR/pocket/embeddings"
+
+  download "$INFLECT_BASE/onnx/duration.onnx" "$ALT_DIR/inflect/onnx/duration.onnx"
+  download "$INFLECT_BASE/onnx/decode.onnx"   "$ALT_DIR/inflect/onnx/decode.onnx"
+
+  AUDIO_CPP_VER="${AUDIO_CPP_VER:-v0.9.0}"
+  if [ ! -x "$ALT_DIR/audiocpp_cli" ]; then
+    echo "↓ downloading audio.cpp $AUDIO_CPP_VER (CPU, linux x64)"
+    curl -L -o /tmp/audio.cpp.tar.gz \
+      "https://github.com/0xShug0/audio.cpp/releases/download/${AUDIO_CPP_VER}/audio-${AUDIO_CPP_VER}-bin-ubuntu-x64-cpu.tar.gz"
+    tar xzf /tmp/audio.cpp.tar.gz -C "$ALT_DIR" audiocpp_cli model_specs
+    chmod +x "$ALT_DIR/audiocpp_cli"
+    rm -f /tmp/audio.cpp.tar.gz
+  else
+    echo "✓ already present: audiocpp_cli (skipping)"
+  fi
+
+  download "$POCKET_GGUF_BASE/pocket-tts-english-q8_0.gguf" \
+           "$ALT_DIR/pocket/pocket-tts-english-q8_0.gguf"
+  for voice in $POCKET_VOICES; do
+    download "$POCKET_GGUF_BASE/embeddings/${voice}.safetensors" \
+             "$ALT_DIR/pocket/embeddings/${voice}.safetensors"
+  done
+
+  echo "Done. Alternative engines are in $ALT_DIR"
+  exit 0
+fi
+
 download "$MODEL_URL"  "$MODELS_DIR/$MODEL_FILE"
 download "$VOICES_URL" "$MODELS_DIR/voices-v1.0.bin"
 
-# If the user asked for a non-default model, point KOKORO_MODEL at it via .env
-# (so the app picks it up without further flags). Only write if not already set.
-if [ "$VARIANT" != "q8f16" ] && ! grep -q "KOKORO_MODEL" "$APP_DIR/.env" 2>/dev/null; then
-  echo "KOKORO_MODEL=$MODELS_DIR/$MODEL_FILE" >> "$APP_DIR/.env"
-  echo "→ wrote KOKORO_MODEL to .env (override; delete the line to use q8f16)"
+# Point KOKORO_MODEL at a non-default variant. fp32 needs no line at all -- the
+# app already defaults to models/onnx/model.onnx -- so nothing is written for it.
+# The value is written RELATIVE to the project: the app resolves relative model
+# paths against the project root (tts/base.py:resolve_path), not against the
+# working directory, so the checkout stays movable and an absolute path here
+# would quietly stop being true the day the folder is renamed or moved.
+if [ "$VARIANT" != "fp32" ] && ! grep -q "^KOKORO_MODEL=" "$APP_DIR/.env" 2>/dev/null; then
+  echo "KOKORO_MODEL=models/onnx/$MODEL_FILE" >> "$APP_DIR/.env"
+  echo "→ wrote KOKORO_MODEL=models/onnx/$MODEL_FILE to .env (delete the line for fp32)"
 fi
 
 echo "Done. Models are in $MODELS_DIR"

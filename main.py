@@ -11,7 +11,11 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Body, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse, FileResponse, Response
-from tts_engine import synth_wav
+from tts import configure as configure_tts  # noqa: F401 - re-exported API
+from tts import get_engine as get_tts_engine
+from tts import status as tts_status
+from tts import synth_wav, warm_up as warm_up_tts_selected
+from tts.base import EngineUnavailable
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -22,7 +26,12 @@ DATABASE_URL = "dictionary.db"
 
 # --- AI Provider Selection ---
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
-TTS_VOICE = os.getenv("TTS_VOICE", "af_heart")
+# TTS_ENGINE in the environment is a *server-side* default for deployments that
+# want to pin one engine; the picker still overrides it. There is deliberately
+# no TTS_VOICE counterpart: a voice is meaningless without its engine's voice
+# list (Kokoro `af_heart`, Pocket `alba`, Inflect one voice), so an env value
+# could only ever be right for one of them. The settings table is the single
+# source of truth for both.
 
 if AI_PROVIDER == "groq":
     from groq_agent import sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready
@@ -48,9 +57,31 @@ os.makedirs("audio", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="audio"), name="audio")
 
 
-# --- TTS model warm-up (background) ---
-# Loads the Kokoro pipeline + voice and downloads the model once, in a daemon
-# thread, so the first real TTS request isn't hit with the one-time cost.
+# --- TTS engine selection + warm-up ---
+# The engine (model) and voice live in the settings table like the model picks,
+# so the choice is shared across clients, survives a restart, and is the *only*
+# source of truth. Nothing here reads an environment voice: see the note by the
+# AI provider block.
+_TTS_ENGINE_KEY = "tts_engine"
+_TTS_VOICE_KEY = "tts_voice"
+
+
+def _restore_tts_selection():
+    """Apply the persisted engine/voice. Called once, after the settings helpers."""
+    engine = get_setting(_TTS_ENGINE_KEY) or os.getenv("TTS_ENGINE") or "kokoro"
+    voice = get_setting(_TTS_VOICE_KEY) or ""
+    try:
+        configure_tts(engine=engine, voice=voice)
+    except (KeyError, ValueError) as error:
+        print(f"[TTS] stored selection ignored: {error}", file=sys.stderr, flush=True)
+        try:
+            configure_tts(engine="kokoro")
+        except Exception as inner:  # noqa: BLE001 - never block boot on TTS
+            print(f"[TTS] default engine failed: {inner}", file=sys.stderr, flush=True)
+
+
+# Loads the selected model once, in a daemon thread, so the first real TTS
+# request isn't hit with the one-time cost.
 @app.on_event("startup")
 def warm_up_tts():
     # Capture the running loop so broadcast_from_sync works from worker threads.
@@ -60,13 +91,28 @@ def warm_up_tts():
         pass
 
     def _warm():
-        try:
-            synth_wav("warm up", TTS_VOICE)
-            print("[TTS] warm-up complete", file=sys.stderr, flush=True)
-        except Exception as e:
-            print(f"[TTS] warm-up skipped: {e}", file=sys.stderr, flush=True)
+        engine = get_tts_engine()
+        voice = get_setting(_TTS_VOICE_KEY) or ""
+        warm_up_tts_selected(voice=voice if _voice_belongs(voice, engine) else "")
 
     threading.Thread(target=_warm, daemon=True).start()
+
+
+def _voice_belongs(voice: str, engine) -> bool:
+    """True when `voice` is a voice of `engine` (empty is always fine).
+
+    The stored voice is global but each engine has its own list, so switching
+    from Kokoro (af_heart) to Inflect (one voice, "default") must not hand
+    Pocket a Kokoro id. Silently falling back to the engine's own default is the
+    right behaviour: the user asked to switch model, not to be told the old
+    voice is invalid.
+    """
+    if not voice:
+        return True
+    try:
+        return voice in {v.id for v in engine.voices()}
+    except Exception:  # noqa: BLE001 - a broken voice list must not block TTS
+        return False
 
 
 
@@ -256,6 +302,13 @@ def set_setting(key: str, value):
     )
     conn.commit()
     conn.close()
+
+
+# The TTS selection is restored here, not at import: it reads two settings
+# rows, and this is the first point where both the schema and the helpers
+# exist. Doing it at import time read settings from a database that had not
+# been migrated yet, which raised NameError before init_db() was reached.
+_restore_tts_selection()
 
 
 def get_story_counts():
@@ -1649,9 +1702,123 @@ async def delete_story(story_id: int):
     return {"message": message}
 
 
+@app.get("/api/tts/engines")
+def api_tts_engines():
+    """Every local TTS engine with its availability and voices.
+
+    Unavailable engines come back with a `reason` rather than being hidden:
+    an engine whose model has not been downloaded yet is a fact the picker
+    needs in order to say *why* instead of just omitting the row.
+    """
+    engine = get_tts_engine()
+    return {
+        "selected": {
+            "engine": engine.id,
+            "voice": get_setting(_TTS_VOICE_KEY) or engine.default_voice(),
+        },
+        "engines": [
+            {
+                "id": s.id,
+                "label": s.label,
+                "available": s.available,
+                "reason": s.reason,
+                "note": s.note,
+                "default_voice": s.default_voice,
+                "voices": [{"id": v.id, "label": v.label, "lang": v.lang} for v in s.voices],
+            }
+            for s in tts_status()
+        ],
+    }
+
+
+@app.post("/api/tts/selection")
+def api_tts_selection(
+    engine: Optional[str] = Body(None),
+    voice: Optional[str] = Body(None),
+):
+    """Persist the chosen engine and voice (shared across clients).
+
+    Both are validated against the engine's own voice list: a voice that does
+    not exist for the chosen engine is a 400, not a silent fallback, because
+    the alternative is audio in a voice the user did not pick and cannot see
+    the name of anywhere in the UI.
+    """
+    try:
+        selection = configure_tts(engine=engine or "", voice=voice or "")
+    except KeyError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    # The stored pair must always be coherent: switching engine without naming
+    # a voice would otherwise keep the *previous* engine's voice id, which
+    # synthesis silently ignores (see _selected_voice) while /api/tts/engines
+    # reports it as the selection. Resolving it here means the picker, the API
+    # and the audio that actually plays all name the same voice.
+    active = get_tts_engine()
+    chosen = voice or get_setting(_TTS_VOICE_KEY) or ""
+    if not _voice_belongs(chosen, active):
+        chosen = active.default_voice()
+        configure_tts(engine=active.id, voice=chosen)
+    if engine:
+        set_setting(_TTS_ENGINE_KEY, active.id)
+    set_setting(_TTS_VOICE_KEY, chosen)
+    return {"ok": True, "engine": active.id, "voice": chosen}
+
+
+def _selected_voice(engine=None) -> str:
+    """The voice to synthesize with, or '' to use the engine default."""
+    engine = engine or get_tts_engine()
+    stored = get_setting(_TTS_VOICE_KEY) or ""
+    return stored if _voice_belongs(stored, engine) else ""
+
+
+@app.post("/api/tts/sample")
+def api_tts_sample(
+    text: str = Body(..., embed=True),
+    words: int = Body(10, embed=True),
+):
+    """Synthesize a short sample: the first `words` of the text, or all of it.
+
+    Used by the "try this voice" button in two places -- the story modal and the
+    toolbar -- with different intents, which is why the count is a parameter:
+    the story modal samples that story's opening (10 words, in context), while
+    the toolbar samples a fixed reference line (`words: 0` = all of it) so two
+    voices are compared on exactly the same text. Returned as WAV bytes so the
+    browser can play it straight away without a round trip to the audio folder.
+    """
+    # words <= 0 means "no truncation". A falsy-zero folded into the default
+    # would silently cut the reference line to 10 words, which is precisely the
+    # thing the caller asked not to happen.
+    limit = max(0, int(words or 0))
+    excerpt = " ".join(str(text).split())
+    if limit:
+        excerpt = " ".join(excerpt.split()[:limit])
+    if not excerpt:
+        raise HTTPException(status_code=400, detail="no text to sample")
+    try:
+        wav = synth_wav(excerpt, _selected_voice())
+    except EngineUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return Response(
+        wav,
+        media_type="audio/wav",
+        headers={
+            # The excerpt is deterministic given (engine, voice, words), so the
+            # browser may cache it briefly and re-clicking "sample" is instant.
+            "Cache-Control": "no-store",
+            "X-TTS-Engine": get_tts_engine().id,
+            "X-TTS-Voice": _selected_voice() or get_tts_engine().default_voice(),
+        },
+    )
+
+
 @app.post("/api/tts")
 async def text_to_speech(text: str = Body(..., embed=True)):
-    wav = await run_in_threadpool(synth_wav, text, TTS_VOICE)
+    wav = await run_in_threadpool(synth_wav, text, _selected_voice())
     return Response(wav, media_type="audio/wav")
 
 
@@ -1660,7 +1827,7 @@ async def text_to_speech_save(
     text: str = Body(..., embed=True),
     story_id: Optional[int] = Body(None, embed=True),
 ):
-    """Generate audio with Kokoro and persist it.
+    """Generate audio with the selected engine and persist it.
 
     - With a `story_id`: the (heavy) generation runs in the background. The
       client gets an immediate `{"status": "generating"}` and is notified over
@@ -1672,7 +1839,7 @@ async def text_to_speech_save(
         asyncio.create_task(generate_story_audio(story_id, text))
         return {"status": "generating", "story_id": story_id}
 
-    wav = await run_in_threadpool(synth_wav, text, TTS_VOICE)
+    wav = await run_in_threadpool(synth_wav, text, _selected_voice())
     os.makedirs("audio", exist_ok=True)
     filename = f"{uuid.uuid4().hex}.wav"
     with open(os.path.join("audio", filename), "wb") as f:
@@ -1686,7 +1853,7 @@ async def generate_story_audio(story_id: int, text: str):
         def on_progress(pct: float):
             manager.broadcast_from_sync(f"story_audio_progress:{story_id}:{int(pct)}")
 
-        wav = await run_in_threadpool(synth_wav, text, TTS_VOICE, on_progress)
+        wav = await run_in_threadpool(synth_wav, text, _selected_voice(), on_progress)
 
         os.makedirs("audio", exist_ok=True)
         filename = f"{uuid.uuid4().hex}.wav"

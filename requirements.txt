@@ -13,5 +13,10 @@ uvicorn[standard]
 kokoro-onnx
 onnxruntime
 soundfile
+# Inflect-Micro-v2 engine (tts/inflect.py): its vendored frontend (Apache-2.0,
+# from owensong/Inflect-Micro-v2-ONNX) spells out numbers and transliterates
+# before eSpeak-ng phonemization.
+num2words
+Unidecode
 groq
 requests
