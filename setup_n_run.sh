@@ -40,12 +40,23 @@ fi
 echo "📥 Ensuring Kokoro ONNX model files..."
 bash "$APP_DIR/download_models.sh"
 
-# 2c. Optional engines (Inflect Micro v2 + Pocket TTS), fetched only when asked.
-#     They are not required: the voice picker lists them as "not downloaded" and
-#     Kokoro stays the default. Run `./download_models.sh alt` by hand to try them.
-if [ "${TTS_ALT_ENGINES:-0}" = "1" ]; then
+# 2c. Alternative engines (Inflect Micro v2 + Pocket TTS).
+#     Fetched by DEFAULT, and every file is skipped when it already exists, so
+#     running this on each start costs nothing after the first. Set
+#     TTS_ALT_ENGINES=0 to skip them (~360 MB) on a machine that will only ever
+#     use Kokoro.
+#
+#     The failure is deliberately NON-fatal, and that is the only reason this
+#     step is not allowed to abort setup: these engines are optional, and
+#     `set -e` plus a flaky connection would otherwise stop the app from
+#     starting at all. Whatever did not arrive is reported in the picker as
+#     "not downloaded", which is the honest version of the same message.
+if [ "${TTS_ALT_ENGINES:-1}" = "1" ]; then
   echo "📥 Ensuring alternative TTS engines (inflect, pocket)..."
-  bash "$APP_DIR/download_models.sh" alt
+  if ! bash "$APP_DIR/download_models.sh" alt; then
+    echo "   ⚠ alternative engines did not fully download; continuing with Kokoro only"
+    echo "     (finish later with: ./download_models.sh alt)"
+  fi
 fi
 
 # 3. Create the Python 3.12 venv only if it's missing or built with the
