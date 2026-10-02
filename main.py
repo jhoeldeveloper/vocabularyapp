@@ -884,7 +884,11 @@ def api_preview_story(data: StoryPreview):
         raise HTTPException(status_code=400, detail="No words provided.")
     model = data.model or "openrouter/free"
     preset = _active_preset()
-    reasoning = openrouter_agent.use_reasoning_status(model, preset.get("reasoning", "auto"))
+    # The cap rides along here so the preview reports what will actually be
+    # SENT, not what the preset stores: a non-reasoning model gets no cap at
+    # all, and saying "2000" there would imply a bound that does not exist.
+    reasoning = openrouter_agent.use_reasoning_status(
+        model, preset.get("reasoning", "auto"), preset.get("reasoning_max_tokens", 0) or 0)
 
     # Resolve the style ONCE here and pass it down. build_prompt would draw its
     # own random entry internally, which is fine for the prompt but means the
@@ -915,6 +919,9 @@ def api_preview_story(data: StoryPreview):
         "resolved_style": style,
         "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
         "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
+        # Reasoning cap, resolved the same way -- what will actually be sent,
+        # not what the preset happens to say.
+        "reasoning_max_tokens": (reasoning.get("config") or {}).get("max_tokens", 0),
         "reasoning": reasoning,
         "words_total": len(words),
         "system": messages[0]["content"],
@@ -1188,6 +1195,7 @@ class PromptPreset(BaseModel):
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
     reasoning: str = "auto"
+    reasoning_max_tokens: int = 0
     system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
@@ -1200,6 +1208,7 @@ class PresetPayload(BaseModel):
     temperature: float = openrouter_agent._STORY_TEMPERATURE
     max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
     reasoning: str = "auto"
+    reasoning_max_tokens: int = 0
     system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
@@ -1212,6 +1221,7 @@ def _default_preset():
         "temperature": openrouter_agent._STORY_TEMPERATURE,
         "max_tokens": openrouter_agent._STORY_MAX_TOKENS,
         "reasoning": "auto",
+        "reasoning_max_tokens": 0,  # 0 = no cap on reasoning tokens
         "system": openrouter_agent._DEFAULT_SYSTEM,
     }
 
@@ -1284,6 +1294,9 @@ def _resolve_prompt_recipe(words, style_override=None):
             "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
             "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
             "reasoning": preset.get("reasoning", "auto"),
+            # Reasoning-token cap. 0 = no cap, and .get with a default so a
+            # preset saved before this field existed keeps working unchanged.
+            "reasoning_max_tokens": preset.get("reasoning_max_tokens", 0) or 0,
             "system": preset.get("system"),
         },
     }
@@ -1323,6 +1336,9 @@ def api_save_preset(payload: PresetPayload):
 
     temperature = max(0.0, min(2.0, float(payload.temperature)))
     max_tokens = max(1000, min(32000, int(payload.max_tokens)))
+    # Reasoning cap, clamped like the budget. 0 means "no cap", so it is allowed
+    # at the bottom of the range rather than the budget's 1000 floor.
+    reasoning_max_tokens = max(0, min(100000, int(payload.reasoning_max_tokens or 0)))
     reasoning = payload.reasoning if (payload.reasoning in openrouter_agent.REASONING_MODES
                                       or payload.reasoning in openrouter_agent.EFFORT_ORDER) else "auto"
 
@@ -1335,6 +1351,7 @@ def api_save_preset(payload: PresetPayload):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "reasoning": reasoning,
+        "reasoning_max_tokens": reasoning_max_tokens,
         "system": payload.system,
     }
     existing = next((p for p in state["presets"] if p.get("id") == preset["id"]), None)

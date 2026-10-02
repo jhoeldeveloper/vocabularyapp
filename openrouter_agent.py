@@ -206,11 +206,19 @@ def _resolve_effort(requested, supported):
 
 
 
-def _get_reasoning_config(model_id: str, mode: str = "auto"):
+def _get_reasoning_config(model_id: str, mode: str = "auto", max_tokens: int = None):
     """Return the reasoning config dict for a model, or None if not a reasoning model.
 
     mode is "auto", "off", "minimal", or an effort level ("low", "medium", ...).
     Anything else falls back to "auto".
+
+    `max_tokens` is an optional CAP on reasoning tokens, the counterpart to the
+    story's output budget: OpenRouter takes `reasoning: {max_tokens: N}` and the
+    model stops thinking when it reaches N and produces its answer. 0/None means
+    no cap. It is merged into whichever branch returns below rather than built
+    here, so every branch honours it. Caveat worth keeping in mind: the model
+    catalogue does not advertise support for this sub-field, so a provider may
+    ignore it -- which is why the health line still reports reason/vis.
     - No reasoning field -> non-reasoning model, return None
     - mandatory=False -> disable reasoning (effort: "none")
     - mandatory=True -> can't disable, use lowest supported effort
@@ -235,39 +243,59 @@ def _get_reasoning_config(model_id: str, mode: str = "auto"):
     if model_id in ("openrouter/free", "openrouter/auto"):
         # Meta-routers pick a backend for you, so there is nothing meaningful to
         # hold on or off; reasoning stays off whatever was asked.
-        return {"effort": "none", "exclude": True}
+        return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
 
     if model is None:
         # Unknown model (custom id, catalogue fetch failed). "off" is still
         # worth sending: a provider that honours it will use it. An explicit
         # effort goes out as requested -- there is nothing to clamp it to.
         if mode == "off":
-            return {"effort": "none", "exclude": True}
-        return {"effort": mode, "exclude": True} if mode in EFFORT_ORDER else None
+            return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
+        return _with_reason_cap({"effort": mode, "exclude": True}, max_tokens) if mode in EFFORT_ORDER else None
 
     reasoning = model.get("reasoning")
     if not reasoning:
         # Not a reasoning model. Sending "off" would be noise, and "minimal"
-        # has nothing to minimise.
+        # has nothing to minimise. A cap is not sent either: there is nothing
+        # reasoning to cap, and sending it would imply there is.
         return None
 
     efforts = reasoning.get("supported_efforts") or ["low"]
     mandatory = bool(reasoning.get("mandatory", False))
 
     if mode == "off" and not mandatory:
-        return {"effort": "none", "exclude": True}
+        return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
     if mode == "minimal":
         lowest, _ = _resolve_effort("minimal", efforts)
-        return {"effort": lowest or efforts[-1], "exclude": True}
+        return _with_reason_cap({"effort": lowest or efforts[-1], "exclude": True}, max_tokens)
     if mode not in REASONING_MODES:
         # An explicit effort level. Clamped to what this model supports.
         effort, _ = _resolve_effort(mode, efforts)
-        return {"effort": effort, "exclude": True}
+        return _with_reason_cap({"effort": effort, "exclude": True}, max_tokens)
     # mandatory: cannot be turned off, so ask for the cheapest thing available.
     if mandatory:
         lowest, _ = _resolve_effort("minimal", efforts)
-        return {"effort": lowest or efforts[-1], "exclude": True}
-    return {"effort": "none", "exclude": True}
+        return _with_reason_cap({"effort": lowest or efforts[-1], "exclude": True}, max_tokens)
+    return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
+
+
+def _with_reason_cap(config, max_tokens):
+    """Attach a reasoning-token cap to a reasoning config.
+
+    Every branch of _get_reasoning_config() returns through here, so the cap can
+    never be applied in one mode and silently dropped in another -- which is the
+    same class of bug as a gen_kwargs key with no matching parameter: it fails
+    at request time, on one path only.
+    """
+    if not config:
+        return config
+    try:
+        cap = int(max_tokens or 0)
+    except (TypeError, ValueError):
+        return config
+    if cap > 0:
+        config["max_tokens"] = cap
+    return config
 
 
 def _reasoning_model(model_id: str):
@@ -276,11 +304,11 @@ def _reasoning_model(model_id: str):
     return next((m for m in models if m["id"] == model_id), None)
 
 
-def use_reasoning_status(model_id: str, mode: str = "auto"):
+def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = None):
     """What will actually be sent for (model, mode), plus a note when the
     request cannot be honoured. Used by the pre-generation preview, which must
     not claim reasoning is off when the model will think anyway."""
-    config = _get_reasoning_config(model_id, mode)
+    config = _get_reasoning_config(model_id, mode, max_tokens)
     note = ""
     # Whether the note is a limitation the user should SEE, or just reference
     # detail. "This model does not reason, so nothing is sent" is information;
@@ -339,11 +367,20 @@ def use_reasoning_status(model_id: str, mode: str = "auto"):
 
 
 def _reason_cfg_label(reasoning_config) -> str:
-    """Compact label for request logs: none / low / not-set."""
+    """Compact label for request logs: none / low / not-set, plus the cap.
+
+    The cap is in the label rather than a separate line because the two are one
+    decision: "low (cap 2000)" says what a run actually allowed, where "low"
+    alone would read as unlimited right next to a `reason/vis=12.1`.
+    """
     if not reasoning_config:
         return "not-set"
     effort = reasoning_config.get("effort")
-    return effort if effort else "on"
+    label = effort if effort else "on"
+    cap = reasoning_config.get("max_tokens")
+    if cap:
+        label += f" (cap {cap})"
+    return label
 
 
 def _fetch_models(force=False):
@@ -655,69 +692,21 @@ def build_messages(words, template=None, style=None, system=None):
 # prompt -- a warning the user ignores still produces a story.
 # ---------------------------------------------------------------------------
 
-# Any self-verification instruction. This is the expensive one: telling a
-# reasoning model to check its own work was measured at 405s / 26,518 reasoning
-# tokens for a 286-word story, versus 68s for the same model and length without
-# the sentence. So it is a warning, not a rule we enforce.
+# NOTE: the self-check findings ("this asks the model to check its own work")
+# were removed deliberately, together with the detector above them. The user can
+# now bound the damage instead -- reasoning.max_tokens caps how long a reasoning
+# model may think (see _with_reason_cap) -- which is the lever that actually
+# holds. The warning was never a gate, only advice, and it fired on honest
+# writing instructions ("Then verify that:" in a system message) as readily as on
+# the 405s case it was written for.
 #
-# There are three patterns rather than one combined regex, so each can be added
-# and its coverage measured on its own. Probing 18 paraphrases of the same
-# instruction: the keyword list alone caught 11 and missed 7, and every addition
-# since has been driven by a specific miss. Keep the probe set in this project's
-# history -- a check nobody measures is a check that quietly stops working.
-_SELF_CHECK_RE = re.compile(
-    r"\b(verify|verif\w+|double[- ]check|make sure (you|that) (use|every|all)|"
-    r"ensure (you|that|every|all)|check (that|your|each|every|off)|"
-    r"count (the |your |which )?(words|list)|confirm (you|that|every|all))\b",
-    re.IGNORECASE,
-)
-
-# Match the SHAPE as well as the keyword, so a paraphrase cannot silence the
-# warning: "silently verify that every word appears" became "silently review
-# that every word appears" in a single edit, which costs nothing and keeps the
-# 405s behaviour. A checking verb aimed at the work, plus the "fix it silently"
-# tell that no honest writing prompt contains. Narrow enough to leave ordinary
-# prose alone ("she reviewed the contract" is not a check).
-_SELF_CHECK_SHAPE_RE = re.compile(
-    r"\b(review|proofread|go through)\s+(that|your|each|every|the)\b"
-    r"|\bfix\s+(any|it|them|your|the)\b[^.]{0,40}\bsilently\b",
-    re.IGNORECASE,
-)
-
-# The measured second pass. Every alternative here is one of the seven misses:
-# "make sure each word", "make sure you have used every word", "ensure each
-# listed word", "before answering, confirm the list", "do a final pass",
-# "be sure every word". The sub-unit is always a check TARGET (a word, the
-# list), so ordinary prose still cannot match -- 0 false positives on the probe.
-_SELF_CHECK_GAP_RE = re.compile(
-    r"\b(make sure|be sure)\s+(each|you have|you|all|every)\b"
-    r"|\bensure\s+(each|all|every)\b"
-    r"|\bconfirm\s+(the|your|it|that)\b"
-    r"|\bfinal pass\b",
-    re.IGNORECASE,
-)
-
-_SELF_CHECK_PATTERNS = (_SELF_CHECK_RE, _SELF_CHECK_SHAPE_RE, _SELF_CHECK_GAP_RE)
+# The measurement is kept here because it is the reason the cap exists and the
+# reason reason/vis stays in the health log: telling a reasoning model to check
+# its own output cost 405s and 26,518 reasoning tokens for a 286-word story,
+# against 68s for the same model without it. `_where()` and the pattern set
+# below remain for the findings that are still reported (length_target).
 
 
-def _self_check_hit(text):
-    """The match asking the model to check its own output, whichever way it is
-    phrased, or None. One entry point so the template and system checks cannot
-    drift apart. Deliberately incomplete -- see the note on the patterns about
-    what a text check can never cover."""
-    for rx in _SELF_CHECK_PATTERNS:
-        hit = rx.search(text)
-        if hit:
-            return hit
-    return None
-
-
-# A target length for the story. The prompt sets none on purpose (max_tokens is
-# the only bound), and a length target in the prompt is what pushes a model to
-# race through the word list. Limits on a SUB-unit are a different rule and are
-# fine, so a match on a line that names a sub-unit is not counted.
-# That carve-out is not cosmetic: without it the shipped default warns on itself
-# twice over -- "sentences (under 25 words)" and "a title of at most 8 words".
 _LENGTH_RE = re.compile(
     r"\b(\d{2,5}\s*[-–]?\s*words?\b|under \d+|at least \d+ words|"
     r"no more than \d+ words|at most \d+ words|around \d+ words|about \d+ words|"
@@ -833,59 +822,39 @@ def validate_prompt(template, system=None):
                     + " and ".join(f'"{m}"' for m in missing)
                     + " label(s). Without them the title cannot be read back and "
                       "the labels would end up in the spoken text.")
-            system_hit = _self_check_hit(str(system))
-            if system_hit:
-                add("warning", "self_check_system",
-                    "The system message asks the model to check its own work. See "
-                    "the note in the prompt about what that costs on a reasoning "
-                    "model. -- " + _where(str(system), system_hit))
 
-    if empty_user:
-        add("warning", "empty_user",
-            "The user message is empty. That is allowed: the request will "
-            "be the style line and the word list and nothing else, so the "
-            "system message above is the only thing shaping the story. "
-            "Type here to add rules.")
-    else:
-        # No placeholder checks, and deliberately no brace check either:
-        # the template is sent verbatim, so "{" carries no meaning and a
-        # prompt that mentions JSON or a set literal must not be refused
-        # for being unbalanced.
-        # No placeholder checks, and deliberately no brace check either: the template
-        # is sent verbatim, so "{" carries no meaning and a prompt that mentions
-        # JSON or a set literal must not be refused for being unbalanced.
-        self_hit = _self_check_hit(text)
-        if self_hit:
-            add("warning", "self_check",
-                "This asks the model to check its own work. On a reasoning model that "
-                "was measured at 405s and 26,518 reasoning tokens for a 286-word story, "
-                "against 68s without it. Say nothing about checking instead. -- "
-                + _where(text, self_hit))
+    # No placeholder checks, and deliberately no brace check either:
+    # the template is sent verbatim, so "{" carries no meaning and a
+    # prompt that mentions JSON or a set literal must not be refused
+    # for being unbalanced.
+    # No placeholder checks, and deliberately no brace check either: the template
+    # is sent verbatim, so "{" carries no meaning and a prompt that mentions
+    # JSON or a set literal must not be refused for being unbalanced.
 
-        length_hit = _story_length_hit(text)
-        if length_hit is not None:
-            add("warning", "length_target",
-                "This sets a target length. The prompt deliberately sets none, and a "
-                "length target tends to make the model rush the word list. max_tokens "
-                "is the output budget and is set separately. -- "
-                + _where(text, length_hit))
+    length_hit = _story_length_hit(text)
+    if length_hit is not None:
+        add("warning", "length_target",
+            "This sets a target length. The prompt deliberately sets none, and a "
+            "length target tends to make the model rush the word list. max_tokens "
+            "is the output budget and is set separately. -- "
+            + _where(text, length_hit))
 
-        if _NUMBERED_RE.search(text):
-            add("warning", "numbered_list",
-                "Do not ask for a numbered list. It was measured leaking into the "
-                "prose as '**scavenge** 1' and making the model work through the list "
-                "in order. The word list is rendered for you, un-numbered.")
+    if _NUMBERED_RE.search(text):
+        add("warning", "numbered_list",
+            "Do not ask for a numbered list. It was measured leaking into the "
+            "prose as '**scavenge** 1' and making the model work through the list "
+            "in order. The word list is rendered for you, un-numbered.")
 
-        if "Title:" in text or "Story:" in text:
-            add("warning", "output_shape",
-                "The output shape (the 'Title:' and 'Story:' labels) is set by the "
-                "system message and cannot be changed here. Repeating it in the "
-                "prompt tends to produce a preamble.")
+    if "Title:" in text or "Story:" in text:
+        add("warning", "output_shape",
+            "The output shape (the 'Title:' and 'Story:' labels) is set by the "
+            "system message and cannot be changed here. Repeating it in the "
+            "prompt tends to produce a preamble.")
 
-        if "bold" not in text.lower():
-            add("info", "no_bolding_rule",
-                "No bolding rule. The model will probably bold nothing, so the "
-                "highlighted vocabulary in the story will be lost.")
+    if "bold" not in text.lower():
+        add("info", "no_bolding_rule",
+            "No bolding rule. The model will probably bold nothing, so the "
+            "highlighted vocabulary in the story will be lost.")
 
     return findings
 
@@ -1343,13 +1312,15 @@ def _read_story_stream(response, started, model, story_id, on_delta):
 
 def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
                         on_delta=None, template=None, style=None, system=None,
-                        temperature=None, max_tokens=None, reasoning=None):
+                        temperature=None, max_tokens=None, reasoning=None,
+                        reasoning_max_tokens=None):
     """Generate one story.
 
-    template/system/style/temperature/max_tokens/reasoning override the shipped
-    prompt and request defaults. They are passed in explicitly (rather than read from the
-    settings table here) so the exact prompt used is fixed when the story row
-    is created and cannot shift under a generation already in flight.
+    template/system/style/temperature/max_tokens/reasoning/reasoning_max_tokens
+    override the shipped prompt and request defaults. They are passed in
+    explicitly (rather than read from the settings table here) so the exact
+    prompt used is fixed when the story row is created and cannot shift under
+    a generation already in flight.
     """
     if not OPENROUTER_API_KEY:
         return {"ok": False, "error": "OpenRouter API key not set. Add OPENROUTER_API_KEY to your .env file."}
@@ -1384,9 +1355,10 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         "messages": build_messages(words, template=template, style=style,
                                    system=system),
         "temperature": temperature,
-        # Output budget. It is the only length bound: the prompt deliberately
-        # sets no target length. A story cut off here is still published, as
-        # status 'truncated' (see _STORY_MIN_VISIBLE_TOKENS).
+        # Output budget for the STORY. It is the only length bound on prose: the
+        # prompt deliberately sets no target length. A story cut off here is
+        # still published, as status 'truncated' (see _STORY_MIN_VISIBLE_TOKENS).
+        # It does NOT bound reasoning -- that is reasoning.max_tokens below.
         "max_tokens": max_tokens,
         # Stream so the request can be cancelled mid-generation and the UI can
         # render the story as it arrives. include_usage keeps the token/cost
@@ -1407,7 +1379,7 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
 
     # Reasoning config: derived from the model catalogue, or from the preset's
     # preference. `reasoning` is only a request -- see use_reasoning_status().
-    reasoning_config = _get_reasoning_config(model, reasoning)
+    reasoning_config = _get_reasoning_config(model, reasoning, reasoning_max_tokens)
     if reasoning_config:
         payload["reasoning"] = reasoning_config
 

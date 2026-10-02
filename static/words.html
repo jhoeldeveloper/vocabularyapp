@@ -1473,6 +1473,13 @@
                         catalogue: reasoning off when it can be, cheapest effort when it cannot.</div>
                 </div>
                 <div class="prompt-lab-field">
+                    <label for="promptLabReasonMaxTokens">Reasoning cap (max tokens)</label>
+                    <input type="number" id="promptLabReasonMaxTokens" min="0" max="100000" step="250" placeholder="0 = no cap">
+                    <div class="prompt-lab-hint">0 means no cap. A reasoning model that reaches it stops
+                        thinking and answers. This is the only bound on reasoning &mdash; the output budget
+                        below bounds the <em>story</em> and does not touch it. Some providers ignore it.</div>
+                </div>
+                <div class="prompt-lab-field">
                     <label for="promptLabMaxTokens">Output budget (max tokens)</label>
                     <input type="number" id="promptLabMaxTokens" min="1000" max="32000" step="500">
                     <div class="prompt-lab-hint" id="promptLabBudgetHint">The only length bound. It does <em>not</em> bound
@@ -4522,6 +4529,10 @@ function labPayload() {
     style: document.getElementById('promptLabStyle').value,
     temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
     max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+    // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
+    // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
+    // "field left blank" and send nothing, which is the opposite of the point.
+    reasoning_max_tokens: parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0,
     reasoning: document.getElementById('promptLabReasoning').value,
     system: document.getElementById('promptLabSystem').value,
   };
@@ -4725,6 +4736,9 @@ function fillLabForm(preset) {
   document.getElementById('promptLabSystem').value = preset.system || promptLab.defaultSystem || '';
   document.getElementById('promptLabTemp').value = preset.temperature != null ? preset.temperature : 0.7;
   document.getElementById('promptLabMaxTokens').value = preset.max_tokens != null ? preset.max_tokens : 20000;
+  // Presets saved before the cap existed have no such key; show 0, which is what
+  // the server treats them as, rather than blank (which reads as unset).
+  document.getElementById('promptLabReasonMaxTokens').value = preset.reasoning_max_tokens || 0;
   renderLabReasoningOptions();
   document.getElementById('promptLabReasoning').value = preset.reasoning || 'auto';
   updateLabReasoningHint();
@@ -4742,7 +4756,7 @@ function setLabReadonly(on) {
   // note): the stored snapshot is the only thing to show.
   modal.classList.toggle('is-asused', !!promptLab.asUsed);
   modal.classList.toggle('is-readonly', on);
-  ['promptLabName', 'promptLabTemplate', 'promptLabSystem', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabStyle', 'promptLabReasoning']
+  ['promptLabName', 'promptLabTemplate', 'promptLabSystem', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabReasonMaxTokens', 'promptLabStyle', 'promptLabReasoning']
     .forEach(id => document.getElementById(id).disabled = on);
   document.getElementById('promptLabSaveBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
@@ -4869,6 +4883,10 @@ async function duplicatePromptLabPreset() {
         style: document.getElementById('promptLabStyle').value,
         temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
         max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
+    // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
+    // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
+    // "field left blank" and send nothing, which is the opposite of the point.
+    reasoning_max_tokens: parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0,
         reasoning: document.getElementById('promptLabReasoning').value || 'auto',
         system: document.getElementById('promptLabSystem').value,
       }),
@@ -4986,6 +5004,11 @@ function fillGenPreview(cfgBox, body, d, noteId) {
     ['Style', d.resolved_style || d.style],
     ['Temperature', String(d.temperature)],
     ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
+    // The cap is shown even when it is 0, because "no cap" is a decision the
+    // user made rather than a missing value: on a reasoning model an uncapped
+    // run is the one that costs 400s.
+    ['Reasoning cap', d.reasoning_max_tokens
+      ? `${Number(d.reasoning_max_tokens).toLocaleString()} tokens` : 'none (unbounded)'],
     ['Words', String(d.words_total)],
     // Asked vs. effective, so a request the provider will ignore is visible
     // rather than assumed.
@@ -5429,7 +5452,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (promptLab.asUsed) return;
         loadPromptLabPreset(e.target.value);
     });
-    ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens']
+    ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabReasonMaxTokens']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
     document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
     document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
