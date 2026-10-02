@@ -521,7 +521,11 @@
 
     /* Meaning-voice modal: a card, because a modal this size with two selects
        floating in whitespace reads as unfinished. */
-    .tts-voice-modal { width: 520px; }
+    /* The generic .modal is a fixed 88vh because it holds a scrolling body.
+       This one holds three rows of controls, so it sizes to its content and
+       only caps at the viewport -- otherwise "Done" sat at the top of a
+       near-empty 88vh box with two thirds of dead space under it. */
+    .tts-voice-modal { width: 520px; height: auto; max-height: 88vh; }
     .tts-hdr-icon { color: var(--color-primary); margin-right: 6px; }
     .tts-voice-body {
         padding: 16px 20px 4px 20px;
@@ -601,10 +605,13 @@
         font-size: 0.85em;
     }
     .tts-actions-right .tts-note { max-width: 190px; }
-    /* Icon-only button: a square, so a row of them aligns with the text ones. */
+    /* Icon-only button. The vertical padding is KEPT and only the horizontal is
+       removed: `padding: 0` also removed the height contribution, so these
+       rendered ~16px shorter than the text buttons beside them and the row read
+       as misaligned. Width is fixed so a row of them still lines up. */
     .tts-icon-btn {
-        width: 34px;
-        padding: 0;
+        width: 36px;
+        padding: 8px 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -1274,7 +1281,7 @@
              together -- they were on separate rows and read as unrelated. -->
         <div class="modal-actions tts-story-actions">
             <div class="tts-actions-left">
-                <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Read Aloud"><i class="fa-solid fa-volume-high"></i> Read Aloud</button>
+                <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Generate audio"><i class="fa-solid fa-volume-high"></i> Generate audio</button>
                 <button id="storyModalRegenBtn" class="sort-btn tts-icon-btn" style="display:none;"
                         title="Generate this story's audio again (deletes the current file)">
                     <i class="fa-solid fa-rotate"></i>
@@ -2574,12 +2581,17 @@ function openGeneratingStoryModal(id, s) {
 function setReadAloudEnabled(enabled) {
   const rb = document.getElementById('storyModalReadBtn');
   if (!rb) return;
-  rb.style.display = enabled ? '' : 'none';
+  // Records the permission only. Whether the button is *shown* is decided by
+  // renderStoryAudioRow, which also knows whether audio already exists -- doing
+  // both here made the two overwrite each other and the button reappeared on a
+  // story that already had audio.
+  readAloudAllowed = enabled;
   rb.disabled = !enabled;
   // The inline voice selector goes with it: sampling needs the text too, and
   // a half-usable action row during a stream reads as a bug.
   const picker = document.querySelector('#storyModalOverlay .tts-actions-right');
   if (picker) picker.style.display = enabled ? '' : 'none';
+  renderStoryAudioRow();
 }
 
 // --- Story audio row ---------------------------------------------------------
@@ -2594,21 +2606,27 @@ function setReadAloudEnabled(enabled) {
 // produced it, and the voice selector sat on a row of its own where it read as
 // unrelated to either.
 let storyHasAudio = false;
+// Whether the story is in a state where audio can be generated at all (i.e. it
+// finished generating). Combined with storyHasAudio by renderStoryAudioRow.
+let readAloudAllowed = false;
 // The saved narration attached to the open story's player. Kept apart from
 // `currentAudio` (whatever is actually sounding right now) so opening a second
 // story can stop the first one's audio without losing its position in the row.
 let currentStoryAudio = null;
 
 function renderStoryAudioRow() {
-  const readBtn = document.getElementById('storyModalReadBtn');
+  const genBtn = document.getElementById('storyModalReadBtn');
   const regenBtn = document.getElementById('storyModalRegenBtn');
   const dropBtn = document.getElementById('storyModalDropAudioBtn');
-  if (!readBtn) return;
-  // With audio present the player takes Read Aloud's place; the two icon
-  // buttons stay visible because regenerating and deleting are actions on the
-  // *file*, not on playback.
-  regenBtn.style.display = storyHasAudio ? '' : 'none';
-  dropBtn.style.display = storyHasAudio ? '' : 'none';
+  if (!genBtn) return;
+  // Two mutually exclusive states, and the row states plainly which one you are
+  // in rather than offering "Generate audio" for something that already exists:
+  //   no audio  -> Generate audio (+ the voice it will use)
+  //   audio     -> the player, plus regenerate / remove on the file itself
+  const show = readAloudAllowed && !storyHasAudio;
+  genBtn.style.display = show ? '' : 'none';
+  if (regenBtn) regenBtn.style.display = storyHasAudio ? '' : 'none';
+  if (dropBtn) dropBtn.style.display = storyHasAudio ? '' : 'none';
 }
 
 // Load the saved narration into the player without starting it.
@@ -2672,9 +2690,10 @@ async function refreshStoryAudioRow(storyId) {
 
 async function regenerateStoryAudio(storyId) {
   if (storyId == null) return;
-  const btn = document.getElementById('storyModalRegenBtn');
-  btn.classList.add('is-busy');
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+  const regenBtn = document.getElementById('storyModalRegenBtn');
+  const genBtn = document.getElementById('storyModalReadBtn');
+  regenBtn.classList.add('is-busy');
+  regenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
   try {
     const res = await fetch(`/api/stories/${storyId}`);
     const story = await res.json();
@@ -2692,10 +2711,16 @@ async function regenerateStoryAudio(storyId) {
     storyHasAudio = false;
     hideStoryPlayer();
     renderStoryAudioRow();
+    // Register the pending job so the WebSocket shows progress on the generate
+    // button and plays the result when it lands, exactly as the first
+    // generation does. Without this a regeneration looked like it had finished
+    // the moment the request returned.
+    pendingStoryAudio = { id: storyId, btn: genBtn };
+    genBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating 0%';
     showToast('Regenerating audio\u2026');
   } catch (e) {
-    btn.classList.remove('is-busy');
-    btn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    regenBtn.classList.remove('is-busy');
+    regenBtn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
     alert('Could not regenerate: ' + e.message);
   }
 }
@@ -3144,10 +3169,10 @@ function hideStoryPlayer() {
   // disappeared the moment you started using it, and regenerating meant closing
   // the modal and coming back.
   const rb = document.getElementById('storyModalReadBtn');
-  rb.style.display = '';
   rb.disabled = false;
   rb.innerHTML = rb.dataset.icon;
   if (currentStoryAudio) { currentStoryAudio.pause(); currentStoryAudio = null; }
+  renderStoryAudioRow();
   document.getElementById('storyModalSeek').value = 0;
   document.getElementById('storyModalTime').textContent = '0:00 / 0:00';
 }
