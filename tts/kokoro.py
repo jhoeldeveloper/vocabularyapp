@@ -48,7 +48,7 @@ import numpy as np
 import onnxruntime as rt
 from kokoro_onnx import Kokoro
 
-from .base import Engine, Voice, resolve_path
+from .base import Engine, Voice, chunk_text, resolve_path
 
 # ---------------------------------------------------------------------------
 # Configuration (all overridable via environment for easy A/B testing)
@@ -103,16 +103,15 @@ ONNX_PROVIDER = os.getenv("ONNX_PROVIDER", "CPUExecutionProvider")
 ORT_INTRA_OP_NUM_THREADS = int(os.getenv("KOKORO_INTRA_OP_THREADS", "2"))
 ORT_INTER_OP_NUM_THREADS = int(os.getenv("KOKORO_INTER_OP_THREADS", "1"))
 
-# How many `kokoro.create()` calls one synthesis is split into. Each call
-# costs a fixed ~0.6s on top of the per-phoneme work, so a story split into 30
-# paragraphs pays 18s of pure call overhead; the library already batches
-# internally (510 phonemes per inference) and inserts the sentence pauses, so
-# handing it several paragraphs at once is strictly less work. Measured on the
-# i5-6200U, 6 paragraphs of ~90 words: 6 calls 24.8s / 45.1s cpu, 2 calls
-# 23.2s / 42.3s cpu, 1 call 23.6s / 42.7s cpu. Fewer calls than ~4 buys
-# nothing more, and each call is a progress tick the UI can show, so the
-# default trades the last few percent of CPU for a progress bar that moves.
-KOKORO_PROGRESS_STEPS = int(os.getenv("KOKORO_PROGRESS_STEPS", "4"))
+# How many `kokoro.create()` calls one synthesis is split into, and therefore
+# how often the progress bar moves. Each call costs a fixed ~0.6s on top of the
+# per-phoneme work, so this looks like it should be kept low -- but the library
+# batches internally (510 phonemes per inference) and inserts the sentence
+# pauses, so grouping text is strictly *less* work than feeding it paragraph by
+# paragraph. Measured on the i5-6200U, 6 paragraphs of ~90 words: 6 calls
+# 24.8s / 45.1s cpu, 4 calls 25.1s / 45.5s cpu, 8 and 12 calls the same wall
+# time with 5 ticks instead of 3. Flat, so the default buys progress for free.
+KOKORO_PROGRESS_STEPS = int(os.getenv("KOKORO_PROGRESS_STEPS", "8"))
 
 SAMPLE_RATE = 24000
 
@@ -194,41 +193,6 @@ def _lang_for_voice(voice: str) -> str:
     return _LANG_BY_VOICE_PREFIX.get(prefix, "en-us")
 
 
-def _split_paragraphs(text: str) -> list[str]:
-    """Split on blank lines only (safe: never breaks a sentence mid-word)."""
-    parts = [p.strip() for p in text.split("\n") if p.strip()]
-    return parts or [text]
-
-
-def _chunk_paragraphs(paragraphs: list[str], steps: int) -> list[list[str]]:
-    """Group paragraphs into about `steps` chunks of roughly equal length.
-
-    Balanced by characters rather than by count, so a story whose first
-    paragraph is three times the length of the rest does not finish half its
-    work in the first tick. Only whole paragraphs are ever grouped: the
-    progress percentage is computed from paragraph characters, so a chunk that
-    did not exist in the input would make the reported position a lie.
-    """
-    if steps <= 1 or len(paragraphs) <= 1:
-        return [paragraphs]
-    total = sum(len(p) for p in paragraphs)
-    chunks: list[list[str]] = []
-    current: list[str] = []
-    acc = 0
-    for para in paragraphs:
-        current.append(para)
-        acc += len(para)
-        # Close the chunk once it has carried its share of the text, but only
-        # while there are enough paragraphs left to fill the remaining steps.
-        wanted = (len(chunks) + 1) / steps
-        if len(chunks) < steps - 1 and acc >= total * wanted:
-            chunks.append(current)
-            current = []
-    if current:
-        chunks.append(current)
-    return chunks
-
-
 class KokoroEngine(Engine):
     id = "kokoro"
     label = "Kokoro 82M (ONNX)"
@@ -266,13 +230,20 @@ class KokoroEngine(Engine):
     def _synthesize(self, text: str, voice: str, on_progress) -> np.ndarray:
         kokoro = _ensure_kokoro()
         lang = _lang_for_voice(voice)
-        paragraphs = _split_paragraphs(text)
-        chunks = _chunk_paragraphs(paragraphs, KOKORO_PROGRESS_STEPS)
-        total_chars = max(1, sum(len(p) for p in paragraphs))
+        # Chunked by SENTENCE, not by paragraph. Paragraphs were the unit before
+        # and it looked harmless, but a generated story is very often one block
+        # of prose with no blank lines, so there was exactly one paragraph, one
+        # call, and therefore **no progress at all** until the very end on the
+        # default engine -- the one thing the progress bar exists to prevent.
+        # The paragraph structure costs nothing to drop: kokoro-onnx has no
+        # newline in its vocabulary and normalises whitespace away anyway, and
+        # it re-inserts the sentence pauses itself.
+        chunks = chunk_text(text, KOKORO_PROGRESS_STEPS)
+        total_chars = max(1, sum(len(c) for c in chunks))
 
         print(
-            f"[TTS:kokoro] Synthesizing (paras={len(paragraphs)} "
-            f"calls={len(chunks)}) voice={voice} lang={lang}",
+            f"[TTS:kokoro] Synthesizing (calls={len(chunks)}) "
+            f"voice={voice} lang={lang}",
             file=sys.stderr,
             flush=True,
         )
@@ -281,20 +252,15 @@ class KokoroEngine(Engine):
         processed_chars = 0
         start = time.time()
         for i, chunk in enumerate(chunks):
-            # One create() per chunk: it phonemizes, batches at 510 phonemes and
-            # inserts the sentence pauses for everything handed to it.
-            samples, _ = kokoro.create(
-                "\n".join(chunk), voice=voice, speed=1.0, lang=lang
-            )
+            samples, _ = kokoro.create(chunk, voice=voice, speed=1.0, lang=lang)
             segments.append(samples)
-            processed_chars += sum(len(p) for p in chunk)
+            processed_chars += len(chunk)
             pct = processed_chars / total_chars
             if on_progress:
                 on_progress(pct * 100.0)
             print(
-                f"[TTS:kokoro]   chunk {i + 1}/{len(chunks)} ready "
-                f"({len(chunk)} para) | {pct * 100:5.1f}% | "
-                f"{int(time.time() - start)}s elapsed",
+                f"[TTS:kokoro]   chunk {i + 1}/{len(chunks)} | "
+                f"{pct * 100:5.1f}% | {int(time.time() - start)}s elapsed",
                 file=sys.stderr,
                 flush=True,
             )
