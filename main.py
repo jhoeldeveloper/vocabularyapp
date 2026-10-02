@@ -11,8 +11,10 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Body, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse, FileResponse, Response
-from tts import configure as configure_tts  # noqa: F401 - re-exported API
+from tts import CONTEXTS as TTS_CONTEXTS
 from tts import get_engine as get_tts_engine
+from tts import selected as tts_selected
+from tts import set_selection as set_tts_selection
 from tts import status as tts_status
 from tts import synth_wav, warm_up as warm_up_tts_selected
 from tts.base import EngineUnavailable
@@ -62,26 +64,60 @@ app.mount("/audio", StaticFiles(directory="audio"), name="audio")
 # so the choice is shared across clients, survives a restart, and is the *only*
 # source of truth. Nothing here reads an environment voice: see the note by the
 # AI provider block.
-_TTS_ENGINE_KEY = "tts_engine"
-_TTS_VOICE_KEY = "tts_voice"
+#
+# There are TWO selections, one per context: "meanings" (the short word audio
+# behind the per-cell Listen buttons) and "stories" (a whole story narrated).
+# A word wants clarity, a story wants expressiveness, and one global pick forced
+# the wrong compromise on one of them. Keys are tts_<context>_engine /
+# tts_<context>_voice.
+_TTS_LEGACY_ENGINE_KEY = "tts_engine"
+_TTS_LEGACY_VOICE_KEY = "tts_voice"
+
+
+def _tts_engine_key(context: str) -> str:
+    return f"tts_{context}_engine"
+
+
+def _tts_voice_key(context: str) -> str:
+    return f"tts_{context}_voice"
+
+
+def _check_tts_context(context: str) -> str:
+    context = context or "stories"
+    if context not in TTS_CONTEXTS:
+        raise HTTPException(status_code=400, detail=f"Unknown TTS context {context!r}")
+    return context
 
 
 def _restore_tts_selection():
-    """Apply the persisted engine/voice. Called once, after the settings helpers."""
-    engine = get_setting(_TTS_ENGINE_KEY) or os.getenv("TTS_ENGINE") or "kokoro"
-    voice = get_setting(_TTS_VOICE_KEY) or ""
-    try:
-        configure_tts(engine=engine, voice=voice)
-    except (KeyError, ValueError) as error:
-        print(f"[TTS] stored selection ignored: {error}", file=sys.stderr, flush=True)
+    """Apply both persisted selections. Called once, after the settings helpers."""
+    # A selection made before the split lived in one global pair; seed both
+    # contexts from it rather than silently resetting the user to Kokoro on
+    # upgrade. It is left in place, not deleted: an older build reading the same
+    # database still finds what it expects.
+    legacy_engine = get_setting(_TTS_LEGACY_ENGINE_KEY) or ""
+    legacy_voice = get_setting(_TTS_LEGACY_VOICE_KEY) or ""
+    for context in TTS_CONTEXTS:
+        engine = get_setting(_tts_engine_key(context)) or legacy_engine
+        voice = get_setting(_tts_voice_key(context)) or legacy_voice
         try:
-            configure_tts(engine="kokoro")
-        except Exception as inner:  # noqa: BLE001 - never block boot on TTS
-            print(f"[TTS] default engine failed: {inner}", file=sys.stderr, flush=True)
+            selection = set_tts_selection(context, engine=engine, voice=voice)
+            # Persist what was resolved, so the split is a one-way migration:
+            # once the per-context rows exist, deleting the legacy pair (or
+            # upgrading from a build that no longer reads it) cannot silently
+            # reset both contexts back to Kokoro.
+            set_setting(_tts_engine_key(context), selection["engine"])
+            set_setting(_tts_voice_key(context), selection["voice"])
+        except Exception as error:  # noqa: BLE001 - never block boot on TTS
+            print(
+                f"[TTS:{context}] stored selection ignored: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
-# Loads the selected model once, in a daemon thread, so the first real TTS
-# request isn't hit with the one-time cost.
+# Loads each context's model once, in a daemon thread, so the first real request
+# isn't hit with the one-time cost.
 @app.on_event("startup")
 def warm_up_tts():
     # Capture the running loop so broadcast_from_sync works from worker threads.
@@ -91,9 +127,8 @@ def warm_up_tts():
         pass
 
     def _warm():
-        engine = get_tts_engine()
-        voice = get_setting(_TTS_VOICE_KEY) or ""
-        warm_up_tts_selected(voice=voice if _voice_belongs(voice, engine) else "")
+        for context in TTS_CONTEXTS:
+            warm_up_tts_selected(context=context, voice=_selected_voice(context))
 
     threading.Thread(target=_warm, daemon=True).start()
 
@@ -1703,19 +1738,17 @@ async def delete_story(story_id: int):
 
 
 @app.get("/api/tts/engines")
-def api_tts_engines():
-    """Every local TTS engine with its availability and voices.
+def api_tts_engines(context: str = Query("stories")):
+    """Every local TTS engine with its availability and voices, for one context.
 
     Unavailable engines come back with a `reason` rather than being hidden:
     an engine whose model has not been downloaded yet is a fact the picker
     needs in order to say *why* instead of just omitting the row.
     """
-    engine = get_tts_engine()
+    ctx = _check_tts_context(context)
     return {
-        "selected": {
-            "engine": engine.id,
-            "voice": get_setting(_TTS_VOICE_KEY) or engine.default_voice(),
-        },
+        "context": ctx,
+        "selected": tts_selected(ctx),
         "engines": [
             {
                 "id": s.id,
@@ -1733,49 +1766,74 @@ def api_tts_engines():
 
 @app.post("/api/tts/selection")
 def api_tts_selection(
+    context: str = Body("stories"),
     engine: Optional[str] = Body(None),
     voice: Optional[str] = Body(None),
 ):
-    """Persist the chosen engine and voice (shared across clients).
+    """Persist the chosen engine and voice for one context (shared by all clients).
 
     Both are validated against the engine's own voice list: a voice that does
-    not exist for the chosen engine is a 400, not a silent fallback, because
-    the alternative is audio in a voice the user did not pick and cannot see
-    the name of anywhere in the UI.
+    not exist for the chosen engine is a 400, not a silent fallback, because the
+    alternative is audio in a voice the user did not pick and cannot see the
+    name of anywhere in the UI.
     """
+    ctx = _check_tts_context(context)
+    # Validated here rather than left to `set_selection` (which is the forgiving
+    # startup path): a voice that does not exist is the caller's mistake, and
+    # answering 200 while quietly keeping the old one would leave the UI showing
+    # a selection the server never accepted.
+    wanted_engine = engine or ""
+    if wanted_engine:
+        try:
+            target = get_tts_engine(ctx, engine_id=wanted_engine)
+        except KeyError as bad:
+            raise HTTPException(status_code=400, detail=str(bad))
+        if voice and voice not in [v.id for v in target.voices()]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown voice {voice!r} for {target.id}; "
+                    f"have {sorted(v.id for v in target.voices())}"
+                ),
+            )
+    elif voice:
+        target = get_tts_engine(ctx)
+        if voice not in [v.id for v in target.voices()]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown voice {voice!r} for {target.id}; "
+                    f"have {sorted(v.id for v in target.voices())}"
+                ),
+            )
     try:
-        selection = configure_tts(engine=engine or "", voice=voice or "")
-    except KeyError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    # The stored pair must always be coherent: switching engine without naming
-    # a voice would otherwise keep the *previous* engine's voice id, which
-    # synthesis silently ignores (see _selected_voice) while /api/tts/engines
-    # reports it as the selection. Resolving it here means the picker, the API
-    # and the audio that actually plays all name the same voice.
-    active = get_tts_engine()
-    chosen = voice or get_setting(_TTS_VOICE_KEY) or ""
-    if not _voice_belongs(chosen, active):
-        chosen = active.default_voice()
-        configure_tts(engine=active.id, voice=chosen)
-    if engine:
-        set_setting(_TTS_ENGINE_KEY, active.id)
-    set_setting(_TTS_VOICE_KEY, chosen)
-    return {"ok": True, "engine": active.id, "voice": chosen}
+        set_tts_selection(ctx, engine=wanted_engine, voice=voice or "")
+    except KeyError as bad:
+        raise HTTPException(status_code=400, detail=str(bad))
+    # The stored pair must always be coherent: switching engine without naming a
+    # voice would otherwise keep the previous engine's voice id, which synthesis
+    # silently ignores (see _selected_voice) while /api/tts/engines reports it as
+    # the selection. Resolving it here means the picker, the API and the audio
+    # that actually plays all name the same voice.
+    selection = tts_selected(ctx)
+    set_setting(_tts_engine_key(ctx), selection["engine"])
+    set_setting(_tts_voice_key(ctx), selection["voice"])
+    return {"ok": True, "context": ctx, **selection}
 
 
-def _selected_voice(engine=None) -> str:
-    """The voice to synthesize with, or '' to use the engine default."""
-    engine = engine or get_tts_engine()
-    stored = get_setting(_TTS_VOICE_KEY) or ""
-    return stored if _voice_belongs(stored, engine) else ""
+def _selected_voice(context: str) -> str:
+    """The voice to synthesize with for a context, or '' for the engine default."""
+    stored = get_setting(_tts_voice_key(context)) or ""
+    if _voice_belongs(stored, get_tts_engine(context)):
+        return stored
+    return ""
 
 
 @app.post("/api/tts/sample")
 def api_tts_sample(
     text: str = Body(..., embed=True),
     words: int = Body(10, embed=True),
+    context: str = Body("stories"),
 ):
     """Synthesize a short sample: the first `words` of the text, or all of it.
 
@@ -1783,9 +1841,9 @@ def api_tts_sample(
     toolbar -- with different intents, which is why the count is a parameter:
     the story modal samples that story's opening (10 words, in context), while
     the toolbar samples a fixed reference line (`words: 0` = all of it) so two
-    voices are compared on exactly the same text. Returned as WAV bytes so the
-    browser can play it straight away without a round trip to the audio folder.
+    voices are compared on exactly the same text.
     """
+    ctx = _check_tts_context(context)
     # words <= 0 means "no truncation". A falsy-zero folded into the default
     # would silently cut the reference line to 10 words, which is precisely the
     # thing the caller asked not to happen.
@@ -1796,13 +1854,14 @@ def api_tts_sample(
     if not excerpt:
         raise HTTPException(status_code=400, detail="no text to sample")
     try:
-        wav = synth_wav(excerpt, _selected_voice())
+        wav = synth_wav(excerpt, _selected_voice(ctx), context=ctx)
     except EngineUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error))
     except FileNotFoundError as error:
         raise HTTPException(status_code=503, detail=str(error))
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+    selection = tts_selected(ctx)
     return Response(
         wav,
         media_type="audio/wav",
@@ -1810,36 +1869,88 @@ def api_tts_sample(
             # The excerpt is deterministic given (engine, voice, words), so the
             # browser may cache it briefly and re-clicking "sample" is instant.
             "Cache-Control": "no-store",
-            "X-TTS-Engine": get_tts_engine().id,
-            "X-TTS-Voice": _selected_voice() or get_tts_engine().default_voice(),
+            "X-TTS-Engine": selection["engine"],
+            "X-TTS-Voice": selection["voice"],
+            "X-TTS-Context": ctx,
         },
     )
 
 
 @app.post("/api/tts")
 async def text_to_speech(text: str = Body(..., embed=True)):
-    wav = await run_in_threadpool(synth_wav, text, _selected_voice())
+    """Word/meaning audio -- the per-cell Listen buttons, so the meanings voice."""
+    wav = await run_in_threadpool(synth_wav, text, _selected_voice("meanings"), context="meanings")
     return Response(wav, media_type="audio/wav")
+
+
+def _clear_story_audio(story_id: int) -> bool:
+    """Delete a story's audio file and clear the column. Returns True if there was one.
+
+    Used by both "remove audio" and "regenerate": a regenerated file must not
+    leave the old one behind, and `audio/` is otherwise append-only, so every
+    edit-then-regenerate cycle quietly grew the directory.
+    """
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    cursor.execute("SELECT audio_path FROM stories WHERE id = ?", (story_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Story not found")
+    audio_path = row[0]
+    cursor.execute(
+        "UPDATE stories SET audio_path = NULL WHERE id = ?", (story_id,)
+    )
+    conn.commit()
+    conn.close()
+    if audio_path:
+        full = os.path.join("audio", audio_path)
+        if os.path.exists(full):
+            try:
+                os.remove(full)
+            except OSError as error:
+                print(f"[TTS] could not delete {full}: {error}", file=sys.stderr, flush=True)
+    return bool(audio_path)
+
+
+@app.delete("/api/stories/{story_id}/audio")
+async def delete_story_audio(story_id: int):
+    """Remove a story's saved narration, keeping the story itself.
+
+    Separate from editing the prose because the two are independent decisions:
+    you may want to re-read an unchanged story in a new voice, or drop an audio
+    file you no longer want, without touching a single character of the text.
+    """
+    removed = await run_in_threadpool(_clear_story_audio, story_id)
+    await manager.broadcast("update_stories")
+    return {"ok": True, "removed": removed}
 
 
 @app.post("/api/tts/save")
 async def text_to_speech_save(
     text: str = Body(..., embed=True),
     story_id: Optional[int] = Body(None, embed=True),
+    force: bool = Body(False, embed=True),
 ):
-    """Generate audio with the selected engine and persist it.
+    """Generate audio with the stories engine and persist it.
 
     - With a `story_id`: the (heavy) generation runs in the background. The
       client gets an immediate `{"status": "generating"}` and is notified over
       the WebSocket (`story_audio_progress:<id>:<pct>` / `story_audio_ready:<id>`)
       when done. This prevents a multi-minute blocking HTTP request.
+    - With `force`: an existing file is discarded first, which is what the
+      "Regenerate" button means. The old file is removed rather than orphaned;
+      see `_clear_story_audio`.
     - Without a `story_id`: generates synchronously and returns the filename.
     """
     if story_id is not None:
+        if force:
+            await run_in_threadpool(_clear_story_audio, story_id)
+            await manager.broadcast("update_stories")
         asyncio.create_task(generate_story_audio(story_id, text))
         return {"status": "generating", "story_id": story_id}
 
-    wav = await run_in_threadpool(synth_wav, text, _selected_voice())
+    wav = await run_in_threadpool(synth_wav, text, _selected_voice("stories"), context="stories")
     os.makedirs("audio", exist_ok=True)
     filename = f"{uuid.uuid4().hex}.wav"
     with open(os.path.join("audio", filename), "wb") as f:
@@ -1853,7 +1964,12 @@ async def generate_story_audio(story_id: int, text: str):
         def on_progress(pct: float):
             manager.broadcast_from_sync(f"story_audio_progress:{story_id}:{int(pct)}")
 
-        wav = await run_in_threadpool(synth_wav, text, _selected_voice(), on_progress)
+        # The story narration uses the "stories" selection, which is a different
+        # row from the "meanings" one -- a word can be read by a clear voice
+        # while the story is narrated by an expressive one.
+        wav = await run_in_threadpool(
+            synth_wav, text, _selected_voice("stories"), on_progress, "stories"
+        )
 
         os.makedirs("audio", exist_ok=True)
         filename = f"{uuid.uuid4().hex}.wav"

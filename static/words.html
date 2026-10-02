@@ -500,32 +500,16 @@
         padding: 12px 16px 16px 16px;
     }
     .modal-actions .modal-left { display: flex; gap: 8px; }
-    /* Voice picker: engine -> voice -> sample, in one strip under the actions.
-       Both selects are flex-shrink:0 with a fixed basis so a long voice name is
-       truncated by the select itself rather than wrapping and making this row
-       taller than its neighbours -- the fixed-height lesson from the config
-       grid. The note is the one flexible child (flex:1, ellipsis) so it absorbs
-       the slack instead of pushing the buttons around. */
-    .tts-picker {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        height: 34px;
-        padding: 0 16px 12px 16px;
-        flex-shrink: 0;
-    }
-    .tts-field {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.85em;
-        color: var(--text-meta);
-        flex-shrink: 0;
-    }
-    .tts-field select { max-width: 190px; }
+    /* --- TTS voice controls -------------------------------------------------
+       Two placements of one component: a card in the meaning-voice modal, and
+       an inline group on the story modal's action row. Both are addressed by
+       [data-tts-root] rather than ids, so a third placement costs no JS.
+
+       The fixed-height rule from the config grid applies to the *inline* one
+       only: its row sits next to buttons that must stay on one baseline, so it
+       declares its own height and lets the selects truncate. The card has no
+       such neighbour and sizes to its content. */
     .tts-note {
-        flex: 1 1 auto;
-        min-width: 0;
         font-size: 0.8em;
         color: var(--text-meta);
         overflow: hidden;
@@ -533,17 +517,99 @@
         white-space: nowrap;
     }
     .tts-note.is-error { color: #e06c6c; }
-    .tts-picker select:disabled, .tts-picker button:disabled { opacity: 0.55; cursor: not-allowed; }
-    /* Toolbar modal: same control, stacked, so a long note wraps instead of
-       squeezing the selects. Fixed *width* (not height) here because this one
-       has nothing to align with. */
-    .tts-voice-modal { width: 560px; }
-    .tts-voice-body { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .tts-voice-hint { margin: 0; font-size: 0.85em; color: var(--text-meta); }
-    .tts-voice-body .tts-picker { height: auto; padding: 0; flex-wrap: wrap; }
-    .tts-note-block { flex: none; white-space: normal; min-height: 1.2em; }
-    .tts-voice-sample-line { font-size: 0.8em; color: var(--text-meta); }
+    select:disabled, .sort-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* Meaning-voice modal: a card, because a modal this size with two selects
+       floating in whitespace reads as unfinished. */
+    .tts-voice-modal { width: 520px; }
+    .tts-hdr-icon { color: var(--color-primary); margin-right: 6px; }
+    .tts-voice-body {
+        padding: 16px 20px 4px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+    .tts-voice-hint {
+        margin: 0;
+        font-size: 0.85em;
+        line-height: 1.5;
+        color: var(--text-meta);
+    }
+    .tts-voice-hint i { color: var(--color-primary); }
+    .tts-card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid var(--border-details);
+        border-radius: 8px;
+        background: var(--bg-secondary, transparent);
+    }
+    .tts-card-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    /* Fixed label column: the two selects then start at the same x, so the card
+       reads as a form instead of two ragged rows. */
+    .tts-card-label {
+        flex: 0 0 84px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 0.85em;
+        color: var(--text-meta);
+    }
+    .tts-card-row select { flex: 1 1 auto; min-width: 0; max-width: 280px; }
+    .tts-card .tts-note-block { white-space: normal; min-height: 1.2em; }
+    .tts-voice-sample-line {
+        font-size: 0.85em;
+        color: var(--text-meta);
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        line-height: 1.45;
+    }
     .tts-voice-sample-line span { font-style: italic; }
+    .tts-voice-sample-line i { margin-top: 3px; opacity: 0.6; }
+    .tts-voice-actions { justify-content: flex-end; padding-top: 4px; }
+    .tts-primary {
+        background: var(--color-primary);
+        color: #fff;
+        border-color: var(--color-primary);
+    }
+
+    /* Story modal: selector inline with Read Aloud. Height is fixed so this
+       row can never be pushed taller by a long voice name. */
+    .tts-story-actions {
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        min-height: 44px;
+        border-top: 1px solid var(--border-details);
+    }
+    .tts-actions-left, .tts-actions-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        min-width: 0;
+    }
+    .tts-actions-label { color: var(--color-primary); display: flex; }
+    .tts-inline-select {
+        max-width: 150px;
+        font-size: 0.85em;
+    }
+    .tts-actions-right .tts-note { max-width: 190px; }
+    /* Icon-only button: a square, so a row of them aligns with the text ones. */
+    .tts-icon-btn {
+        width: 34px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .sort-btn.tts-icon-btn.is-busy { color: var(--color-primary); }
     #storyModalBody { padding: 0; }
     .modal-header, .modal-actions { flex-shrink: 0; }
     .modal-tabs { display: flex; gap: 4px; padding: 10px 16px 0 16px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
@@ -1124,37 +1190,49 @@
     </div>
 </div>
 
-<!-- Voice picker for the Words view (toolbar). The story modal carries its own
-     copy of the same control; the two are addressed by [data-tts-root], never by
-     id, because two elements cannot share one id. No outside-click close here
-     (same rule as the model pickers): a mis-click mid-decision should not
-     discard a choice you were in the middle of making. -->
+<!-- Voice picker for the Words view (toolbar), i.e. the MEANINGS voice: the
+     short audio behind each cell's Listen button. The story modal carries its
+     own copy for the stories voice; the two are separate settings and can
+     differ. Neither is addressed by id -- two elements sharing one id is
+     invalid HTML and getElementById would only ever return the first. No
+     outside-click close here (same rule as the model pickers): a mis-click
+     mid-decision should not discard a choice you were making. -->
 <div id="ttsVoiceModalOverlay" class="modal-overlay">
     <div class="modal tts-voice-modal">
         <div class="modal-header">
-            <h3>Read-aloud voice</h3>
+            <h3><i class="fa-solid fa-headphones tts-hdr-icon"></i>Meaning voice</h3>
             <button id="closeTtsVoiceBtn" class="modal-close" title="Close">&times;</button>
         </div>
         <div class="tts-voice-body">
-            <p class="tts-voice-hint">Local, offline. The voice chosen here is used by
-                <em>Listen</em> on any meaning and by <em>Read Aloud</em> on every story.</p>
-            <div class="tts-picker" data-tts-root>
-                <label class="tts-field">Voice engine
+            <p class="tts-voice-hint">Runs locally and offline. This voice is used by the
+                <i class="fa-solid fa-volume-high"></i> buttons on meanings, sentences and
+                synonyms. Stories have their own voice, changed in the story modal.</p>
+
+            <div class="tts-card" data-tts-root data-tts-context="meanings">
+                <div class="tts-card-row">
+                    <span class="tts-card-label"><i class="fa-solid fa-microphone-lines"></i> Engine</span>
                     <select data-tts="engine" title="Local TTS model"></select>
-                </label>
-                <label class="tts-field">Voice
-                    <select data-tts="voice" title="Voice to read with"></select>
-                </label>
-                <button data-tts="sample" class="sort-btn" title="Play the same reference line in the selected voice"><i class="fa-solid fa-play"></i> Sample</button>
+                </div>
+                <div class="tts-card-row">
+                    <span class="tts-card-label"><i class="fa-solid fa-user"></i> Voice</span>
+                    <select data-tts="voice" title="Voice for word audio"></select>
+                </div>
+                <div class="tts-card-row">
+                    <span class="tts-card-label"><i class="fa-solid fa-play"></i> Sample</span>
+                    <button data-tts="sample" class="sort-btn" title="Play the reference line in this voice">
+                        <i class="fa-solid fa-play"></i> Play
+                    </button>
+                </div>
+                <div data-tts="note" class="tts-note tts-note-block"></div>
             </div>
-            <div data-tts="note" class="tts-note tts-note-block"></div>
+
             <div class="tts-voice-sample-line">
-                Sample line: <span id="ttsSamplePreview"></span>
+                <i class="fa-solid fa-quote-left"></i>
+                <span id="ttsSamplePreview"></span>
             </div>
         </div>
-        <div class="modal-actions">
-            <span></span>
-            <button id="ttsVoiceDoneBtn" class="sort-btn">Done</button>
+        <div class="modal-actions tts-voice-actions">
+            <button id="ttsVoiceDoneBtn" class="sort-btn tts-primary">Done</button>
         </div>
     </div>
 </div>
@@ -1189,6 +1267,34 @@
             </div>
             <div class="chips" id="storyModalWordsChips"></div>
         </div>
+        <!-- One row for everything audio: the player appears only when there is
+             audio to play, and it replaces Read Aloud in place rather than
+             pushing the layout down. The voice selector sits on this same line
+             (right group) so the voice and the thing it will read are visible
+             together -- they were on separate rows and read as unrelated. -->
+        <div class="modal-actions tts-story-actions">
+            <div class="tts-actions-left">
+                <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Read Aloud"><i class="fa-solid fa-volume-high"></i> Read Aloud</button>
+                <button id="storyModalRegenBtn" class="sort-btn tts-icon-btn" style="display:none;"
+                        title="Generate this story's audio again (deletes the current file)">
+                    <i class="fa-solid fa-rotate"></i>
+                </button>
+                <button id="storyModalDropAudioBtn" class="sort-btn tts-icon-btn" style="display:none;"
+                        title="Delete this story's saved audio, keeping the story">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+            <div class="tts-actions-right" data-tts-root data-tts-context="stories">
+                <span class="tts-actions-label"><i class="fa-solid fa-microphone-lines"></i></span>
+                <select data-tts="engine" class="tts-inline-select" title="TTS model for stories"></select>
+                <select data-tts="voice" class="tts-inline-select" title="Voice for stories"></select>
+                <button data-tts="sample" class="sort-btn tts-icon-btn"
+                        title="Play the first 10 words of this story in the selected voice">
+                    <i class="fa-solid fa-play"></i>
+                </button>
+                <span data-tts="note" class="tts-note"></span>
+            </div>
+        </div>
         <div class="story-player" id="storyPlayer" style="display:none;">
             <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-pause"></i></button>
             <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0">
@@ -1208,20 +1314,6 @@
             </div>
             <button id="storyModalStop" class="sort-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
         </div>
-        <div class="modal-actions">
-            <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Read Aloud"><i class="fa-solid fa-volume-high"></i> Read Aloud</button>
-        </div>
-        <div class="tts-picker" id="ttsPicker" data-tts-root style="display:none;">
-            <label class="tts-field">Voice engine
-                <select data-tts="engine" title="Local TTS model"></select>
-            </label>
-            <label class="tts-field">Voice
-                <select data-tts="voice" title="Voice for read-aloud"></select>
-            </label>
-            <button data-tts="sample" class="sort-btn" title="Play the first 10 words of this story in the selected voice"><i class="fa-solid fa-play"></i> Sample</button>
-            <span data-tts="note" class="tts-note"></span>
-        </div>
-    </div>
 </div>
 
 <div id="wordGridContainer"></div>
@@ -1520,6 +1612,11 @@ function connectWebSocket() {
                 const btn = pendingStoryAudio.btn;
                 pendingStoryAudio = null;
                 readStoryById(parseInt(sid, 10), btn);
+            } else if (parseInt(sid, 10) === currentModalStoryId) {
+                // The open modal must reflect the new file: without this the
+                // row keeps offering regenerate/delete for audio that no longer
+                // exists, and a reload is the only way to see it.
+                refreshStoryAudioRow(parseInt(sid, 10));
             }
         } else if (event.data.startsWith("story_audio_error")) {
             const sid = event.data.slice("story_audio_error:".length);
@@ -2478,51 +2575,201 @@ function setReadAloudEnabled(enabled) {
   if (!rb) return;
   rb.style.display = enabled ? '' : 'none';
   rb.disabled = !enabled;
-  // The voice picker goes with it: sampling needs the text too.
-  const picker = document.getElementById('ttsPicker');
+  // The inline voice selector goes with it: sampling needs the text too, and
+  // a half-usable action row during a stream reads as a bug.
+  const picker = document.querySelector('#storyModalOverlay .tts-actions-right');
   if (picker) picker.style.display = enabled ? '' : 'none';
+}
+
+// --- Story audio row ---------------------------------------------------------
+//
+// One row holds the three audio actions, and only the relevant ones show:
+//   no audio   -> Read Aloud (+ the voice selector, which is for the next one)
+//   audio      -> player controls + Regenerate + Delete
+//   generating -> Read Aloud with a progress label, player hidden
+//
+// The alternative -- Read Aloud above and a separate player row below -- meant
+// the two fought over the same space: playing audio hid the button that
+// produced it, and the voice selector sat on a row of its own where it read as
+// unrelated to either.
+let storyHasAudio = false;
+// The saved narration attached to the open story's player. Kept apart from
+// `currentAudio` (whatever is actually sounding right now) so opening a second
+// story can stop the first one's audio without losing its position in the row.
+let currentStoryAudio = null;
+
+function renderStoryAudioRow() {
+  const readBtn = document.getElementById('storyModalReadBtn');
+  const regenBtn = document.getElementById('storyModalRegenBtn');
+  const dropBtn = document.getElementById('storyModalDropAudioBtn');
+  if (!readBtn) return;
+  // With audio present the player takes Read Aloud's place; the two icon
+  // buttons stay visible because regenerating and deleting are actions on the
+  // *file*, not on playback.
+  regenBtn.style.display = storyHasAudio ? '' : 'none';
+  dropBtn.style.display = storyHasAudio ? '' : 'none';
+}
+
+// Load the saved narration into the player without starting it.
+//
+// The old behaviour only revealed the controls after the first play, which meant
+// a story that already had audio looked identical to one that did not -- the
+// user could not tell what existed until they clicked and waited. Now the row
+// is truthful on open: duration and seek are live, and play starts from 0.
+async function attachStoryAudio(storyId, audioPath) {
+  stopAudio();
+  storyHasAudio = !!audioPath;
+  renderStoryAudioRow();
+  if (!audioPath) { hideStoryPlayer(); return; }
+  const url = '/audio/' + audioPath;
+  const audio = new Audio(url);
+  audio.volume = parseFloat(document.getElementById('storyModalVolume').value);
+  audio.playbackRate = parseFloat(document.getElementById('storyModalSpeed').value) || 1;
+  audio.preload = 'metadata';
+  currentStoryAudio = audio;
+  showStoryPlayer();
+  const tick = () => {
+    const seek = document.getElementById('storyModalSeek');
+    const dur = audio.duration || 0;
+    seek.max = dur;
+    seek.value = audio.currentTime || 0;
+    document.getElementById('storyModalTime').textContent =
+      `${formatTime(audio.currentTime)} / ${formatTime(dur)}`;
+  };
+  audio.ontimeupdate = tick;
+  audio.onloadedmetadata = tick;
+  audio.onplay = () => {
+    document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-pause"></i>';
+  };
+  audio.onpause = () => {
+    document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-play"></i>';
+  };
+  audio.onended = () => {
+    document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-play"></i>';
+  };
+  try {
+    await audio.play();
+  } catch (e) {
+    // Autoplay can be refused before any user gesture; the controls stay
+    // usable, so this is not an error worth reporting.
+  }
+}
+
+// Re-read a story's audio_path and repaint the row, without playing.
+// Used after a background generation finishes or after an edit invalidates the
+// file: the modal is a snapshot, so nothing would otherwise tell it the audio
+// it is describing is gone.
+async function refreshStoryAudioRow(storyId) {
+  if (storyId == null) return;
+  try {
+    const res = await fetch(`/api/stories/${storyId}`);
+    if (!res.ok) return;
+    const story = await res.json();
+    await attachStoryAudio(storyId, story.audio_path);
+  } catch (e) { /* the row keeps its previous state */ }
+}
+
+async function regenerateStoryAudio(storyId) {
+  if (storyId == null) return;
+  const btn = document.getElementById('storyModalRegenBtn');
+  btn.classList.add('is-busy');
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+  try {
+    const res = await fetch(`/api/stories/${storyId}`);
+    const story = await res.json();
+    // force:true is what makes this a regenerate rather than a no-op: the
+    // server deletes the old file first instead of leaving it orphaned on disk.
+    await fetch('/api/tts/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: stripMarkdown(stripStoryLabels(story.content || '')),
+        story_id: storyId,
+        force: true
+      })
+    });
+    storyHasAudio = false;
+    hideStoryPlayer();
+    renderStoryAudioRow();
+    showToast('Regenerating audio\u2026');
+  } catch (e) {
+    btn.classList.remove('is-busy');
+    btn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    alert('Could not regenerate: ' + e.message);
+  }
+}
+
+async function dropStoryAudio(storyId) {
+  if (storyId == null) return;
+  if (!confirm('Delete this story\u2019s audio? The story text is kept, and you can generate it again at any time.')) return;
+  try {
+    const res = await fetch(`/api/stories/${storyId}/audio`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
+    storyHasAudio = false;
+    stopAudio();
+    hideStoryPlayer();
+    renderStoryAudioRow();
+    loadStories();
+  } catch (e) {
+    alert('Could not delete the audio: ' + e.message);
+  }
 }
 
 // --- TTS engine / voice picker ------------------------------------------------
 //
 // Engine and voice are stored server-side (settings table) so every client
-// agrees on which voice the stories are read in. Loaded once and cached: the
-// list is static for the life of the process, and the modal opens on every
-// story click. Unavailable engines stay in the list with their reason as the
-// option text -- hiding them would leave a user wondering where Pocket went
-// after they ran ./download_models.sh alt.
-let TTS_ENGINES = [];
-let ttsSelection = { engine: '', voice: '' };
+// agrees on which voice each context uses. There are TWO of them and they are
+// independent by design: "meanings" is a single word read aloud, where clarity
+// beats expressiveness, and "stories" is minutes of narration, where the
+// opposite holds. One global pick made one of the two the wrong choice.
+//
+// Loaded once per context: the list is static for the life of the process, and
+// the story modal opens on every story click. Unavailable engines stay in the
+// list with their reason as the option text -- hiding them would leave a user
+// wondering where Pocket went after they ran ./download_models.sh alt.
 
-async function loadTtsEngines() {
+let ttsCatalog = [];                                   // engine list, shared by both contexts
+let ttsSelection = { meanings: {}, stories: {} };      // per-context selection
+
+async function loadTtsEngines(context) {
+  // One fetch per context. The engine catalogue is identical for both, but the
+  // *selected* pair is not, and that is the part the picker must not get wrong:
+  // a shared cache would overwrite the story voice with the meaning voice the
+  // first time either modal opened, which is the exact bug the split prevents.
   try {
-    const res = await fetch('/api/tts/engines');
+    const res = await fetch(`/api/tts/engines?context=${encodeURIComponent(context)}`);
     if (!res.ok) return;
     const data = await res.json();
-    TTS_ENGINES = data.engines || [];
-    ttsSelection = data.selected || { engine: '', voice: '' };
+    ttsCatalog = data.engines || ttsCatalog;
+    ttsSelection[context] = data.selected || {};
     renderAllTtsPickers();
   } catch (e) { /* picker is optional chrome; never block the modal on it */ }
 }
 
-function currentTtsEngine() {
-  return TTS_ENGINES.find(e => e.id === ttsSelection.engine) || TTS_ENGINES[0] || null;
+function currentTtsEngine(context) {
+  const sel = ttsSelection[context] || {};
+  return ttsCatalog.find(e => e.id === sel.engine) || ttsCatalog[0] || null;
 }
 
-// The selected voice is global but each engine has its own list, so switching
-// engine can invalidate it. When that happens the engine's own default is used
-// and the new pair is saved, so the server and the UI cannot disagree about
-// which voice a later Read Aloud will use.
-function voiceForEngine(engine) {
+// A stored voice only survives if the engine still offers it. When it does not
+// -- the engine was swapped, or the voice came from the other context -- the
+// engine's own default is adopted, which is also what will actually be spoken.
+function voiceForEngine(engine, context) {
   if (!engine) return '';
-  if (engine.voices.some(v => v.id === ttsSelection.voice)) return ttsSelection.voice;
+  const sel = ttsSelection[context] || {};
+  if (engine.voices.some(v => v.id === sel.voice)) return sel.voice;
   return engine.default_voice || (engine.voices[0] && engine.voices[0].id) || '';
 }
 
-// The picker is mounted twice -- inline in the story modal, and in the toolbar
-// (Words view) modal -- so it is addressed by `data-tts` attributes inside a
-// root element rather than by id. Two instances of one id would be invalid
-// HTML and the second would silently be the only one getElementById returns.
+function ttsContextOf(root) {
+  return root.dataset.ttsContext || 'stories';
+}
+
+// The picker is mounted twice -- a card in the meaning-voice modal, and an
+// inline group on the story modal's action row -- so it is addressed by
+// `data-tts` attributes inside a root rather than by id. Two instances of one
+// id would be invalid HTML, and getElementById would only ever return the
+// first, leaving the second apparently dead.
 function ttsPickerParts(root) {
   return {
     engine: root.querySelector('[data-tts="engine"]'),
@@ -2532,12 +2779,19 @@ function ttsPickerParts(root) {
   };
 }
 
+function setTtsNote(parts, text, isError) {
+  if (!parts || !parts.note) return;
+  parts.note.textContent = text || '';
+  parts.note.classList.toggle('is-error', !!isError);
+}
+
 function renderTtsPicker(root) {
   const parts = ttsPickerParts(root);
   if (!parts.engine || !parts.voice) return;
+  const context = ttsContextOf(root);
 
   parts.engine.innerHTML = '';
-  TTS_ENGINES.forEach(e => {
+  ttsCatalog.forEach(e => {
     const opt = document.createElement('option');
     opt.value = e.id;
     opt.textContent = e.available ? e.label : `${e.label} — not downloaded`;
@@ -2545,12 +2799,12 @@ function renderTtsPicker(root) {
     opt.disabled = !e.available;
     parts.engine.appendChild(opt);
   });
-  const engine = currentTtsEngine();
+  const engine = currentTtsEngine(context);
   parts.engine.value = engine ? engine.id : '';
 
   parts.voice.innerHTML = '';
   if (engine) {
-    const voice = voiceForEngine(engine);
+    const voice = voiceForEngine(engine, context);
     engine.voices.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.id;
@@ -2559,7 +2813,7 @@ function renderTtsPicker(root) {
       parts.voice.appendChild(opt);
     });
     // A one-voice engine gets a disabled select, not a live control with a
-    // single option: there is nothing to choose and an enabled dropdown that
+    // single option: there is nothing to choose, and an enabled dropdown that
     // opens onto one entry just looks broken.
     parts.voice.disabled = engine.voices.length <= 1;
     setTtsNote(parts, engine.note || '');
@@ -2568,6 +2822,7 @@ function renderTtsPicker(root) {
     setTtsNote(parts, '');
   }
   if (parts.sample) parts.sample.disabled = !engine || !engine.available;
+  if (context === 'stories') renderStoryAudioRow();
 }
 
 function renderAllTtsPickers() {
@@ -2576,25 +2831,25 @@ function renderAllTtsPickers() {
 }
 
 // The toolbar button names the current pair so the choice is visible without
-// opening anything: "Kokoro · af_heart". A button that only showed a speaker
-// icon would make the app look like it picked a voice by itself.
+// opening anything: "Kokoro 82M · af_heart". A bare speaker icon would make the
+// app look like it picked a voice by itself.
 function updateTtsToolbarLabel() {
   const label = document.getElementById('ttsVoiceToolbarLabel');
   if (!label) return;
-  const engine = currentTtsEngine();
-  label.textContent = engine ? `${engine.label.split(' (')[0]} · ${voiceForEngine(engine)}` : 'Voice';
+  const engine = currentTtsEngine('meanings');
+  label.textContent = engine
+    ? `${engine.label.split(' (')[0]} · ${voiceForEngine(engine, 'meanings')}`
+    : 'Voice';
 }
 
 function openTtsVoiceModal() {
   const overlay = document.getElementById('ttsVoiceModalOverlay');
   if (!overlay) return;
-  // The engines list arrives async on first load; render from whatever is
-  // cached and let loadTtsEngines() repaint when it resolves.
   renderAllTtsPickers();
   const preview = document.getElementById('ttsSamplePreview');
-  if (preview) preview.textContent = `“${TTS_REFERENCE_SAMPLE}”`;
+  if (preview) preview.textContent = TTS_REFERENCE_SAMPLE;
   overlay.classList.add('open');
-  if (!TTS_ENGINES.length) loadTtsEngines();
+  if (!ttsCatalog.length) loadTtsEngines('meanings');
 }
 
 function closeTtsVoiceModal() {
@@ -2602,37 +2857,46 @@ function closeTtsVoiceModal() {
   if (overlay) overlay.classList.remove('open');
 }
 
-function setTtsNote(parts, text, isError) {
-  if (!parts || !parts.note) return;
-  parts.note.textContent = text || '';
-  parts.note.classList.toggle('is-error', !!isError);
+async function saveTtsSelection(context) {
+  const engine = currentTtsEngine(context);
+  if (!engine) return;
+  const voice = voiceForEngine(engine, context);
+  try {
+    const res = await fetch('/api/tts/selection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context, engine: engine.id, voice: voice })
+    });
+    if (res.ok) ttsSelection[context] = { engine: engine.id, voice: voice };
+  } catch (e) { /* keep the local choice; the server still has the old one */ }
 }
 
 // The sample text depends on where the picker is, and the difference matters:
 // a story modal samples that story's opening so you hear it in context, while
-// the toolbar modal samples a FIXED line so two voices are compared on exactly
+// the meaning modal samples a FIXED line so two voices are compared on exactly
 // the same words. Sampling a random word instead would make the comparison
 // worthless -- the text, not just the voice, would change between clicks.
 const TTS_REFERENCE_SAMPLE = 'The harvest lantern swung above the old granary, and nobody thought about the rain.';
 
 function ttsSampleSource(root) {
-  if (root.closest('#storyModalOverlay')) {
-    return { text: stripMarkdown(stripStoryLabels(currentStoryProse)), words: 10 };
+  const context = ttsContextOf(root);
+  if (context === 'stories') {
+    return { context, text: stripMarkdown(stripStoryLabels(currentStoryProse)), words: 10 };
   }
-  return { text: TTS_REFERENCE_SAMPLE, words: 0 };
+  return { context, text: TTS_REFERENCE_SAMPLE, words: 0 };
 }
 
-async function saveTtsSelection() {
-  const engine = currentTtsEngine();
+async function saveTtsSelection(context) {
+  const engine = currentTtsEngine(context);
   if (!engine) return;
-  const voice = voiceForEngine(engine);
+  const voice = voiceForEngine(engine, context);
   try {
     const res = await fetch('/api/tts/selection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine: engine.id, voice: voice })
+      body: JSON.stringify({ context, engine: engine.id, voice: voice })
     });
-    if (res.ok) ttsSelection = { engine: engine.id, voice: voice };
+    if (res.ok) ttsSelection[context] = { engine: engine.id, voice: voice };
   } catch (e) { /* keep the local choice; the server still has the old one */ }
 }
 
@@ -2655,7 +2919,15 @@ async function playTtsSample(btn) {
     const res = await fetch('/api/tts/sample', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: source.text, words: source.words })
+      body: JSON.stringify({
+        text: source.text,
+        words: source.words,
+        // Without this the server falls back to its own default context, which
+        // is "stories" -- so pressing Play in the *meaning* voice modal would
+        // have been answered in the story voice. The whole point of splitting
+        // the two selections is defeated by a missing field.
+        context: source.context
+      })
     });
     if (!res.ok) {
       let detail = 'sample failed';
@@ -2738,6 +3010,10 @@ async function openStoryModal(id) {
       metaEl.style.display = 'none';
     }
     setReadAloudEnabled(true);
+    // Truthful on open: a story that already has audio shows the player (and
+    // the regenerate/delete actions) instead of looking identical to one that
+    // does not.
+    await attachStoryAudio(id, s.audio_path);
     // Immediate paint of every target word so the tab is never empty. Which of
     // them the model actually used is fetched lazily when the tab is opened --
     // see showBuiltFromTab -- because that per-word match costs 160-380ms on a
@@ -2858,16 +3134,19 @@ function formatTime(sec) {
 
 function showStoryPlayer() {
   document.getElementById('storyPlayer').style.display = 'flex';
-  document.getElementById('storyModalReadBtn').style.display = 'none';
-  document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-pause"></i>';
 }
 
 function hideStoryPlayer() {
   document.getElementById('storyPlayer').style.display = 'none';
+  // Read Aloud is the *produce* action and the player is the *consume* one. The
+  // old code hid Read Aloud while playing, so the button that made the audio
+  // disappeared the moment you started using it, and regenerating meant closing
+  // the modal and coming back.
   const rb = document.getElementById('storyModalReadBtn');
   rb.style.display = '';
   rb.disabled = false;
   rb.innerHTML = rb.dataset.icon;
+  if (currentStoryAudio) { currentStoryAudio.pause(); currentStoryAudio = null; }
   document.getElementById('storyModalSeek').value = 0;
   document.getElementById('storyModalTime').textContent = '0:00 / 0:00';
 }
@@ -3904,7 +4183,7 @@ async function generateStory() {
 
 async function readStoryById(id, btn) {
   if (!btn) return;
-  if (currentBtn === btn) { stopAudio(); hideStoryPlayer(); return; }
+  if (currentBtn === btn) { stopAudio(); hideStoryPlayer(); return; }  // toggle off
   const icon = btn.dataset.icon || btn.innerHTML;
   btn.dataset.icon = icon;
   btn.disabled = true;
@@ -3934,24 +4213,11 @@ async function readStoryById(id, btn) {
       }
     }
     btn.disabled = false;
-    playAudioFile('/audio/' + filename, btn, () => { loadStories(); hideStoryPlayer(); });
-    showStoryPlayer();
-    const audio = currentAudio;
-    if (audio) {
-      audio.loop = true;
-      audio.playbackRate = parseFloat(document.getElementById('storyModalSpeed').value) || 1;
-      const tick = () => {
-        const seek = document.getElementById('storyModalSeek');
-        const dur = audio.duration || 0;
-        seek.max = dur;
-        seek.value = audio.currentTime || 0;
-        document.getElementById('storyModalTime').textContent = `${formatTime(audio.currentTime)} / ${formatTime(dur)}`;
-      };
-      audio.ontimeupdate = tick;
-      audio.onloadedmetadata = tick;
-      audio.onplay = () => { document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-pause"></i>'; };
-      audio.onpause = () => { document.getElementById('storyModalPlayPause').innerHTML = '<i class="fa-solid fa-play"></i>'; };
-    }
+    // One implementation for "attach this file to the player", shared with the
+    // modal's open path. Two copies meant the seek bar and the play icon could
+    // disagree depending on which one ran last.
+    await attachStoryAudio(id, filename);
+    loadStories();
   } catch (e) {
     btn.disabled = false;
     btn.innerHTML = icon;
@@ -4819,7 +5085,11 @@ document.addEventListener('DOMContentLoaded', () => {
         storyModalVolume.value = v;
         updateVolumeUI(v);
         localStorage.setItem('ttsVolume', String(v));
+        // The attached narration is usually not `currentAudio` (that is whatever
+        // is sounding right now), so the story player needs its own update or the
+        // volume slider silently does nothing to the thing it sits under.
         if (currentAudio) currentAudio.volume = v;
+        if (currentStoryAudio) currentStoryAudio.volume = v;
     };
 
     updateVolumeUI(parseFloat(volumeSlider.value));
@@ -4852,15 +5122,22 @@ document.addEventListener('DOMContentLoaded', () => {
         readStoryById(currentModalStoryId, e.currentTarget);
     });
     document.getElementById('storyModalPlayPause').addEventListener('click', () => {
-        const a = currentAudio;
+        // currentStoryAudio is the file attached to this modal; currentAudio is
+        // whatever happens to be sounding (which may be a word sample). Using
+        // the latter alone left the play/pause button dead whenever the
+        // narration had been opened and then stopped.
+        const a = currentStoryAudio || currentAudio;
         if (!a) return;
-        if (a.paused) a.play(); else a.pause();
+        if (a.paused) { a.play(); } else { a.pause(); }
     });
     document.getElementById('storyModalSeek').addEventListener('input', (e) => {
-        if (currentAudio) currentAudio.currentTime = parseFloat(e.target.value);
+        const a = currentStoryAudio || currentAudio;
+        if (a) a.currentTime = parseFloat(e.target.value);
     });
     document.getElementById('storyModalSpeed').addEventListener('change', (e) => {
-        if (currentAudio) currentAudio.playbackRate = parseFloat(e.target.value);
+        const rate = parseFloat(e.target.value);
+        const a = currentStoryAudio || currentAudio;
+        if (a) a.playbackRate = rate;
     });
     document.getElementById('storyModalStop').addEventListener('click', () => {
         stopAudio();
@@ -4869,14 +5146,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- TTS engine / voice picker ---
     // Delegated on the document because the control exists in two places (the
-    // story modal strip and the toolbar modal). Per-element listeners would
-    // have to be re-attached for every new instance; there are none today, and
-    // the next person who adds a third mount should not have to find this.
+    // meaning-voice modal card and the story modal's action row). Per-element
+    // listeners would have to be re-attached for every new instance; there are
+    // none today, and the next person who adds a third mount should not have to
+    // find this.
     document.addEventListener('change', async (e) => {
         const root = e.target.closest('[data-tts-root]');
         if (!root) return;
+        const context = ttsContextOf(root);
         if (e.target.matches('[data-tts="engine"]')) {
-            const engine = TTS_ENGINES.find(x => x.id === e.target.value);
+            const engine = ttsCatalog.find(x => x.id === e.target.value);
             if (!engine) return;
             if (!engine.available) {
                 setTtsNote(ttsPickerParts(root), engine.reason, true);
@@ -4884,14 +5163,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             // Adopting the new engine's own voice here (rather than leaving a
             // foreign id selected) is what keeps the two selects honest.
-            ttsSelection = { engine: engine.id, voice: voiceForEngine(engine) };
+            ttsSelection[context] = { engine: engine.id, voice: voiceForEngine(engine, context) };
             renderAllTtsPickers();
-            await saveTtsSelection();
+            await saveTtsSelection(context);
         } else if (e.target.matches('[data-tts="voice"]')) {
-            const engine = currentTtsEngine();
+            const engine = currentTtsEngine(context);
             if (!engine) return;
-            ttsSelection = { engine: engine.id, voice: e.target.value };
-            await saveTtsSelection();
+            ttsSelection[context] = { engine: engine.id, voice: e.target.value };
+            await saveTtsSelection(context);
         }
     });
     document.addEventListener('click', (e) => {
@@ -4901,7 +5180,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('ttsVoiceToolbarBtn').addEventListener('click', openTtsVoiceModal);
     document.getElementById('closeTtsVoiceBtn').addEventListener('click', closeTtsVoiceModal);
     document.getElementById('ttsVoiceDoneBtn').addEventListener('click', closeTtsVoiceModal);
-    loadTtsEngines();
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const overlay = document.getElementById('ttsVoiceModalOverlay');
+        if (overlay && overlay.classList.contains('open')) closeTtsVoiceModal();
+    });
+    // Both contexts are fetched up front: the story modal can be opened without
+    // the toolbar button ever having been pressed, and a picker that rendered
+    // empty there would look broken.
+    loadTtsEngines('meanings');
+    loadTtsEngines('stories');
+    document.getElementById('storyModalRegenBtn').addEventListener('click', () => regenerateStoryAudio(currentModalStoryId));
+    document.getElementById('storyModalDropAudioBtn').addEventListener('click', () => dropStoryAudio(currentModalStoryId));
 
     // --- Stories feature wiring ---
     document.getElementById('viewToggleBtn').addEventListener('click', () => {
