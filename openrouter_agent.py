@@ -799,14 +799,23 @@ def validate_prompt(template, system=None):
     the rest and lets the user save anyway.
     """
     findings = []
-    if template is None or not template.strip():
-        return [{"level": "error", "code": "empty",
-                 "message": "The prompt is empty. Reset to the code default to recover it."}]
+    # An empty USER message is legal and was requested: sometimes the system
+    # message plus the generated tail (style line + word list) is the whole
+    # prompt. build_prompt() joins only its non-empty parts, so the request still
+    # renders and the model never receives an empty user message. It is a
+    # warning rather than nothing, because everything the model then does is
+    # decided by the system message alone and the user should see that stated.
+    #
+    # The early return that used to sit here is gone, and with it a real bug: it
+    # returned BEFORE the system checks, so a preset with an empty template hid a
+    # broken system message (a missing "Title:" label) that would have refused
+    # the save anyway. Findings are collected for both messages, always.
+    empty_user = template is None or not template.strip()
 
     def add(level, code, message):
         findings.append({"level": level, "code": code, "message": message})
 
-    text = template
+    text = template or ""
 
     # --- The system message -------------------------------------------------
     # Editable, but the two labels are a hard requirement, so this one is an
@@ -831,41 +840,52 @@ def validate_prompt(template, system=None):
                     "the note in the prompt about what that costs on a reasoning "
                     "model. -- " + _where(str(system), system_hit))
 
-    # No placeholder checks, and deliberately no brace check either: the template
-    # is sent verbatim, so "{" carries no meaning and a prompt that mentions
-    # JSON or a set literal must not be refused for being unbalanced.
-    self_hit = _self_check_hit(text)
-    if self_hit:
-        add("warning", "self_check",
-            "This asks the model to check its own work. On a reasoning model that "
-            "was measured at 405s and 26,518 reasoning tokens for a 286-word story, "
-            "against 68s without it. Say nothing about checking instead. -- "
-            + _where(text, self_hit))
+    if empty_user:
+        add("warning", "empty_user",
+            "The user message is empty. That is allowed: the request will "
+            "be the style line and the word list and nothing else, so the "
+            "system message above is the only thing shaping the story. "
+            "Type here to add rules.")
+    else:
+        # No placeholder checks, and deliberately no brace check either:
+        # the template is sent verbatim, so "{" carries no meaning and a
+        # prompt that mentions JSON or a set literal must not be refused
+        # for being unbalanced.
+        # No placeholder checks, and deliberately no brace check either: the template
+        # is sent verbatim, so "{" carries no meaning and a prompt that mentions
+        # JSON or a set literal must not be refused for being unbalanced.
+        self_hit = _self_check_hit(text)
+        if self_hit:
+            add("warning", "self_check",
+                "This asks the model to check its own work. On a reasoning model that "
+                "was measured at 405s and 26,518 reasoning tokens for a 286-word story, "
+                "against 68s without it. Say nothing about checking instead. -- "
+                + _where(text, self_hit))
 
-    length_hit = _story_length_hit(text)
-    if length_hit is not None:
-        add("warning", "length_target",
-            "This sets a target length. The prompt deliberately sets none, and a "
-            "length target tends to make the model rush the word list. max_tokens "
-            "is the output budget and is set separately. -- "
-            + _where(text, length_hit))
+        length_hit = _story_length_hit(text)
+        if length_hit is not None:
+            add("warning", "length_target",
+                "This sets a target length. The prompt deliberately sets none, and a "
+                "length target tends to make the model rush the word list. max_tokens "
+                "is the output budget and is set separately. -- "
+                + _where(text, length_hit))
 
-    if _NUMBERED_RE.search(text):
-        add("warning", "numbered_list",
-            "Do not ask for a numbered list. It was measured leaking into the "
-            "prose as '**scavenge** 1' and making the model work through the list "
-            "in order. The word list is rendered for you, un-numbered.")
+        if _NUMBERED_RE.search(text):
+            add("warning", "numbered_list",
+                "Do not ask for a numbered list. It was measured leaking into the "
+                "prose as '**scavenge** 1' and making the model work through the list "
+                "in order. The word list is rendered for you, un-numbered.")
 
-    if "Title:" in text or "Story:" in text:
-        add("warning", "output_shape",
-            "The output shape (the 'Title:' and 'Story:' labels) is set by the "
-            "system message and cannot be changed here. Repeating it in the "
-            "prompt tends to produce a preamble.")
+        if "Title:" in text or "Story:" in text:
+            add("warning", "output_shape",
+                "The output shape (the 'Title:' and 'Story:' labels) is set by the "
+                "system message and cannot be changed here. Repeating it in the "
+                "prompt tends to produce a preamble.")
 
-    if "bold" not in text.lower():
-        add("info", "no_bolding_rule",
-            "No bolding rule. The model will probably bold nothing, so the "
-            "highlighted vocabulary in the story will be lost.")
+        if "bold" not in text.lower():
+            add("info", "no_bolding_rule",
+                "No bolding rule. The model will probably bold nothing, so the "
+                "highlighted vocabulary in the story will be lost.")
 
     return findings
 

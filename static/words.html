@@ -997,7 +997,7 @@
     /* The system message sits above the template: it is the outer envelope, and
        reading it first is the order the model sees. Fixed height, because it is
        short by nature and the template is what needs the room. */
-    .prompt-lab-system { flex: 0 0 auto; display: flex; flex-direction: column; padding: 10px 12px 0 12px; }
+    .prompt-lab-system { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px 6px 12px; }
     .prompt-lab-system textarea {
         /* Tall enough for the shipped default so it is not clipped on open: it
            wraps to 6 lines at this width (the "Reply with exactly this…"
@@ -1052,8 +1052,7 @@
        greyed-out form would just read as a broken panel. */
     .prompt-lab-modal.is-asused .prompt-lab-bar,
     .prompt-lab-modal.is-asused .prompt-lab-props,
-    .prompt-lab-modal.is-asused .prompt-lab-editor,
-    .prompt-lab-modal.is-asused .prompt-lab-system,
+    .prompt-lab-modal.is-asused .prompt-lab-edit-pane,
     .prompt-lab-modal.is-asused .prompt-lab-tabs { display: none; }
     .prompt-lab-modal.is-asused .prompt-lab-preview-wrap { flex: 1 1 auto; border-top: none; }
     .prompt-lab-modal.is-asused #promptLabPreview { font-size: 0.8em; }
@@ -1477,32 +1476,48 @@
                 </div>
             </div>
             <div class="prompt-lab-main">
+                <!-- One tab per message. They are separate messages to the API
+                     with separate rules -- the system message decides how the
+                     model behaves and may not be empty, the user message is the
+                     per-story request and may be -- so putting them on two tabs
+                     is what the model actually sees, rather than a layout
+                     convenience. Order is read order: system, then user, then
+                     what the two render to. -->
                 <div class="prompt-lab-tabs">
-                    <button class="modal-tab prompt-lab-tab active" data-labtab="edit">Prompt</button>
+                    <button class="modal-tab prompt-lab-tab active" data-labtab="system">System</button>
+                    <button class="modal-tab prompt-lab-tab" data-labtab="user">User</button>
                     <button class="modal-tab prompt-lab-tab" data-labtab="preview">Preview</button>
                 </div>
-                <div class="prompt-lab-edit-pane" id="promptLabEditPane">
-                <div class="prompt-lab-system">
-                    <div class="prompt-lab-preview-head">
-                        <span class="prompt-lab-preview-title">System message</span>
-                        <span>editable, but it must keep the <code>Title:</code> and <code>Story:</code> labels</span>
+                <div class="prompt-lab-edit-pane" id="promptLabSystemPane">
+                    <div class="prompt-lab-system">
+                        <div class="prompt-lab-preview-head">
+                            <span class="prompt-lab-preview-title">System message</span>
+                            <span>editable, but it must keep the <code>Title:</code> and <code>Story:</code> labels</span>
+                        </div>
+                        <div class="prompt-lab-cheatsheet">
+                            How the model should behave, and it may not be empty: it is the only
+                            thing carrying the output contract. It is sent as the
+                            <code>system</code> message, ahead of the user message, and applies to
+                            every request.
+                        </div>
+                        <textarea id="promptLabSystem" spellcheck="false"></textarea>
                     </div>
-                    <textarea id="promptLabSystem" spellcheck="false"></textarea>
                 </div>
-                <div class="prompt-lab-editor">
-                    <!-- The editable middle of the prompt, sent verbatim: no
-                         placeholders, nothing substituted. The word list and
-                         the style line are added after it; the Title:/Story:
-                         contract lives in the system message above. -->
-                    <div class="prompt-lab-cheatsheet">
-                        Write the rules freely &mdash; this text is sent exactly as written,
-                        with nothing substituted. The word list and the style line are
-                        added after it, and the <code>Title:</code>/<code>Story:</code>
-                        output labels live in the system message above.
+                <div class="prompt-lab-edit-pane" id="promptLabUserPane" style="display:none;">
+                    <div class="prompt-lab-editor">
+                        <!-- The editable middle of the prompt, sent verbatim: no
+                             placeholders, nothing substituted. It MAY be empty:
+                             the style line and the word list are still appended,
+                             so the request is never blank. -->
+                        <div class="prompt-lab-cheatsheet">
+                            This story's request, sent as the <code>user</code> message, and it
+                            may be left empty &mdash; the style line and the word list are
+                            added after it either way. Write the rules here if the story needs
+                            any beyond what the system message already says.
+                        </div>
+                        <textarea id="promptLabTemplate" spellcheck="false"
+                                  placeholder="Optional. Leave this empty and the request is just the style line and the word list:&#10;&#10;Style for this story: &lt;the style chosen on the left&gt;.&#10;&#10;WORDS TO USE&#10;&lt;the words selected in the grid&gt;"></textarea>
                     </div>
-                    <textarea id="promptLabTemplate" spellcheck="false"
-                              placeholder="Write the rules the story must follow…"></textarea>
-                </div>
                 </div>
                 <div class="prompt-lab-preview-wrap" id="promptLabPreviewPane" style="display:none;">
                     <div class="prompt-lab-preview-head">
@@ -4452,7 +4467,7 @@ const promptLab = {
   defaultSystem: '',
   styles: [],
   reasoningEfforts: [],
-  tab: 'edit',            // 'edit' | 'preview'
+  tab: 'system',          // 'system' | 'user' | 'preview'
   asUsed: null,        // {id, name, text} when opened from a story
   validateTimer: null,
   // Monotonic counters for the validate/preview round-trips. MUST start at 0:
@@ -4473,13 +4488,18 @@ function labPreviewWords() {
   return sel.length ? sel : LAB_SAMPLE_WORDS;
 }
 
-// Editor and preview are tabs. The preview keeps refreshing in the background
-// either way (scheduleLabRefresh), so switching to it always shows the current
-// text rather than a stale render.
+// System, user and preview are tabs. The preview keeps refreshing in the
+// background whichever one you are on (scheduleLabRefresh), so switching to it
+// always shows the current text rather than a stale render -- including the
+// user tab being empty, which is exactly the case worth previewing.
 function switchLabTab(name) {
   promptLab.tab = name;
-  document.getElementById('promptLabEditPane').style.display = name === 'edit' ? '' : 'none';
-  document.getElementById('promptLabPreviewPane').style.display = name === 'preview' ? '' : 'none';
+  // One entry per message, plus the preview. Tab names are 'system' / 'user' /
+  // 'preview' and match the API roles, which is the whole point of the split.
+  ['system', 'user', 'preview'].forEach(t => {
+    const pane = document.getElementById('promptLab' + t.charAt(0).toUpperCase() + t.slice(1) + 'Pane');
+    if (pane) pane.style.display = t === name ? '' : 'none';
+  });
   document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.labtab === name);
   });
@@ -4781,7 +4801,7 @@ async function openPromptLab(storyId) {
     const preset = labCurrentPreset();
     if (preset) fillLabForm(preset);
     document.getElementById('promptLabFooterNote').textContent = '';
-    switchLabTab('edit');
+    switchLabTab('system');
     overlay.classList.add('open');
   } catch (e) { /* leave the modal closed */ }
 }
