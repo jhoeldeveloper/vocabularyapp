@@ -1319,8 +1319,9 @@
                  file these controls are playing. It used to live on the action
                  row next to Read Aloud, two rows away from the only thing it
                  refers to. -->
-            <button id="storyModalDropAudioBtn" class="sort-btn" title="Delete this story's audio (the story text is kept)">
-                <i class="fa-solid fa-trash-can"></i> Remove audio
+            <button id="storyModalDropAudioBtn" class="sort-btn tts-icon-btn"
+                    title="Delete this story's audio (the story text is kept)">
+                <i class="fa-solid fa-trash-can"></i>
             </button>
         </div>
     </div>
@@ -2630,11 +2631,16 @@ function renderStoryAudioRow() {
   // change what you are hearing, and it cannot -- regenerating is a deliberate
   // act (edit the story, or delete the audio) and the control said nothing about
   // which voice made the file you are playing.
+  const row = document.querySelector('#storyModalOverlay .tts-story-actions');
   if (storyHasAudio) {
+    // The whole row goes, not just its children: with both hidden it still
+    // occupied its min-height plus padding and the modal showed an empty strip
+    // above the player. Everything this row did -- play, remove -- lives in the
+    // transport by then.
+    if (row) row.style.display = 'none';
     player.style.display = 'flex';
-    genBtn.style.display = 'none';
-    if (picker) picker.style.display = 'none';
   } else {
+    if (row) row.style.display = '';
     player.style.display = 'none';
     genBtn.style.display = readAloudAllowed ? '' : 'none';
     if (picker) picker.style.display = readAloudAllowed ? '' : 'none';
