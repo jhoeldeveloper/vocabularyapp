@@ -999,11 +999,16 @@
        short by nature and the template is what needs the room. */
     .prompt-lab-system { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px 6px 12px; }
     .prompt-lab-system textarea {
-        /* Tall enough for the shipped default so it is not clipped on open: it
-           wraps to 6 lines at this width (the "Reply with exactly this…"
-           sentence is long), which is ~130px at the 0.78em line height.
-           Still resizable, and the template below keeps the room. */
-        height: 132px; resize: vertical; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /* Fills its pane, like #promptLabTemplate. It used to carry a fixed
+           height: 132px, sized for when the system message shared one pane with
+           the template below and had to leave room for it. Since they became
+           separate tabs each message owns the whole pane, so the fixed height
+           just left ~250px of dead space under a textarea you cannot scroll
+           into. flex + min-height:0 is what makes it actually fill: without
+           min-height:0 a flex item refuses to shrink below its content.
+           resize:none matches the template. */
+        flex: 1 1 auto; min-height: 0; resize: none; box-sizing: border-box;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.78em; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--border-input);
         border-radius: 6px; background: var(--bg-card); color: var(--text-primary);
     }
