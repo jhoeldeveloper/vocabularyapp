@@ -851,7 +851,12 @@ def validate_prompt(template, system=None):
             "system message and cannot be changed here. Repeating it in the "
             "prompt tends to produce a preamble.")
 
-    if "bold" not in text.lower():
+    # The bolding rule can live in EITHER message, and the two are read as one
+    # prompt by the model. Checking only the template reported "the model will
+    # probably bold nothing" for a preset whose bolding rule was in the system
+    # message -- advice that was simply wrong, and it fired most loudly on an
+    # empty user message, where the template cannot mention anything at all.
+    if "bold" not in (text + "\n" + ("" if system is None else str(system))).lower():
         add("info", "no_bolding_rule",
             "No bolding rule. The model will probably bold nothing, so the "
             "highlighted vocabulary in the story will be lost.")
