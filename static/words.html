@@ -1908,7 +1908,13 @@ function storyCoverageLabel(s) {
     const used = s.words_used;
     const total = s.words_total;
     if (used == null || !total) return '';
-    return `${used.toLocaleString()}/${total.toLocaleString()}`;
+    // The counts AND the share: "271/330" alone makes the reader do the
+    // division, and the percentage is the figure that answers "did it use my
+    // words" -- it leads the tooltip and it is what the 80% warning threshold
+    // is defined against. Built here so the list row and the modal, which share
+    // this one helper, cannot disagree.
+    const pct = Math.round((used / total) * 100);
+    return `${used.toLocaleString()}/${total.toLocaleString()} (${pct}%)`;
 }
 
 function storyCoverageRatio(s) {
