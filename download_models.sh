@@ -92,15 +92,37 @@ if [ "${1:-}" = "alt" ]; then
   download "$INFLECT_BASE/onnx/decode.onnx"   "$ALT_DIR/inflect/onnx/decode.onnx"
 
   AUDIO_CPP_VER="${AUDIO_CPP_VER:-v0.9.0}"
-  if [ ! -x "$ALT_DIR/audiocpp_cli" ]; then
+  # Existence, not executability, decides whether to re-download: the release
+  # ships audiocpp_cli as 0644, so a perfectly good extract looks "missing" to
+  # a `-x` test and would re-download 47MB on every single run.
+  if [ ! -f "$ALT_DIR/audiocpp_cli" ] || [ ! -d "$ALT_DIR/model_specs" ]; then
     echo "↓ downloading audio.cpp $AUDIO_CPP_VER (CPU, linux x64)"
-    curl -L -o /tmp/audio.cpp.tar.gz \
+    curl -fL -o /tmp/audio.cpp.tar.gz \
       "https://github.com/0xShug0/audio.cpp/releases/download/${AUDIO_CPP_VER}/audio-${AUDIO_CPP_VER}-bin-ubuntu-x64-cpu.tar.gz"
-    tar xzf /tmp/audio.cpp.tar.gz -C "$ALT_DIR" audiocpp_cli model_specs
-    chmod +x "$ALT_DIR/audiocpp_cli"
+    # Extract the whole archive rather than naming members: the release stores
+    # them as "./audiocpp_cli" and "./model_specs/...", and `tar xzf ... audiocpp_cli`
+    # does NOT match those -- it fails with "Not found in archive" and leaves
+    # Pocket unusable while every other step reports success. The leftover
+    # `tools/` directory is a few hundred KB and harmless.
+    tar xzf /tmp/audio.cpp.tar.gz -C "$ALT_DIR"
     rm -f /tmp/audio.cpp.tar.gz
+    # Confirm what was actually unpacked rather than trusting tar's exit code.
+    # Without model_specs/ the CLI cannot resolve the pocket_tts family, and
+    # that would only surface much later as a runtime error on the first sample.
+    if [ ! -f "$ALT_DIR/audiocpp_cli" ] || [ ! -d "$ALT_DIR/model_specs" ]; then
+      echo "✗ audio.cpp did not unpack (expected audiocpp_cli + model_specs/)" >&2
+      rm -rf "$ALT_DIR/audiocpp_cli" "$ALT_DIR/model_specs" "$ALT_DIR/tools"
+      exit 1
+    fi
+    echo "✓ audio.cpp ready"
   else
     echo "✓ already present: audiocpp_cli (skipping)"
+  fi
+  # The archive ships the binary non-executable, and tar cannot add the bit.
+  chmod +x "$ALT_DIR/audiocpp_cli" 2>/dev/null || true
+  if [ ! -x "$ALT_DIR/audiocpp_cli" ]; then
+    echo "✗ audiocpp_cli is present but not executable: chmod +x models/alt/audiocpp_cli" >&2
+    exit 1
   fi
 
   download "$POCKET_GGUF_BASE/pocket-tts-english-q8_0.gguf" \
