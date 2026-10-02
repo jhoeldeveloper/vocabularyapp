@@ -1282,15 +1282,11 @@
         <div class="modal-actions tts-story-actions">
             <div class="tts-actions-left">
                 <button id="storyModalReadBtn" class="sort-btn" data-icon="<i class='fa-solid fa-volume-high'></i> Generate audio"><i class="fa-solid fa-volume-high"></i> Generate audio</button>
-                <button id="storyModalRegenBtn" class="sort-btn tts-icon-btn" style="display:none;"
-                        title="Generate this story's audio again (deletes the current file)">
-                    <i class="fa-solid fa-rotate"></i>
-                </button>
-                <button id="storyModalDropAudioBtn" class="sort-btn tts-icon-btn" style="display:none;"
-                        title="Delete this story's saved audio, keeping the story">
-                    <i class="fa-solid fa-trash-can"></i>
-                </button>
             </div>
+            <!-- Hidden entirely once audio exists: with a file to play there is
+                 nothing to choose a voice for, and a live model selector next to
+                 a player just invites the reader to think it changes what they
+                 are hearing. The voice is chosen here, before generating. -->
             <div class="tts-actions-right" data-tts-root data-tts-context="stories">
                 <span class="tts-actions-label"><i class="fa-solid fa-microphone-lines"></i></span>
                 <select data-tts="engine" class="tts-inline-select" title="TTS model for stories"></select>
@@ -1303,7 +1299,7 @@
             </div>
         </div>
         <div class="story-player" id="storyPlayer" style="display:none;">
-            <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-pause"></i></button>
+            <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
             <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0">
             <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
             <label class="story-speed">Speed
@@ -1319,7 +1315,13 @@
                 <input type="range" id="storyModalVolume" min="0" max="1" step="0.05" value="1" title="Volume">
                 <span id="storyModalVolLabel">100%</span>
             </div>
-            <button id="storyModalStop" class="sort-btn" title="Stop"><i class="fa-solid fa-stop"></i></button>
+            <!-- Remove sits inline with the transport it acts on: it deletes the
+                 file these controls are playing. It used to live on the action
+                 row next to Read Aloud, two rows away from the only thing it
+                 refers to. -->
+            <button id="storyModalDropAudioBtn" class="sort-btn" title="Delete this story's audio (the story text is kept)">
+                <i class="fa-solid fa-trash-can"></i> Remove audio
+            </button>
         </div>
     </div>
 </div>
@@ -2616,17 +2618,27 @@ let currentStoryAudio = null;
 
 function renderStoryAudioRow() {
   const genBtn = document.getElementById('storyModalReadBtn');
-  const regenBtn = document.getElementById('storyModalRegenBtn');
-  const dropBtn = document.getElementById('storyModalDropAudioBtn');
-  if (!genBtn) return;
-  // Two mutually exclusive states, and the row states plainly which one you are
-  // in rather than offering "Generate audio" for something that already exists:
-  //   no audio  -> Generate audio (+ the voice it will use)
-  //   audio     -> the player, plus regenerate / remove on the file itself
-  const show = readAloudAllowed && !storyHasAudio;
-  genBtn.style.display = show ? '' : 'none';
-  if (regenBtn) regenBtn.style.display = storyHasAudio ? '' : 'none';
-  if (dropBtn) dropBtn.style.display = storyHasAudio ? '' : 'none';
+  const picker = document.querySelector('#storyModalOverlay .tts-actions-right');
+  const player = document.getElementById('storyPlayer');
+  if (!genBtn || !player) return;
+  // Two mutually exclusive states, and the row says plainly which one it is:
+  //   no audio -> Generate audio, plus the voice that will be used
+  //   audio    -> the transport only
+  //
+  // The voice selector is hidden in the second state. It was the confusing part:
+  // with a file already made, a live model picker implies changing it would
+  // change what you are hearing, and it cannot -- regenerating is a deliberate
+  // act (edit the story, or delete the audio) and the control said nothing about
+  // which voice made the file you are playing.
+  if (storyHasAudio) {
+    player.style.display = 'flex';
+    genBtn.style.display = 'none';
+    if (picker) picker.style.display = 'none';
+  } else {
+    player.style.display = 'none';
+    genBtn.style.display = readAloudAllowed ? '' : 'none';
+    if (picker) picker.style.display = readAloudAllowed ? '' : 'none';
+  }
 }
 
 // Load the saved narration into the player without starting it.
@@ -2686,43 +2698,6 @@ async function refreshStoryAudioRow(storyId) {
     const story = await res.json();
     await attachStoryAudio(storyId, story.audio_path);
   } catch (e) { /* the row keeps its previous state */ }
-}
-
-async function regenerateStoryAudio(storyId) {
-  if (storyId == null) return;
-  const regenBtn = document.getElementById('storyModalRegenBtn');
-  const genBtn = document.getElementById('storyModalReadBtn');
-  regenBtn.classList.add('is-busy');
-  regenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-  try {
-    const res = await fetch(`/api/stories/${storyId}`);
-    const story = await res.json();
-    // force:true is what makes this a regenerate rather than a no-op: the
-    // server deletes the old file first instead of leaving it orphaned on disk.
-    await fetch('/api/tts/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: stripMarkdown(stripStoryLabels(story.content || '')),
-        story_id: storyId,
-        force: true
-      })
-    });
-    storyHasAudio = false;
-    hideStoryPlayer();
-    renderStoryAudioRow();
-    // Register the pending job so the WebSocket shows progress on the generate
-    // button and plays the result when it lands, exactly as the first
-    // generation does. Without this a regeneration looked like it had finished
-    // the moment the request returned.
-    pendingStoryAudio = { id: storyId, btn: genBtn };
-    genBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating 0%';
-    showToast('Regenerating audio\u2026');
-  } catch (e) {
-    regenBtn.classList.remove('is-busy');
-    regenBtn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
-    alert('Could not regenerate: ' + e.message);
-  }
 }
 
 async function dropStoryAudio(storyId) {
@@ -3163,16 +3138,21 @@ function showStoryPlayer() {
 }
 
 function hideStoryPlayer() {
-  document.getElementById('storyPlayer').style.display = 'none';
-  // Read Aloud is the *produce* action and the player is the *consume* one. The
-  // old code hid Read Aloud while playing, so the button that made the audio
-  // disappeared the moment you started using it, and regenerating meant closing
-  // the modal and coming back.
+  // Resets the transport UI only. Visibility is owned by renderStoryAudioRow,
+  // which knows whether the story *has* audio: this function used to hide the
+  // player outright, so stopping playback made a story with saved audio look
+  // exactly like one without it.
+  resetPlayerUi();
+  renderStoryAudioRow();
+}
+
+function resetPlayerUi() {
   const rb = document.getElementById('storyModalReadBtn');
   rb.disabled = false;
   rb.innerHTML = rb.dataset.icon;
   if (currentStoryAudio) { currentStoryAudio.pause(); currentStoryAudio = null; }
-  renderStoryAudioRow();
+  const pp = document.getElementById('storyModalPlayPause');
+  if (pp) pp.innerHTML = '<i class="fa-solid fa-play"></i>';
   document.getElementById('storyModalSeek').value = 0;
   document.getElementById('storyModalTime').textContent = '0:00 / 0:00';
 }
@@ -5165,10 +5145,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = currentStoryAudio || currentAudio;
         if (a) a.playbackRate = rate;
     });
-    document.getElementById('storyModalStop').addEventListener('click', () => {
-        stopAudio();
-        hideStoryPlayer();
-    });
 
     // --- TTS engine / voice picker ---
     // Delegated on the document because the control exists in two places (the
@@ -5216,7 +5192,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // empty there would look broken.
     loadTtsEngines('meanings');
     loadTtsEngines('stories');
-    document.getElementById('storyModalRegenBtn').addEventListener('click', () => regenerateStoryAudio(currentModalStoryId));
     document.getElementById('storyModalDropAudioBtn').addEventListener('click', () => dropStoryAudio(currentModalStoryId));
 
     // --- Stories feature wiring ---
