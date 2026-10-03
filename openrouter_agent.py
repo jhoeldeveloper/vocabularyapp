@@ -510,14 +510,89 @@ def is_ready() -> bool:
     return bool(OPENROUTER_API_KEY)
 
 REDDIT_STYLES = [
-    "r/tifu: the narrator causes an embarrassing or chaotic disaster by mistake",
-    "r/AmItheAsshole: a conflict with a friend, roommate or family member, told so readers can judge who was right",
-    "r/nosleep: a creepy, suspenseful story the narrator insists is true",
-    "r/pettyrevenge: someone gets even in a clever, satisfying way",
-    "r/MaliciousCompliance: someone follows a ridiculous instruction to the letter, with hilarious results",
-    "r/entitledparents: the narrator deals with an unreasonable person in an everyday situation",
-    "r/talesfromretail: a strange day at work with unforgettable customers or coworkers",
-    "r/relationships: a personal situation with a friend, partner or family, told honestly and emotionally",
+    # One entry per voice, in a fixed grammar:
+    #     r/name: <POV + tense + register> . <premise> . <turn> . <landing>
+    # The voice tag is not decoration. Without one, styles that differ in what
+    # happens still read alike, because POV, tense and distance are what decide
+    # how a story sounds; the plot beats alone leave every genre sounding the
+    # same. Tense is FIXED per style on purpose -- drawing it per story would
+    # make r/nosleep feel different every time, which is the one thing a style
+    # is for.
+    #
+    # These lines are deliberately ~40 words, not the ~110 of a full beat sheet.
+    # Instruction density is this prompt's measured failure mode: a numbered
+    # word list leaked indices into the prose, a length target made the model
+    # rush the word list, and "check your own work" cost 405s / 26,518
+    # reasoning tokens. Every line competes with the one job that matters --
+    # using the words -- so beats that ask for long-horizon structure (plant a
+    # detail, revisit it later, write a TL;DR) were cut. Coverage was 99.6%
+    # before these; if it drops, tighten these lines, never the prompt.
+    #
+    # The leading "r/name:" is load-bearing, not cosmetic: the style pill and the
+    # Lab dropdown both render split(':')[0].
+    "r/tifu: first person, past tense, self-deprecating. The narrator's own "
+    "mistake escalates \u2014 every fix makes it worse \u2014 into a public disaster "
+    "they tell on themselves. Deadpan, ending on the punchline.",
+    "r/AmItheAsshole: first person, past tense, tired and reasonable. A conflict "
+    "with someone close, told so a reader can judge it. Neither side is clearly "
+    "right. It ends with the narrator still unsure, asking the reader whether they "
+    "were the asshole.",
+    "r/TrueOffMyChest: first person, past tense, plain and confessional. Something "
+    "the narrator has never said out loud comes out over a few conversations. "
+    "They are not innocent, and nothing is melodramatic. It ends with what they now "
+    "understand or regret.",
+    "r/MaliciousCompliance: first person, past tense, deadpan. Someone insists on "
+    "an unreasonable instruction; the narrator warns them, obeys it exactly, and "
+    "the consequences land because of the instruction, not a twist. It ends with "
+    "the authority figure realising.",
+    "r/PettyRevenge: first person, past tense, dry. A small irritation the "
+    "narrator answers proportionally and legally, without announcing it. "
+    "Anticipation, then a modest and satisfying payoff. No downfall, no revenge "
+    "story.",
+    "r/ProRevenge: first person, past tense, cold and patient. A long conflict with "
+    "a bully, scammer or manager, waited out rather than answered on the spot. The "
+    "response is planned, deliberate and a little underhanded, and the antagonist's "
+    "own behaviour finishes the job. The consequences are shown once they land.",
+    "r/BestofRedditorUpdates: first person, past tense, conversational. An "
+    "unresolved problem the narrator chases: they ask for advice, try something, "
+    "and each answer changes the picture. It resolves near the end and shows what "
+    "it cost.",
+    # Named for parents on purpose. An earlier draft said only someone
+    # unreasonable, which made this a duplicate of r/AmItheAsshole, while the
+    # subreddit's whole subject is a parent behaving as if the world owes them.
+    "r/entitledparents: first person, past tense, dry. A parent \u2014 or "
+    "grandparent \u2014 who behaves as though the world owes them, in an ordinary "
+    "setting like a meal or an errand. The narrator is tired, not furious, and "
+    "makes no speech about it. It ends quietly.",
+    "r/relationships: first person, past tense, warm and honest. A personal "
+    "relationship problem the narrator wants advice about, told with the mixed "
+    "feelings it actually has. No moral, no tidy lesson.",
+    "r/talesfromretail: first person, past tense, deadpan and warm. An ordinary "
+    "shift, one strange customer or coworker, and an incident that reframes the "
+    "day. Staff behave like employees; the humour is understated, the ending small "
+    "and unexpected.",
+    "r/TalesFromYourServer: first person, past tense, exhausted and quick. A busy "
+    "service where several problems overlap at once and the staff carry each other "
+    "through. It ends in a small relief, a surprising tip, or one exhausted line.",
+    "r/AskReddit: first person, present tense, conversational. An anecdote "
+    "answering an implicit question: the answer comes first, the context follows "
+    "in the order it was remembered, small irrelevant details included. It stops "
+    "the way a retelling stops.",
+    "r/nosleep: first person, past tense, quiet dread. An ordinary routine with "
+    "one detail that does not quite fit. The narrator knows only what they could "
+    "know, and the strangeness is never explained. It ends unresolved, with the "
+    "reader still uneasy.",
+    # r/nosleep, which is otherwise the same shape with a different mood.
+    "r/shortscarystories: third person, past tense, plain and close. Written horror "
+    "explanation. Few characters, little exposition, and a sharp turn near the "
+    "end.",
+    "r/HFY: close third, present tense, admiring but dry. An alien viewpoint on a "
+    "situation where humans look outmatched, told in the alien's own terms. Human "
+    "persistence, ingenuity or sacrifice changes what the aliens conclude. It ends "
+    "on that changed opinion.",
+    "r/WritingPrompts: third person, past tense, literary. The words supplied are "
+    "the premise: build the situation that needs them all, let it complicate once, "
+    "and pay it off.",
 ]
 
 # ---------------------------------------------------------------------------
@@ -640,6 +715,20 @@ def _resolve_style(style=None):
     return (style or "").strip() or random.choice(REDDIT_STYLES)
 
 
+def _as_sentence(text):
+    """Text with exactly one trailing full stop, for embedding mid-sentence.
+
+    The style line is composed as "Style for this story: {style}." so the
+    sentence ends properly whichever style is drawn. Styles are stored as
+    ordinary prose and therefore already end in a period, which produced ".."
+    in the prompt for every one of them. Composing the sentence here rather than
+    asking 16 data strings to each withhold their punctuation is the fix that
+    cannot be forgotten by the 17th style.
+    """
+    text = (text or "").strip()
+    return text[:-1].rstrip() if text.endswith(".") else text
+
+
 def build_prompt(words, template=None, style=None):
     """Render the user message from the editable template.
 
@@ -663,7 +752,7 @@ def build_prompt(words, template=None, style=None):
     # list share ONE part: joining them like the others would put a blank line
     # between "WORDS TO USE" and the list, which is not what shipped.
     parts = [template.strip(),
-             f"Style for this story: {style}.",
+             f"Style for this story: {_as_sentence(style)}.",
              "WORDS TO USE\n" + _render_word_list(words)]
     return "\n\n".join(p for p in parts if p)
 
