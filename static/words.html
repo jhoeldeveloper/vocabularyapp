@@ -1151,14 +1151,19 @@
             <button id="addWordBtn" onclick="addWord()">Add</button>
         </div>
         <span id="wordCount"></span>
+        <!-- Both pickers are icon-only, like sortOrderBtn/volumeToggle/themeToggle:
+             the button's identity lives in its tooltip (engine/model + id), which
+             is updated by updateMeaningsModelButtonTitle / updateTtsToolbarTitle.
+             Keeping them text-free also keeps the row on one baseline, since
+             `button { padding: 8px 12px }` sizes an icon the same either way. -->
         <button id="meaningsModelToolbarBtn" class="sort-btn" title="Meanings model: Default"
+                aria-label="Select meanings model"
                 onclick="openMeaningsModelModal()" style="display:none;">
             <i class="fa-solid fa-robot"></i>
-            <span id="meaningsModelToolbarLabel">Model</span>
         </button>
-        <button id="ttsVoiceToolbarBtn" class="sort-btn" title="Read-aloud voice">
+        <button id="ttsVoiceToolbarBtn" class="sort-btn" title="Read-aloud voice"
+                aria-label="Select read-aloud voice">
             <i class="fa-solid fa-microphone-lines"></i>
-            <span id="ttsVoiceToolbarLabel">Voice</span>
         </button>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
@@ -2885,19 +2890,20 @@ function renderTtsPicker(root) {
 
 function renderAllTtsPickers() {
   document.querySelectorAll('[data-tts-root]').forEach(renderTtsPicker);
-  updateTtsToolbarLabel();
+  updateTtsToolbarTitle();
 }
 
-// The toolbar button names the current pair so the choice is visible without
-// opening anything: "Kokoro 82M · af_heart". A bare speaker icon would make the
-// app look like it picked a voice by itself.
-function updateTtsToolbarLabel() {
-  const label = document.getElementById('ttsVoiceToolbarLabel');
-  if (!label) return;
+// The toolbar button is icon-only, so the tooltip is what names the current
+// pair -- "Read-aloud voice: Kokoro 82M · af_heart". Dropping the string here
+// rather than moving it would have made a bare speaker icon read as if the app
+// picked a voice by itself.
+function updateTtsToolbarTitle() {
+  const btn = document.getElementById('ttsVoiceToolbarBtn');
+  if (!btn) return;
   const engine = currentTtsEngine('meanings');
-  label.textContent = engine
-    ? `${engine.label.split(' (')[0]} · ${voiceForEngine(engine, 'meanings')}`
-    : 'Voice';
+  btn.title = engine
+    ? `Read-aloud voice: ${engine.label.split(' (')[0]} · ${voiceForEngine(engine, 'meanings')}`
+    : 'Read-aloud voice';
 }
 
 function openTtsVoiceModal() {
@@ -4190,7 +4196,6 @@ modelPickers.push(meaningsCtx);
 
 function updateMeaningsModelButtonTitle() {
   const toolbarBtn = document.getElementById('meaningsModelToolbarBtn');
-  const toolbarLabel = document.getElementById('meaningsModelToolbarLabel');
   const id = resolveModelFor(meaningsCtx) || '';
   // Resolve a human-readable short label for the active selection so the
   // toolbar button can show what model is actually in use.
@@ -4202,11 +4207,9 @@ function updateMeaningsModelButtonTitle() {
     else if (router) shortLabel = router.name;
     else shortLabel = id;
   }
+  // The button is icon-only, so the tooltip carries the model identity.
   if (toolbarBtn) {
     toolbarBtn.title = id ? `Meanings model: ${shortLabel} (${id}) — click to change` : 'Meanings model: Default — click to change';
-  }
-  if (toolbarLabel) {
-    toolbarLabel.textContent = shortLabel.length > 22 ? shortLabel.slice(0, 21) + '\u2026' : shortLabel;
   }
   // Keep the "Currently using" bar in sync as well.
   updateMeaningsCurrentBar();
