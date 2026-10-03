@@ -1475,9 +1475,10 @@
                 <div class="prompt-lab-field">
                     <label for="promptLabReasonMaxTokens">Reasoning cap (max tokens)</label>
                     <input type="number" id="promptLabReasonMaxTokens" min="0" max="100000" step="250" placeholder="0 = no cap">
-                    <div class="prompt-lab-hint">0 means no cap. A reasoning model that reaches it stops
-                        thinking and answers. This is the only bound on reasoning &mdash; the output budget
-                        below bounds the <em>story</em> and does not touch it. Some providers ignore it.</div>
+                    <div class="prompt-lab-hint">0 means no cap, and the reasoning level is used. Above 0 the cap
+                        <em>replaces</em> that level &mdash; the model reasons at its own default intensity and
+                        stops there. It bounds reasoning only; the output budget below bounds the
+                        <em>story</em>. Some providers ignore it.</div>
                 </div>
                 <div class="prompt-lab-field">
                     <label for="promptLabMaxTokens">Output budget (max tokens)</label>
@@ -4549,7 +4550,21 @@ const LAB_REASONING_HINTS = {
 };
 
 function updateLabReasoningHint() {
-  const mode = document.getElementById('promptLabReasoning').value;
+  const sel = document.getElementById('promptLabReasoning');
+  const mode = sel.value;
+  // A reasoning cap REPLACES the level: OpenRouter accepts either
+  // reasoning.effort or reasoning.max_tokens, never both (sending both is a 400).
+  // So when a cap is set the dropdown is disabled and says why -- a live
+  // dropdown next to a cap that silently overrides it is a control that cannot
+  // affect anything, and reads as if it does.
+  const cap = parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0;
+  sel.disabled = cap > 0;
+  if (cap > 0) {
+    document.getElementById('promptLabReasoningHint').textContent =
+      `Ignored while a reasoning cap is set: the cap replaces the level. ` +
+      `“${mode}” comes back if you set the cap to 0.`;
+    return;
+  }
   const hint = LAB_REASONING_HINTS[mode];
   document.getElementById('promptLabReasoningHint').textContent = hint
     || 'An effort level. Not every model offers every level — the preview shows the nearest one the chosen model supports.';
@@ -5455,6 +5470,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabReasonMaxTokens']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
     document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
+    // The cap decides whether the level dropdown is live at all, so typing in it
+    // has to re-run the hint -- otherwise the dropdown stays enabled with a cap
+    // set, and a level the request will never carry.
+    document.getElementById('promptLabReasonMaxTokens')
+        .addEventListener('input', updateLabReasoningHint);
     document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             if (promptLab.asUsed) return;

@@ -280,12 +280,19 @@ def _get_reasoning_config(model_id: str, mode: str = "auto", max_tokens: int = N
 
 
 def _with_reason_cap(config, max_tokens):
-    """Attach a reasoning-token cap to a reasoning config.
+    """Apply the preset's reasoning rule: a CAP REPLACES the level.
 
-    Every branch of _get_reasoning_config() returns through here, so the cap can
-    never be applied in one mode and silently dropped in another -- which is the
-    same class of bug as a gen_kwargs key with no matching parameter: it fails
-    at request time, on one path only.
+    OpenRouter accepts either ``reasoning.effort`` or ``reasoning.max_tokens``,
+    never both -- sending both is a 400 ("Only one of ... can be specified"),
+    measured against the live API. So the two preset fields are alternatives,
+    not a merge:
+
+        max_tokens > 0  ->  {"max_tokens": N, "exclude": True}
+        max_tokens = 0  ->  {"effort": <level>, "exclude": True}
+
+    Both fields stay in the preset either way, so clearing the cap brings the
+    level straight back. That is the whole reason this is a rule about which
+    knob wins rather than a lossy merge.
     """
     if not config:
         return config
@@ -293,9 +300,12 @@ def _with_reason_cap(config, max_tokens):
         cap = int(max_tokens or 0)
     except (TypeError, ValueError):
         return config
-    if cap > 0:
-        config["max_tokens"] = cap
-    return config
+    if cap <= 0:
+        return config
+    # The cap wins: drop the effort rather than 400-ing. The shape is rebuilt
+    # from scratch rather than dict.pop()'d so what is returned cannot depend on
+    # which branch produced it.
+    return {"max_tokens": cap, "exclude": bool(config.get("exclude", True))}
 
 
 def _reasoning_model(model_id: str):
@@ -356,6 +366,19 @@ def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = No
         note = "Model not in the catalogue, so 'off' is sent as a request only."
     elif config is None:
         note = "This model does not reason, so nothing is sent."
+
+    # A cap REPLACES the level, so any note about the level the user chose is now
+    # describing something that is not sent. It has to be replaced rather than
+    # appended, or the preview shows a caveat about a level that never leaves.
+    if config and config.get("max_tokens"):
+        note = (f"A reasoning cap of {config['max_tokens']:,} tokens replaces the "
+                f"reasoning level — the model reasons at its own default "
+                f"intensity and stops there. This is a ceiling on time and cost, "
+                f"not a setting for how hard the model thinks.")
+        # Not warn=True: the user chose this and it works. The cost they are
+        # avoiding is the thing being bought.
+        warn = False
+
     return {
         "requested": mode if mode in REASONING_MODES or mode in all_reasoning_efforts() else "auto",
         "effective": _reason_cfg_label(config),
@@ -375,12 +398,14 @@ def _reason_cfg_label(reasoning_config) -> str:
     """
     if not reasoning_config:
         return "not-set"
-    effort = reasoning_config.get("effort")
-    label = effort if effort else "on"
     cap = reasoning_config.get("max_tokens")
+    effort = reasoning_config.get("effort")
     if cap:
-        label += f" (cap {cap})"
-    return label
+        # The cap REPLACES the level, so there is no effort to name. Labelling it
+        # "on (cap 2000)" would read as "on, and also capped" -- the exact
+        # combination the API rejects.
+        return f"cap {cap}"
+    return effort if effort else "on"
 
 
 def _fetch_models(force=False):
