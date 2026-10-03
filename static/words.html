@@ -43,6 +43,9 @@
         --ok-bg:          #e3f7e8;
         --ok-border:      #9ed0af;
         --ok-text:        #1a6b34;
+        /* "Good but not excellent" coverage: the same green, washed out. */
+        --ok-fine-bg:     #f1f8f3;
+        --ok-fine-text:   #3f7355;
         --poor-bg:        #fde8ea;
         --poor-border:    #f0aeb5;
         --poor-text:      #a01c28;
@@ -79,6 +82,8 @@
         --ok-bg:          #1b2a1e;
         --ok-border:      #3d5c45;
         --ok-text:        #8fd6a5;
+        --ok-fine-bg:     #202a22;
+        --ok-fine-text:   #93b79f;
         --poor-bg:        #2c1a1e;
         --poor-border:    #5c3238;
         --poor-text:      #f0a0a8;
@@ -948,9 +953,11 @@
     .story-list-item.is-truncated:hover { border-color: var(--warn-border); }
     .story-list-meta-line.is-warning { color: var(--warn-text); background: var(--warn-bg); }
     /* Graded coverage tones (see COVERAGE_TIERS). is-good means an excellent
-       grade; is-poor is reserved for the bottom tier so it stays rare enough
-       to mean something. */
+       grade; is-fine is the quieter green for merely-good; is-poor is
+       reserved for the bottom tier so it stays rare enough to mean
+       something. */
     .story-list-meta-line.is-good { color: var(--ok-text); background: var(--ok-bg); }
+    .story-list-meta-line.is-fine { color: var(--ok-fine-text); background: var(--ok-fine-bg); }
     .story-list-meta-line.is-poor { color: var(--poor-text); background: var(--poor-bg); }
     /* A pill that opens something (the prompt snapshot). Needs an explicit
        affordance and its own hit area, since it sits inside a clickable row. */
@@ -2125,9 +2132,15 @@ function storyTokenTitle(s) {
 // identically. `min` is inclusive and the list is ordered high to low; the
 // tooltip's adjective and the pill's colour both come from the same row here,
 // which is the only way they can be kept from disagreeing.
+// The 80–95% band is `is-fine`, a desaturated step of the SAME green as
+// `is-good`, not a new hue. That is deliberate: green always means "good
+// coverage" (a colour must mean one kind of thing), and the two steps are
+// separable because the top tier stays saturated. The band used to be
+// uncoloured, which made a 94.5% run read as if the pill were missing or
+// broken rather than merely not-excellent.
 const COVERAGE_TIERS = [
     { min: 0.95, cls: 'is-good',    word: 'Excellent coverage' },
-    { min: 0.80, cls: '',           word: 'Good coverage'      },
+    { min: 0.80, cls: 'is-fine',    word: 'Good coverage'      },
     { min: 0.60, cls: 'is-warning', word: 'Thin coverage'      },
     { min: 0.00, cls: 'is-poor',    word: 'Poor coverage'      },
 ];
@@ -2142,8 +2155,18 @@ function storyCoverageLabel(s) {
     // words" -- it leads the tooltip and it is what the 80% warning threshold
     // is defined against. Built here so the list row and the modal, which share
     // this one helper, cannot disagree.
-    const pct = Math.round((used / total) * 100);
-    return `${used.toLocaleString()}/${total.toLocaleString()} (${pct}%)`;
+    return `${used.toLocaleString()}/${total.toLocaleString()} (${storyCoveragePct(used / total)})`;
+}
+
+// One decimal below 100%, an integer at 100%. Integer rounding made 312/330
+// print as "95%" while the tier test below compared 0.9454 and declined to
+// colour it -- a pill that says 95% and is not green is the whole bug. The
+// label and the tier now both come from the exact ratio, so they cannot
+// disagree. toFixed(1) truncates towards zero rather than rounding up, which
+// is what we want here: 99.99% must not print as "100.0%".
+function storyCoveragePct(ratio) {
+    const pct = ratio * 100;
+    return (pct >= 100 ? '100' : pct.toFixed(1)) + '%';
 }
 
 function storyCoverageRatio(s) {
@@ -2170,7 +2193,7 @@ function storyCoverageTitle(s) {
     const used = s.words_used.toLocaleString();
     const total = s.words_total.toLocaleString();
     let out = `${tier.word}: ${used} of the ${total} target words appear at least once `
-        + `(${Math.round(ratio * 100)}%). Inflections and phrase variants count, so "ran" `
+        + `(${storyCoveragePct(ratio)}). Inflections and phrase variants count, so "ran" `
         + `covers "run", and each listed word only needs one hit.`;
     if (tier.cls === 'is-warning' || tier.cls === 'is-poor') {
         out += ' Below 80% usually means the story padded itself with prose instead of '
