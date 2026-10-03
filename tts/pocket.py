@@ -51,7 +51,38 @@ EMBEDDINGS = os.path.join(ALT_DIR, "embeddings")
 # chunks are not slower, because each line's cost is dominated by the audio it
 # produces, and shorter lines mean shorter attention contexts.
 CHUNK_STEPS = int(os.getenv("POCKET_CHUNK_STEPS", "12"))
-TIMEOUT = float(os.getenv("POCKET_TIMEOUT", "900"))
+# STALL_TIMEOUT is an IDLE budget, not a total one: it is how long the CLI may
+# go without finishing a chunk before it is presumed hung. It used to be a
+# single deadline for the whole batch, which made the guard wrong rather than
+# just tight -- a 24,572-char story is ~2,000s of wall time at Pocket's measured
+# RTF 0.88, so a healthy long run was indistinguishable from a hung process and
+# was killed mid-batch, losing every chunk it had already produced.
+# Refreshing on each completed chunk keeps the protection (a genuinely hung CLI
+# emits no line_N.wav and still dies at the same wall time as before) while
+# bounding a long story by stalls rather than by its own length.
+STALL_TIMEOUT = float(os.getenv("POCKET_TIMEOUT", "900"))
+# Total backstop, scaled to the input, so a run that keeps trickling one tiny
+# chunk per interval can still never run unbounded. ~0.15s per character is
+# ~2x the measured RTF on this machine (deliberately generous: the batch is one
+# CLI process on two shared cores, and the scaling must not be the thing that
+# fails a story). Mirrors how _STORY_MAX_ELAPSED is enforced inside the loop.
+MAX_ELAPSED_BASE = float(os.getenv("POCKET_MAX_ELAPSED_BASE", "300"))
+MAX_ELAPSED_PER_CHAR = float(os.getenv("POCKET_MAX_ELAPSED_PER_CHAR", "0.15"))
+
+
+# Console logging for a long run. Pocket is the slowest engine here and the
+# whole batch is one opaque CLI process with its stdout going to a file (see
+# _run), so without this there is no sign of life for the ~30 minutes a large
+# story takes -- the only progress the server shows is the websocket bar. One
+# line per completed chunk, plus a heartbeat when nothing has landed, so a
+# genuinely stalled run is visibly different from a slow one.
+CHUNK_LOG = os.getenv("POCKET_CHUNK_LOG", "1") not in ("0", "false", "")
+# How often the heartbeat repeats while no chunk has completed.
+HEARTBEAT_SECONDS = float(os.getenv("POCKET_HEARTBEAT_SECONDS", "60"))
+
+
+def max_elapsed(total_chars: int) -> float:
+    return MAX_ELAPSED_BASE + MAX_ELAPSED_PER_CHAR * max(1, total_chars)
 # How often to look at the output directory while the CLI runs. Fast enough to
 # feel live, slow enough to be free.
 POLL_SECONDS = 0.4
@@ -89,7 +120,7 @@ class PocketEngine(Engine):
         listed = [v.id for v in self.voices()]
         return "alba" if "alba" in listed else (listed[0] if listed else "alba")
 
-    def _run(self, chunks: list[str], voice: str, workdir: str, on_chunk=None) -> list[str]:
+    def _run(self, chunks: list[str], voice: str, workdir: str, on_chunk=None, total_chars: int = 0) -> list[str]:
         """Run the batch, reporting how many chunks are done. Returns their paths."""
         batch_file = os.path.join(workdir, "chunks.txt")
         with open(batch_file, "w", encoding="utf-8") as fp:
@@ -121,17 +152,53 @@ class PocketEngine(Engine):
         with open(log_path, "w", encoding="utf-8") as log:
             proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
             try:
-                deadline = time.time() + TIMEOUT
+                # Two independent guards: `stall_deadline` slides forward every
+                # time a chunk lands, `hard_deadline` never moves.
+                budget = max_elapsed(total_chars)
+                started = time.time()
+                stall_deadline = started + STALL_TIMEOUT
+                hard_deadline = started + budget
                 completed = 0
-                timed_out = False
+                stalled = False
+                over_budget = False
+                last_beat = time.time()
+                last_done = started
                 while proc.poll() is None:
                     done = self._completed_chunks(out_dir)
+                    now = time.time()
                     if done > completed:
                         completed = done
+                        stall_deadline = now + STALL_TIMEOUT
+                        if CHUNK_LOG:
+                            elapsed = now - started
+                            # An average over completed chunks, not a
+                            # per-chunk estimate: chunks are sentences of
+                            # uneven length, so the mean is the only figure
+                            # that survives to the last one.
+                            per_chunk = elapsed / completed
+                            print(
+                                f"[TTS pocket] {voice}: chunk {completed}/{len(chunks)} "
+                                f"done ({now - last_done:.0f}s), {elapsed:.0f}s elapsed, "
+                                f"~{per_chunk * (len(chunks) - completed):.0f}s left",
+                                flush=True,
+                            )
+                            last_done = now
                         if on_chunk:
                             on_chunk(done)
-                    if time.time() > deadline:
-                        timed_out = True
+                    elif CHUNK_LOG and now - last_beat >= HEARTBEAT_SECONDS:
+                        last_beat = now
+                        print(
+                            f"[TTS pocket] {voice}: still on chunk "
+                            f"{completed + 1}/{len(chunks)}, {now - started:.0f}s elapsed, "
+                            f"{stall_deadline - now:.0f}s "
+                            f"until the stall guard fires",
+                            flush=True,
+                        )
+                    if now > stall_deadline:
+                        stalled = True
+                        break
+                    if now > hard_deadline:
+                        over_budget = True
                         break
                     time.sleep(POLL_SECONDS)
             except BaseException:
@@ -152,8 +219,37 @@ class PocketEngine(Engine):
         if done > completed and on_chunk:
             on_chunk(done)
 
-        if timed_out:
-            raise RuntimeError(f"audio.cpp timed out after {TIMEOUT:.0f}s")
+        if CHUNK_LOG:
+            elapsed = time.time() - started
+            if over_budget or stalled:
+                print(
+                    f"[TTS pocket] {voice}: giving up after {elapsed:.0f}s with "
+                    f"{completed}/{len(chunks)} chunks done",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[TTS pocket] {voice}: finished {len(chunks)} chunks in "
+                    f"{elapsed:.0f}s ({total_chars:,} chars)",
+                    flush=True,
+                )
+
+        # Which guard fired is the whole diagnosis: "no progress for N s" means
+        # a hung or pathological CLI, "over its N s budget" means the story is
+        # simply too long for this engine. Both used to report the same
+        # uninformative "timed out", which sent the diagnosis the wrong way.
+        if stalled:
+            raise RuntimeError(
+                f"audio.cpp made no progress for {STALL_TIMEOUT:.0f}s "
+                f"({completed}/{len(chunks)} chunks done)"
+            )
+        if over_budget:
+            raise RuntimeError(
+                f"audio.cpp exceeded its {budget:.0f}s budget for a "
+                f"{max(1, total_chars):,}-char story "
+                f"({completed}/{len(chunks)} chunks done) -- try Inflect, "
+                f"or raise POCKET_TIMEOUT"
+            )
         # No merged file is requested: the chunks are joined here so the pause
         # between them can follow punctuation, like the other engines. So the
         # success test is "the CLI exited clean and produced chunk files".
@@ -212,7 +308,7 @@ class PocketEngine(Engine):
                 chars = sum(len(c) for c in chunks[:done])
                 on_progress(min(chars / total_chars, 0.99) * 100.0)
 
-            paths = self._run(chunks, voice, workdir, on_chunk=report)
+            paths = self._run(chunks, voice, workdir, on_chunk=report, total_chars=total_chars)
             for i, path in enumerate(paths):
                 samples, sr = sf.read(path, dtype="float32", always_2d=False)
                 if samples.ndim > 1:
