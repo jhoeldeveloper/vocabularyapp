@@ -721,22 +721,21 @@
     @media (prefers-reduced-motion: reduce) {
         .stream-caret { animation: none; }
     }
-    /* Two rows, so the seek bar is genuinely full width instead of whatever is
-       left after the transport, the clock, Speed, volume and Remove. The five
-       columns let auto-placement handle row 2 in DOM order -- play | time |
-       speed | volume (justify-self:end, inside the 1fr cell so Remove stays
-       pinned right) | remove. `grid-column: 1 / -1` on the seek wrapper is the
-       whole change; the wrapper exists only so the hover tooltip has a
-       positioning context to anchor to. */
-    .story-player { display: grid; grid-template-columns: auto auto auto 1fr auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
-    .story-seek-wrap { grid-column: 1 / -1; position: relative; display: flex; }
+    /* Two rows: the bar on row 1 with the clock beside it, the transport on
+       row 2. The four columns let auto-placement handle row 2 in DOM order --
+       play | volume | Speed | remove, with Speed sitting in the 1fr cell so all
+       the slack lands in the middle and Remove stays pinned to the right edge.
+       DOM order is load-bearing twice over: the seek row must come first to
+       claim row 1, and row 2's order is what puts play and volume left. */
+    .story-player { display: grid; grid-template-columns: auto auto 1fr auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
+    .story-seek-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .story-seek-wrap { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
     .story-seek { flex: 1; width: 100%; min-width: 0; }
-    .story-volume { justify-self: end; }
     /* Hover time. Pointer-events none so it can never swallow the pointermove
        that positions it, and no show/hide-on-click logic to leave stuck. */
     .story-seek-tip { position: absolute; bottom: calc(100% + 4px); transform: translateX(-50%); background-color: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-details); border-radius: 4px; padding: 2px 7px; font-size: 0.75em; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; z-index: 5; }
     .story-seek-tip[hidden] { display: none; }
-    .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; flex-shrink: 0; }
     .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; }
     .story-speed select { padding: 4px 6px; border: 1px solid var(--border-input); border-radius: 4px; background-color: var(--bg-card); color: var(--text-primary); font: inherit; }
     .story-volume { display: flex; align-items: center; gap: 6px; font-size: 0.8em; color: var(--text-meta); }
@@ -1328,13 +1327,29 @@
             </div>
         </div>
         <div class="story-player" id="storyPlayer" style="display:none;">
-            <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
-            <div class="story-seek-wrap" id="storySeekWrap">
-                <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0"
-                       aria-label="Story playback position">
-                <span class="story-seek-tip" id="storySeekTip" hidden>0:00</span>
+            <!-- FIRST child, and that is load-bearing rather than cosmetic.
+                 Grid packs items in DOM order: with the play button first it
+                 claimed row 1 col 1 and pushed the full width bar down a row,
+                 orphaning the play button above it. DOM order below is also
+                 row 2's order: play and volume on the left, Speed and remove
+                 on the right. -->
+            <!-- The clock lives up here with the bar rather than down with the
+                 transport: it is the readout for the position, and next to the
+                 bar it says so. It used to sit between the two clusters. -->
+            <div class="story-seek-row">
+                <div class="story-seek-wrap" id="storySeekWrap">
+                    <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0"
+                           aria-label="Story playback position">
+                    <span class="story-seek-tip" id="storySeekTip" hidden>0:00</span>
+                </div>
+                <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
             </div>
-            <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
+            <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
+            <div class="story-volume" title="Volume">
+                <button id="storyModalVolBtn" class="sort-btn" title="Mute/Unmute"><i class="fa-solid fa-volume-high"></i></button>
+                <input type="range" id="storyModalVolume" min="0" max="1" step="0.05" value="1" title="Volume">
+                <span id="storyModalVolLabel">100%</span>
+            </div>
             <label class="story-speed">Speed
                 <select id="storyModalSpeed">
                     <option value="1">1x</option>
@@ -1343,11 +1358,6 @@
                     <option value="2">2x</option>
                 </select>
             </label>
-            <div class="story-volume" title="Volume">
-                <button id="storyModalVolBtn" class="sort-btn" title="Mute/Unmute"><i class="fa-solid fa-volume-high"></i></button>
-                <input type="range" id="storyModalVolume" min="0" max="1" step="0.05" value="1" title="Volume">
-                <span id="storyModalVolLabel">100%</span>
-            </div>
             <!-- Remove sits inline with the transport it acts on: it deletes the
                  file these controls are playing. It used to live on the action
                  row next to Read Aloud, two rows away from the only thing it
