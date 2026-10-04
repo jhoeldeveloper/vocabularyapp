@@ -721,8 +721,21 @@
     @media (prefers-reduced-motion: reduce) {
         .stream-caret { animation: none; }
     }
-    .story-player { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
-    .story-seek { flex: 1; min-width: 80px; }
+    /* Two rows, so the seek bar is genuinely full width instead of whatever is
+       left after the transport, the clock, Speed, volume and Remove. The five
+       columns let auto-placement handle row 2 in DOM order -- play | time |
+       speed | volume (justify-self:end, inside the 1fr cell so Remove stays
+       pinned right) | remove. `grid-column: 1 / -1` on the seek wrapper is the
+       whole change; the wrapper exists only so the hover tooltip has a
+       positioning context to anchor to. */
+    .story-player { display: grid; grid-template-columns: auto auto auto 1fr auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
+    .story-seek-wrap { grid-column: 1 / -1; position: relative; display: flex; }
+    .story-seek { flex: 1; width: 100%; min-width: 0; }
+    .story-volume { justify-self: end; }
+    /* Hover time. Pointer-events none so it can never swallow the pointermove
+       that positions it, and no show/hide-on-click logic to leave stuck. */
+    .story-seek-tip { position: absolute; bottom: calc(100% + 4px); transform: translateX(-50%); background-color: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-details); border-radius: 4px; padding: 2px 7px; font-size: 0.75em; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; z-index: 5; }
+    .story-seek-tip[hidden] { display: none; }
     .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
     .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; }
     .story-speed select { padding: 4px 6px; border: 1px solid var(--border-input); border-radius: 4px; background-color: var(--bg-card); color: var(--text-primary); font: inherit; }
@@ -1316,7 +1329,11 @@
         </div>
         <div class="story-player" id="storyPlayer" style="display:none;">
             <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
-            <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0">
+            <div class="story-seek-wrap" id="storySeekWrap">
+                <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0"
+                       aria-label="Story playback position">
+                <span class="story-seek-tip" id="storySeekTip" hidden>0:00</span>
+            </div>
             <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
             <label class="story-speed">Speed
                 <select id="storyModalSpeed">
@@ -2673,6 +2690,14 @@ let readAloudAllowed = false;
 // story can stop the first one's audio without losing its position in the row.
 let currentStoryAudio = null;
 
+function setStoryPlayerVisible(on) {
+  // 'grid', not 'flex': the strip is a two-row grid so the seek bar can span
+  // it. This is the only place that writes the display, because an inline
+  // style outranks the stylesheet -- a `display:flex` left anywhere else would
+  // silently switch the whole layout back to one squeezed row.
+  document.getElementById('storyPlayer').style.display = on ? 'grid' : 'none';
+}
+
 function renderStoryAudioRow() {
   const genBtn = document.getElementById('storyModalReadBtn');
   const picker = document.querySelector('#storyModalOverlay .tts-actions-right');
@@ -2694,13 +2719,28 @@ function renderStoryAudioRow() {
     // above the player. Everything this row did -- play, remove -- lives in the
     // transport by then.
     if (row) row.style.display = 'none';
-    player.style.display = 'flex';
+    setStoryPlayerVisible(true);
   } else {
     if (row) row.style.display = '';
-    player.style.display = 'none';
+    setStoryPlayerVisible(false);
     genBtn.style.display = readAloudAllowed ? '' : 'none';
     if (picker) picker.style.display = readAloudAllowed ? '' : 'none';
   }
+}
+
+// Repaint the transport from the attached audio. Module scope on purpose: it
+// used to be a closure inside attachStoryAudio(), which left the keyboard
+// handler with no way to update the bar after seeking -- it would move the
+// audio but leave the clock and the thumb showing the old position.
+function updateStorySeek(audio) {
+  const a = audio || currentStoryAudio || currentAudio;
+  const seek = document.getElementById('storyModalSeek');
+  if (!a || !seek) return;
+  const dur = a.duration || 0;
+  seek.max = dur;
+  seek.value = a.currentTime || 0;
+  document.getElementById('storyModalTime').textContent =
+    `${formatTime(a.currentTime)} / ${formatTime(dur)}`;
 }
 
 // Load the saved narration into the player without starting it.
@@ -2721,14 +2761,14 @@ async function attachStoryAudio(storyId, audioPath) {
   audio.preload = 'metadata';
   currentStoryAudio = audio;
   showStoryPlayer();
-  const tick = () => {
-    const seek = document.getElementById('storyModalSeek');
-    const dur = audio.duration || 0;
-    seek.max = dur;
-    seek.value = audio.currentTime || 0;
-    document.getElementById('storyModalTime').textContent =
-      `${formatTime(audio.currentTime)} / ${formatTime(dur)}`;
-  };
+  // Pinned to this file, not to the module variable: the old closure captured
+  // its own Audio, so a leftover timeupdate from a previous story could not
+  // repaint the bar belonging to the story now open.
+  const tick = () => updateStorySeek(audio);
+  // Paint once before the metadata arrives: until then duration is NaN and the
+  // bar would still carry the *previous* story's max, so a hover in that window
+  // (and the clock) would show the last story's length.
+  updateStorySeek(audio);
   audio.ontimeupdate = tick;
   audio.onloadedmetadata = tick;
   audio.onplay = () => {
@@ -3196,8 +3236,13 @@ function formatTime(sec) {
   return `${m}:${s}`;
 }
 
+function hideStorySeekTip() {
+  const tip = document.getElementById('storySeekTip');
+  if (tip) tip.hidden = true;
+}
+
 function showStoryPlayer() {
-  document.getElementById('storyPlayer').style.display = 'flex';
+  setStoryPlayerVisible(true);
 }
 
 function hideStoryPlayer() {
@@ -3218,6 +3263,7 @@ function resetPlayerUi() {
   if (pp) pp.innerHTML = '<i class="fa-solid fa-play"></i>';
   document.getElementById('storyModalSeek').value = 0;
   document.getElementById('storyModalTime').textContent = '0:00 / 0:00';
+  hideStorySeekTip();
 }
 
 function switchStoryTab() {
@@ -5239,6 +5285,73 @@ document.addEventListener('DOMContentLoaded', () => {
         const rate = parseFloat(e.target.value);
         const a = currentStoryAudio || currentAudio;
         if (a) a.playbackRate = rate;
+    });
+
+    // --- Seek bar: hover time, and arrow-key scrubbing ---
+    const seek = document.getElementById('storyModalSeek');
+    const seekTip = document.getElementById('storySeekTip');
+    // Duration comes off the element's own max, which updateStorySeek keeps in
+    // sync with the audio. A second copy of the duration would be a second
+    // thing to forget to update.
+    const seekPercentAt = (clientX) => {
+        const r = seek.getBoundingClientRect();
+        if (!r.width) return 0;
+        return Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    };
+    seek.addEventListener('pointermove', (e) => {
+        const dur = parseFloat(seek.max) || 0;
+        if (!dur) return;
+        const pct = seekPercentAt(e.clientX);
+        // Same formatter as the clock beside it, so the tooltip and the elapsed
+        // time can never render the same second two different ways.
+        seekTip.textContent = formatTime(pct * dur);
+        // Clamp so the bubble stays inside the strip at 0% and 100%, where an
+        // un-clamped translateX(-50%) would hang half of it off the modal edge.
+        const r = seek.getBoundingClientRect();
+        const half = seekTip.offsetWidth / 2 + 2;
+        seekTip.style.left = Math.max(half, Math.min(r.width - half, pct * r.width)) + 'px';
+        seekTip.hidden = false;
+    });
+    // No click-outside hide: pointerleave is the only exit, and a bubble that
+    // can get stuck behind the reader's back is worse than no bubble.
+    seek.addEventListener('pointerleave', hideStorySeekTip);
+    window.addEventListener('blur', hideStorySeekTip);
+
+    // Arrow keys scrub +-5s from anywhere in the modal, not only when the bar
+    // itself has focus -- listening on the seek would make the shortcut useless
+    // while reading, which is when you want it.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        // The story modal must be the TOPMOST open overlay. All overlays share
+        // z-index 2000, so DOM order decides what paints on top: the Prompt Lab
+        // and Story Setup sit after the story modal and can be open at the same
+        // time, and scrubbing a story playing behind a dialog is the same class
+        // of bug as the voice selector that hid once a file existed.
+        const top = [...document.querySelectorAll('.modal-overlay')]
+            .filter(o => o.classList.contains('open')).pop();
+        if (!top || top.id !== 'storyModalOverlay') return;
+        if (!storyHasAudio) return;
+        // Text entry keeps its arrows. Checked as "is this a text field"
+        // rather than "is this an <input>", because input[type=range] IS an
+        // input and is exactly the one element that must come through here --
+        // otherwise it would also take its native step and jump twice.
+        const t = e.target;
+        const typing = t && (t.tagName === 'TEXTAREA'
+            || (t.tagName === 'INPUT' && !['range', 'button', 'checkbox', 'radio'].includes(t.type))
+            || t.isContentEditable);
+        if (typing) return;
+        // A live text selection in the story wins: someone selecting a line to
+        // copy it should be able to extend it with the arrows.
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && document.getElementById('storyModalBody').contains(sel.anchorNode)) return;
+        const a = currentStoryAudio || currentAudio;
+        if (!a || !a.duration) return;
+        // Stop the native 0.1s step on a focused range input as well, or the
+        // thumb moves twice for one keypress.
+        e.preventDefault();
+        const delta = e.key === 'ArrowRight' ? 5 : -5;
+        a.currentTime = Math.min(a.duration, Math.max(0, a.currentTime + delta));
+        updateStorySeek(a);
     });
 
     // --- TTS engine / voice picker ---
