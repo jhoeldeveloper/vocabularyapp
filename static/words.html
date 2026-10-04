@@ -721,22 +721,22 @@
     @media (prefers-reduced-motion: reduce) {
         .stream-caret { animation: none; }
     }
-    /* Two rows: the bar on row 1 with the clock beside it, the transport on
-       row 2. The four columns let auto-placement handle row 2 in DOM order --
-       play | volume | Speed | remove, with Speed sitting in the 1fr cell so all
-       the slack lands in the middle and Remove stays pinned to the right edge.
-       DOM order is load-bearing twice over: the seek row must come first to
-       claim row 1, and row 2's order is what puts play and volume left. */
-    .story-player { display: grid; grid-template-columns: auto auto 1fr auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
-    .story-seek-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; min-width: 0; }
-    .story-seek-wrap { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
+    /* Two rows: the seek bar alone on row 1, the transport on row 2. The five
+       columns let auto-placement handle row 2 in DOM order -- play | volume |
+       clock | Speed | Remove. Speed sits in the 1fr cell and is pushed to that
+       cell's right edge, so the slack collects between the clock and Speed and
+       Speed + Remove read as one right-hand cluster. DOM order is load-bearing
+       twice over: the seek wrapper must come first to claim row 1, and row 2's
+       order is what splits the controls left and right. */
+    .story-player { display: grid; grid-template-columns: auto auto auto 1fr auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-details); flex-shrink: 0; }
+    .story-seek-wrap { grid-column: 1 / -1; position: relative; display: flex; }
     .story-seek { flex: 1; width: 100%; min-width: 0; }
     /* Hover time. Pointer-events none so it can never swallow the pointermove
        that positions it, and no show/hide-on-click logic to leave stuck. */
     .story-seek-tip { position: absolute; bottom: calc(100% + 4px); transform: translateX(-50%); background-color: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-details); border-radius: 4px; padding: 2px 7px; font-size: 0.75em; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; z-index: 5; }
     .story-seek-tip[hidden] { display: none; }
-    .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-    .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; }
+    .story-time { font-size: 0.8em; color: var(--text-meta); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .story-speed { font-size: 0.8em; color: var(--text-meta); display: flex; align-items: center; gap: 4px; justify-self: end; }
     .story-speed select { padding: 4px 6px; border: 1px solid var(--border-input); border-radius: 4px; background-color: var(--bg-card); color: var(--text-primary); font: inherit; }
     .story-volume { display: flex; align-items: center; gap: 6px; font-size: 0.8em; color: var(--text-meta); }
     .story-volume input[type="range"] { width: 80px; accent-color: var(--color-success); cursor: pointer; }
@@ -1331,18 +1331,14 @@
                  Grid packs items in DOM order: with the play button first it
                  claimed row 1 col 1 and pushed the full width bar down a row,
                  orphaning the play button above it. DOM order below is also
-                 row 2's order: play and volume on the left, Speed and remove
-                 on the right. -->
-            <!-- The clock lives up here with the bar rather than down with the
-                 transport: it is the readout for the position, and next to the
-                 bar it says so. It used to sit between the two clusters. -->
-            <div class="story-seek-row">
-                <div class="story-seek-wrap" id="storySeekWrap">
-                    <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0"
-                           aria-label="Story playback position">
-                    <span class="story-seek-tip" id="storySeekTip" hidden>0:00</span>
-                </div>
-                <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
+                 row 2's order: play and volume on the left, the clock then
+                 Speed and Remove on the right. The clock belongs with the
+                 transport rather than beside the bar: up there it sat alone in
+                 the far corner, above Remove, reading as a caption to nothing. -->
+            <div class="story-seek-wrap" id="storySeekWrap">
+                <input type="range" id="storyModalSeek" class="story-seek" min="0" max="100" step="0.1" value="0"
+                       aria-label="Story playback position">
+                <span class="story-seek-tip" id="storySeekTip" hidden>0:00</span>
             </div>
             <button id="storyModalPlayPause" class="sort-btn" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
             <div class="story-volume" title="Volume">
@@ -1350,6 +1346,7 @@
                 <input type="range" id="storyModalVolume" min="0" max="1" step="0.05" value="1" title="Volume">
                 <span id="storyModalVolLabel">100%</span>
             </div>
+            <span id="storyModalTime" class="story-time">0:00 / 0:00</span>
             <label class="story-speed">Speed
                 <select id="storyModalSpeed">
                     <option value="1">1x</option>
@@ -2751,6 +2748,18 @@ function updateStorySeek(audio) {
   seek.value = a.currentTime || 0;
   document.getElementById('storyModalTime').textContent =
     `${formatTime(a.currentTime)} / ${formatTime(dur)}`;
+}
+
+// The one play/pause implementation: the button's click handler and the Space
+// shortcut both call it, so the two cannot disagree about what "playing" means.
+// currentStoryAudio is the file attached to this modal; currentAudio is
+// whatever happens to be sounding (which may be a word sample). Using the
+// latter alone left the button dead whenever the narration had been opened and
+// then stopped.
+function toggleStoryPlayback() {
+  const a = currentStoryAudio || currentAudio;
+  if (!a) return;
+  if (a.paused) { a.play(); } else { a.pause(); }
 }
 
 // Load the saved narration into the player without starting it.
@@ -5278,15 +5287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('storyModalReadBtn').addEventListener('click', (e) => {
         readStoryById(currentModalStoryId, e.currentTarget);
     });
-    document.getElementById('storyModalPlayPause').addEventListener('click', () => {
-        // currentStoryAudio is the file attached to this modal; currentAudio is
-        // whatever happens to be sounding (which may be a word sample). Using
-        // the latter alone left the play/pause button dead whenever the
-        // narration had been opened and then stopped.
-        const a = currentStoryAudio || currentAudio;
-        if (!a) return;
-        if (a.paused) { a.play(); } else { a.pause(); }
-    });
+    document.getElementById('storyModalPlayPause').addEventListener('click', toggleStoryPlayback);
     document.getElementById('storyModalSeek').addEventListener('input', (e) => {
         const a = currentStoryAudio || currentAudio;
         if (a) a.currentTime = parseFloat(e.target.value);
@@ -5297,7 +5298,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a) a.playbackRate = rate;
     });
 
-    // --- Seek bar: hover time, and arrow-key scrubbing ---
+    // --- Seek bar: hover time, and the transport keyboard shortcuts ---
     const seek = document.getElementById('storyModalSeek');
     const seekTip = document.getElementById('storySeekTip');
     // Duration comes off the element's own max, which updateStorySeek keeps in
@@ -5327,11 +5328,17 @@ document.addEventListener('DOMContentLoaded', () => {
     seek.addEventListener('pointerleave', hideStorySeekTip);
     window.addEventListener('blur', hideStorySeekTip);
 
-    // Arrow keys scrub +-5s from anywhere in the modal, not only when the bar
-    // itself has focus -- listening on the seek would make the shortcut useless
-    // while reading, which is when you want it.
+    // Transport shortcuts: arrows scrub +-5s, Space toggles play/pause. Both
+    // work from anywhere in the modal, not only when the bar has focus --
+    // listening on the seek itself would make them useless while reading,
+    // which is when you want them.
+    //
+    // Space is not a free key: it activates a focused button, types into a text
+    // field, and scrolls the focused scrollable. The first two are handed back
+    // to the browser below; the third is the deliberate cost of this shortcut.
+    const PLAYER_KEYS = ['ArrowLeft', 'ArrowRight', ' '];
     document.addEventListener('keydown', (e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (!PLAYER_KEYS.includes(e.key)) return;
         // The story modal must be the TOPMOST open overlay. All overlays share
         // z-index 2000, so DOM order decides what paints on top: the Prompt Lab
         // and Story Setup sit after the story modal and can be open at the same
@@ -5341,24 +5348,38 @@ document.addEventListener('DOMContentLoaded', () => {
             .filter(o => o.classList.contains('open')).pop();
         if (!top || top.id !== 'storyModalOverlay') return;
         if (!storyHasAudio) return;
-        // Text entry keeps its arrows. Checked as "is this a text field"
-        // rather than "is this an <input>", because input[type=range] IS an
-        // input and is exactly the one element that must come through here --
-        // otherwise it would also take its native step and jump twice.
+        // Text entry keeps its arrows and its spaces. Checked as "is this a
+        // text field" rather than "is this an <input>", because
+        // input[type=range] IS an input and is exactly the one element that
+        // must come through here. <select> belongs in this list too: it was
+        // missing, so the arrows changed the Speed select's value instead of
+        // scrubbing.
         const t = e.target;
-        const typing = t && (t.tagName === 'TEXTAREA'
-            || (t.tagName === 'INPUT' && !['range', 'button', 'checkbox', 'radio'].includes(t.type))
+        const tag = t && t.tagName;
+        const typing = t && (tag === 'TEXTAREA' || tag === 'SELECT'
+            || (tag === 'INPUT' && !['range', 'button', 'checkbox', 'radio'].includes(t.type))
             || t.isContentEditable);
         if (typing) return;
+        // A focused control that has its own meaning for these keys keeps it.
+        // Space on a button fires that button's click, so handling it here too
+        // would toggle playback twice over and Play would look dead.
+        const clickable = t && (tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY'
+            || (t.getAttribute && t.getAttribute('role') === 'button')
+            || (tag === 'INPUT' && ['button', 'checkbox', 'radio'].includes(t.type)));
+        if (clickable) return;
         // A live text selection in the story wins: someone selecting a line to
         // copy it should be able to extend it with the arrows.
         const sel = window.getSelection();
         if (sel && !sel.isCollapsed && document.getElementById('storyModalBody').contains(sel.anchorNode)) return;
         const a = currentStoryAudio || currentAudio;
         if (!a || !a.duration) return;
-        // Stop the native 0.1s step on a focused range input as well, or the
-        // thumb moves twice for one keypress.
+        // Prevented in every branch we handle: it stops the focused range input
+        // taking its native 0.1s step on an arrow (the thumb would move twice
+        // for one keypress), and it stops Space from scrolling the story text.
         e.preventDefault();
+        // Holding Space would machine-gun the toggle; one press, one toggle.
+        if (e.key === ' ' && e.repeat) return;
+        if (e.key === ' ') { toggleStoryPlayback(); return; }
         const delta = e.key === 'ArrowRight' ? 5 : -5;
         a.currentTime = Math.min(a.duration, Math.max(0, a.currentTime + delta));
         updateStorySeek(a);
