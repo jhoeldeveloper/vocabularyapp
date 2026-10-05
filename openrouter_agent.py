@@ -1429,6 +1429,36 @@ def _read_story_stream(response, started, model, story_id, on_delta):
     }, None
 
 
+_ROUTING_MARKERS = ("No endpoints found", "removed during routing", "Filter by Fallback")
+
+
+def _routing_failure(status_code, detail, model, provider_tag):
+    """A readable message when OpenRouter could not route to ANY provider.
+
+    With allow_fallbacks off, "nothing to route to" stops being an invisible
+    substitution and becomes a hard failure -- and OpenRouter reports it as a 404
+    whose body is a routing_funnel: several hundred characters of provider
+    filters ("Filter by Tier Endpoint Rows removed openai/flex, openai/fast ...").
+    That is the one failure in this path a user cannot act on, so it is rewritten
+    into the only two things they can: which provider was asked for, and which
+    model does not answer to it.
+
+    Returns None for anything else, so the normal retry path still runs and a
+    genuine 429/5xx is never mistaken for a routing miss.
+    """
+    if status_code != 404:
+        return None
+    if not any(marker in detail for marker in _ROUTING_MARKERS):
+        return None
+    if provider_tag:
+        return (f"Error generating story: provider '{provider_tag}' does not serve "
+                f"'{model}'. Pick a different provider for this model, or clear "
+                f"the provider selection to let OpenRouter route it.")
+    return (f"Error generating story: OpenRouter found no available endpoint for "
+            f"'{model}'. Every provider for it is down or rate-limited -- try "
+            f"again in a moment.")
+
+
 def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
                         on_delta=None, template=None, style=None, system=None,
                         temperature=None, max_tokens=None, reasoning=None,
@@ -1461,11 +1491,20 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
     }
 
     # Provider routing: pin to a specific provider or use default routing.
+    #
+    # allow_fallbacks is False in BOTH branches, and that word "both" is the
+    # whole point. Leaving it unset is NOT the same as saying no -- OpenRouter's
+    # default is to fall back, so the "sort: throughput" branch (every story
+    # generated without an explicit provider) silently retries elsewhere when
+    # the chosen endpoint 5xx/429s. Measured on story 82: OpenAI returned 502 and
+    # Azure served the request, while the UI showed a provider that never ran it.
+    # A provider is now what it says it is, or the run fails and says so.
     if provider_tag:
-        provider_config = {"order": [provider_tag], "allow_fallbacks": True}
+        provider_config = {"order": [provider_tag], "allow_fallbacks": False}
     else:
         provider_config = {
             "sort": "throughput",
+            "allow_fallbacks": False,
         }
 
     payload = {
@@ -1540,6 +1579,12 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             detail = response.text[:400].replace("\n", " ")
             _safe_close(response)
             print(f"[story] OpenRouter {response.status_code} for model='{model}' for {len(words)} words: {detail}", file=sys.stderr, flush=True)
+            # Checked before should_retry: a routing miss is not a transient
+            # failure, so it must not be retried against openrouter/free, and it
+            # must not reach the caller as 400 characters of routing_funnel JSON.
+            routing_err = _routing_failure(response.status_code, detail, model, provider_tag)
+            if routing_err:
+                return {"ok": False, "error": routing_err}
             should_retry = (
                 model != FALLBACK_MODEL and (
                     (response.status_code == 404 and "unavailable for free" in detail.lower())
