@@ -183,6 +183,25 @@ def all_reasoning_efforts():
     return [e for e in EFFORT_ORDER if e in seen] + extra
 
 
+def _effort_rank(name):
+    """Cheap-to-dear position of an effort level; unrecognised names sort last."""
+    # An unrecognised level (deepseek calls its most expensive "max") sorts
+    # ABOVE every known one, so it is never picked as a cheaper substitute.
+    return EFFORT_ORDER.index(name) if name in EFFORT_ORDER else len(EFFORT_ORDER)
+
+
+def _ordered_efforts(supported):
+    """`supported` cheapest first.
+
+    The catalogue does NOT hand these over in cost order -- gpt-6.1-sol-pro
+    lists [max, xhigh, high, medium, low], dearest first -- so anything that
+    treats the first entry as the cheapest will select the most expensive
+    setting on the screen. Sorted here, next to the canonical order that defines
+    it, rather than in the browser where a second copy could drift.
+    """
+    return sorted(supported or [], key=_effort_rank)
+
+
 def _resolve_effort(requested, supported):
     """Clamp a requested effort to what the model supports.
 
@@ -196,10 +215,7 @@ def _resolve_effort(requested, supported):
         return None, True
     if requested in supported:
         return requested, False
-    def rank(name):
-        # An unrecognised level (deepseek calls its most expensive "max") sorts
-        # ABOVE every known one, so it is never picked as a cheaper substitute.
-        return EFFORT_ORDER.index(name) if name in EFFORT_ORDER else len(EFFORT_ORDER)
+    rank = _effort_rank
 
     if requested in supported:
         return requested, False
@@ -398,7 +414,7 @@ def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = No
     warn = False
     model = _reasoning_model(model_id)
     reasoning_meta = (model or {}).get("reasoning") or {}
-    supported = reasoning_meta.get("supported_efforts") or []
+    supported = _ordered_efforts(reasoning_meta.get("supported_efforts"))
     mandatory = bool(reasoning_meta.get("mandatory"))
     if mode in all_reasoning_efforts() and supported and mode not in supported:
         chosen, _ = _resolve_effort(mode, supported)
@@ -476,6 +492,7 @@ def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = No
         # effort levels gets no level control, and a model with no token budget
         # gets no cap control -- a control that cannot affect anything is not
         # worth the space.
+        "off_allowed": not mandatory,
         "cap_supported": cap_supported,
         "cap_reason": cap_reason,
         "supports": {

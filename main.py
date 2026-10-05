@@ -292,6 +292,13 @@ def init_db():
         ("prompt_used", "TEXT"),
         ("prompt_preset", "TEXT"),
         ("style", "TEXT"),
+        # The request config this run was made with, as JSON: temperature,
+        # output budget, reasoning level and reasoning cap. These moved OUT of
+        # the prompt preset (they depend on the model, the preset does not), so
+        # without this column a story row could no longer say what it ran with.
+        # Written from the frozen recipe, never recomputed, and NULL on every
+        # row that predates it -- never backfilled, like the token columns.
+        ("request_config", "TEXT"),
     ):
         if col not in _story_cols:
             _cur.execute(f"ALTER TABLE stories ADD COLUMN {col} {ddl}")
@@ -884,11 +891,12 @@ def api_preview_story(data: StoryPreview):
         raise HTTPException(status_code=400, detail="No words provided.")
     model = data.model or "openrouter/free"
     preset = _active_preset()
+    config = _story_request_config()
     # The cap rides along here so the preview reports what will actually be
-    # SENT, not what the preset stores: a non-reasoning model gets no cap at
-    # all, and saying "2000" there would imply a bound that does not exist.
+    # SENT, not what is stored: a non-reasoning model gets no cap at all, and
+    # saying "2000" there would imply a bound that does not exist.
     reasoning = openrouter_agent.use_reasoning_status(
-        model, preset.get("reasoning", "auto"), preset.get("reasoning_max_tokens", 0) or 0)
+        model, config["reasoning"], config["reasoning_max_tokens"])
 
     # Resolve the style ONCE here and pass it down. build_prompt would draw its
     # own random entry internally, which is fine for the prompt but means the
@@ -917,8 +925,8 @@ def api_preview_story(data: StoryPreview):
         # show the style the preview actually rendered. It is a SAMPLE: the real
         # request draws its own, so the UI must label it as one.
         "resolved_style": style,
-        "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
-        "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
+        "temperature": config["temperature"],
+        "max_tokens": config["max_tokens"],
         # Reasoning cap, resolved the same way -- what will actually be sent,
         # not what the preset happens to say.
         "reasoning_max_tokens": (reasoning.get("config") or {}).get("max_tokens", 0),
@@ -927,11 +935,7 @@ def api_preview_story(data: StoryPreview):
         # out, the second to tell the user their stored value is kept rather
         # than lost ("2,000 kept for other models") instead of silently
         # disappearing along with the control.
-        "reasoning_cap_requested": preset.get("reasoning_max_tokens", 0) or 0,
-        # The preset's stored mode, verbatim. `reasoning.requested` is coerced to
-        # "auto" for anything unrecognised, so a round-trip through the control
-        # would quietly rewrite the value it was editing.
-        "reasoning_mode": preset.get("reasoning", "auto"),
+        "reasoning_cap_requested": config["reasoning_max_tokens"],
         "reasoning": reasoning,
         "words_total": len(words),
         "system": messages[0]["content"],
@@ -1057,7 +1061,7 @@ async def generate_story_job(story_id: int, words: List[str], model: str,
                 "UPDATE stories SET title = ?, content = ?, model = ?, duration_ms = ?, cost = ?, "
                 "prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, "
                 "words_used = ?, words_total = ?, prose_words = ?, warnings = ?, "
-                "style = ?, "
+                "style = ?, request_config = ?, "
                 "status = ?, error = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ? "
                 "AND status = 'generating'",
                 (
@@ -1073,6 +1077,12 @@ async def generate_story_job(story_id: int, words: List[str], model: str,
                     # the settings table: the row must describe THIS run even if
                     # the preset has been edited since.
                     (gen_kwargs or {}).get("style"),
+                    # The request config this run was made with. It lives in
+                    # shared settings now, so without this snapshot the row could
+                    # not say what it ran with. Written once, never recomputed --
+                    # same rule as warnings.
+                    json.dumps({k: (gen_kwargs or {}).get(k) for k in
+                                ("temperature", "max_tokens", "reasoning", "reasoning_max_tokens")}),
                     final_status,
                     story_id,
                 ),
@@ -1162,6 +1172,9 @@ def api_config():
         "meanings_model": get_setting("meanings_model") or "openrouter/free",
         "story_model": get_setting("story_model") or "openrouter/free",
         "story_provider": get_setting("story_provider") or "",
+        # The request config, so the Story Setup controls can render without a
+        # second request and every client agrees on what a story will be sent.
+        **_story_request_config(),
         # Name of the active prompt preset, so the UI can label Generate
         # without a second request.
         "story_prompt_preset": _active_preset().get("name", ""),
@@ -1173,14 +1186,38 @@ def update_config(
     meanings_model: Optional[str] = Body(None),
     story_model: Optional[str] = Body(None),
     story_provider: Optional[str] = Body(None),
+    temperature: Optional[float] = Body(None),
+    max_tokens: Optional[int] = Body(None),
+    reasoning: Optional[str] = Body(None),
+    reasoning_max_tokens: Optional[int] = Body(None),
 ):
-    """Save model selections to DB (single source of truth for all clients)."""
+    """Save model selections and the story request config to the DB.
+
+    Single source of truth for all clients, matching how the model picks already
+    behave. Each field is optional so one caller can change one thing; values
+    are clamped on the way IN as well as on the way out, so a nonsense number
+    cannot even be stored.
+    """
     if meanings_model is not None:
         set_setting("meanings_model", meanings_model)
     if story_model is not None:
         set_setting("story_model", story_model)
     if story_provider is not None:
         set_setting("story_provider", story_provider)
+    # The payload names are the preset field names, so the frontend sends the
+    # same keys the config came back with and _story_request_config() can read
+    # them back without a translation table.
+    if temperature is not None:
+        set_setting("story_temperature", str(max(0.0, min(2.0, float(temperature)))))
+    if max_tokens is not None:
+        set_setting("story_max_tokens", str(max(1000, min(32000, int(max_tokens)))))
+    # 0 is allowed here (it means "no cap"), which is why it is not held to the
+    # 1000 floor the output budget uses.
+    if reasoning_max_tokens is not None:
+        set_setting("story_reasoning_cap", str(max(0, min(100000, int(reasoning_max_tokens)))))
+    if reasoning is not None:
+        if reasoning in openrouter_agent.REASONING_MODES or reasoning in openrouter_agent.EFFORT_ORDER:
+            set_setting("story_reasoning", reasoning)
     return {"ok": True}
 
 
@@ -1202,23 +1239,21 @@ class PromptPreset(BaseModel):
     name: str
     template: str
     style: str = ""
-    temperature: float = openrouter_agent._STORY_TEMPERATURE
-    max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
-    reasoning: str = "auto"
-    reasoning_max_tokens: int = 0
     system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
 class PresetPayload(BaseModel):
-    """Upsert body for POST /api/prompts. Omit id to create."""
+    """Upsert body for POST /api/prompts. Omit id to create.
+
+    Deliberately has no temperature / max_tokens / reasoning / reasoning_cap:
+    those are properties of the REQUEST, not of the prompt, and they depend on
+    the model the user is about to pick. They live in shared settings beside
+    story_model and story_provider instead -- see _story_request_config().
+    """
     id: Optional[str] = None
     name: str
     template: str
     style: str = ""
-    temperature: float = openrouter_agent._STORY_TEMPERATURE
-    max_tokens: int = openrouter_agent._STORY_MAX_TOKENS
-    reasoning: str = "auto"
-    reasoning_max_tokens: int = 0
     system: str = openrouter_agent._DEFAULT_SYSTEM
 
 
@@ -1228,10 +1263,6 @@ def _default_preset():
         "name": "Reddit default",
         "template": openrouter_agent._DEFAULT_TEMPLATE,
         "style": "",  # empty = draw a random REDDIT_STYLES entry per story
-        "temperature": openrouter_agent._STORY_TEMPERATURE,
-        "max_tokens": openrouter_agent._STORY_MAX_TOKENS,
-        "reasoning": "auto",
-        "reasoning_max_tokens": 0,  # 0 = no cap on reasoning tokens
         "system": openrouter_agent._DEFAULT_SYSTEM,
     }
 
@@ -1269,6 +1300,92 @@ def _save_prompt_presets(state):
     set_setting(_PROMPTS_SETTING_KEY, json.dumps(state))
 
 
+# --- The request config (temperature / budget / reasoning) ---
+#
+# These four used to live in each prompt preset, which was the wrong home twice
+# over: they depend on the model, and a preset does not know the model; and
+# their two dependencies (story_model, story_provider) are already global
+# settings, so the derived values were global's odd cousins. They now sit beside
+# those two, are shared across clients like them, and are edited on the Story
+# Setup screen -- the only surface that knows the model.
+#
+# The payoff is the comparison the app actually leans on: two presets that
+# differ only in their prompt now produce comparable health lines, because
+# nothing else differs between the two runs.
+_STORY_CONFIG_SETTINGS = {
+    "temperature": "story_temperature",
+    "max_tokens": "story_max_tokens",
+    "reasoning": "story_reasoning",
+    "reasoning_max_tokens": "story_reasoning_cap",
+}
+
+
+def _story_request_config():
+    """The shared request config, validated and clamped on the way out.
+
+    Clamping lives HERE rather than at save time, deliberately: a stored value
+    can be out of range (hand-edited row, older write) and this is the one place
+    every consumer goes through, so a bad number cannot reach a request.
+    """
+    def _num(key, default, lo, hi):
+        try:
+            return max(lo, min(hi, int(float(get_setting(key)))))
+        except (TypeError, ValueError):
+            return default
+
+    def _float(key, default):
+        try:
+            return max(0.0, min(2.0, float(get_setting(key))))
+        except (TypeError, ValueError):
+            return default
+
+    reasoning = get_setting("story_reasoning") or "low"
+    if reasoning not in openrouter_agent.REASONING_MODES and reasoning not in openrouter_agent.EFFORT_ORDER:
+        reasoning = "auto"
+    return {
+        "temperature": _float("story_temperature", openrouter_agent._STORY_TEMPERATURE),
+        "max_tokens": _num("story_max_tokens", openrouter_agent._STORY_MAX_TOKENS, 1000, 32000),
+        "reasoning": reasoning,
+        "reasoning_max_tokens": _num("story_reasoning_cap", 0, 0, 100000),
+    }
+
+
+def _migrate_story_config_to_settings():
+    """Move the request config out of the presets, once.
+
+    Seeding happens BEFORE anything is deleted, which is the whole safety
+    property: the values land in settings first, so a crash between the two
+    steps loses nothing. Idempotent -- an already-migrated store has neither the
+    settings keys nor the preset fields, and does nothing.
+    """
+    state = _load_prompt_presets()
+    active = next((p for p in state["presets"] if p.get("id") == state.get("active")), None)
+    seeded = False
+    for field, key in _STORY_CONFIG_SETTINGS.items():
+        if get_setting(key) is not None:
+            continue
+        value = (active or {}).get(field)
+        if value is None:
+            continue  # nothing to move; the default in _story_request_config applies
+        set_setting(key, str(value))
+        seeded = True
+
+    stripped = False
+    for p in state["presets"]:
+        for field in _STORY_CONFIG_SETTINGS:
+            if field in p:
+                p.pop(field)
+                stripped = True
+    if stripped:
+        _save_prompt_presets(state)
+    if seeded or stripped:
+        print("[PROMPTS] moved temperature / output budget / reasoning out of the presets "
+              "into shared settings.")
+
+
+_migrate_story_config_to_settings()
+
+
 def _active_preset():
     state = _load_prompt_presets()
     active = state["active"]
@@ -1296,17 +1413,20 @@ def _resolve_prompt_recipe(words, style_override=None):
     style = override or openrouter_agent._resolve_style(preset.get("style"))
     messages = openrouter_agent.build_messages(words, template=preset.get("template"),
                                                style=style, system=preset.get("system"))
+    config = _story_request_config()
     return {
         "prompt_used": f"[system]\n{messages[0]['content']}\n\n[user]\n{messages[1]['content']}",
         "gen_kwargs": {
             "template": preset.get("template"),
             "style": style,
-            "temperature": preset.get("temperature", openrouter_agent._STORY_TEMPERATURE),
-            "max_tokens": preset.get("max_tokens", openrouter_agent._STORY_MAX_TOKENS),
-            "reasoning": preset.get("reasoning", "auto"),
-            # Reasoning-token cap. 0 = no cap, and .get with a default so a
-            # preset saved before this field existed keeps working unchanged.
-            "reasoning_max_tokens": preset.get("reasoning_max_tokens", 0) or 0,
+            # The request config comes from shared settings, not the preset, and
+            # is read here so the snapshot cannot shift under a run in flight.
+            "temperature": config["temperature"],
+            "max_tokens": config["max_tokens"],
+            "reasoning": config["reasoning"],
+            # Reasoning-token cap. 0 = no cap, and .get with a default so a store
+            # saved before this existed keeps working unchanged.
+            "reasoning_max_tokens": config["reasoning_max_tokens"],
             "system": preset.get("system"),
         },
     }
@@ -1346,22 +1466,11 @@ def api_save_preset(payload: PresetPayload):
 
     temperature = max(0.0, min(2.0, float(payload.temperature)))
     max_tokens = max(1000, min(32000, int(payload.max_tokens)))
-    # Reasoning cap, clamped like the budget. 0 means "no cap", so it is allowed
-    # at the bottom of the range rather than the budget's 1000 floor.
-    reasoning_max_tokens = max(0, min(100000, int(payload.reasoning_max_tokens or 0)))
-    reasoning = payload.reasoning if (payload.reasoning in openrouter_agent.REASONING_MODES
-                                      or payload.reasoning in openrouter_agent.EFFORT_ORDER) else "auto"
-
-    state = _load_prompt_presets()
     preset = {
         "id": payload.id or uuid.uuid4().hex[:8],
         "name": name,
         "template": payload.template,
         "style": (payload.style or "").strip(),
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "reasoning": reasoning,
-        "reasoning_max_tokens": reasoning_max_tokens,
         "system": payload.system,
     }
     existing = next((p for p in state["presets"] if p.get("id") == preset["id"]), None)
@@ -1455,6 +1564,11 @@ _STORY_FIELDS = (
     # and is deliberately NOT here -- it would ride along on every list fetch.
     # It has its own endpoint, _STORY_PROMPT_SELECT below.
     "prompt_preset",
+    # The request config this run was made with, as a small JSON blob. It is
+    # here rather than parsed out of prompt_used because it is a handful of
+    # numbers and the snapshot is several KB of prose. NULL on rows written
+    # before the column existed, and never backfilled.
+    "request_config",
     # The REDDIT_STYLES entry this story was written in. A bare TEXT column
     # because it has to render on the list row alongside the title, where the
     # snapshot is not fetched -- parsing it back out of prompt_used would be a

@@ -989,9 +989,12 @@
        dialogs does not resize the world under the cursor. Only the internal
        layout differs. */
     .prompt-lab-modal, .story-setup-modal { width: 90vw; height: 88vh; max-width: none; max-height: none; display: flex; flex-direction: column; }
-    .prompt-lab-bar { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border-details); flex-shrink: 0; }
-    .prompt-lab-bar .sort-btn { font-size: 0.8em; }
-    #promptLabPreset { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 0.9em; padding: 5px 8px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
+    /* One row of preset actions under the picker. They wrap rather than shrink:
+       a button too narrow to read its own label is worse than a second line. */
+    .prompt-lab-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+    .prompt-lab-actions .sort-btn { font-size: 0.78em; }
+    .prompt-lab-active-tag { font-size: 0.72em; color: var(--ok-text); background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+    #promptLabPreset { width: 100%; box-sizing: border-box; min-width: 0; font: inherit; font-size: 0.82em; padding: 5px 7px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
     .prompt-lab-active-tag { font-size: 0.72em; color: var(--ok-text); background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
 
     .prompt-lab-body { flex: 1 1 auto; display: flex; min-height: 0; }
@@ -1074,7 +1077,6 @@
        nothing to edit, so the bar, the props and the template editor all go and
        the stored snapshot gets the whole modal. An empty preset dropdown and a
        greyed-out form would just read as a broken panel. */
-    .prompt-lab-modal.is-asused .prompt-lab-bar,
     .prompt-lab-modal.is-asused .prompt-lab-props,
     .prompt-lab-modal.is-asused .prompt-lab-edit-pane,
     .prompt-lab-modal.is-asused .prompt-lab-tabs { display: none; }
@@ -1083,52 +1085,6 @@
 
     /* Pre-generation preview: the config grid above the prompt. Wide items span
        the row so a long caveat (the reasoning one) gets the width it needs. */
-    /* Wider cells and one line each. A wrapping value used to make its whole
-       grid row taller, so the items beside it ended up top-aligned over two
-       different baselines -- the grid looked broken rather than full. Now a
-       long value truncates with an ellipsis and the full text is in the item's
-       tooltip (genPreviewConfigItem), so rows stay uniform and nothing is
-       hidden without a way to see it. */
-    .gen-preview-config {
-        flex-shrink: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-        gap: 7px 22px; padding: 12px 16px; border-bottom: 1px solid var(--border-details);
-        background: var(--bg-meta); align-items: center;
-    }
-    /* min-width:0 is load-bearing: a grid item defaults to min-content width,
-       which would defeat the ellipsis entirely. */
-    .gen-preview-item {
-        font-size: 0.78em; color: var(--text-secondary); min-width: 0;
-        display: flex; align-items: baseline; gap: 5px;
-        /* A FIXED height, so the rows stay uniform whatever the cell contains.
-           Two earlier attempts let the row height fall out of its content: a
-           wrapping value made its row taller than its neighbours, and the Style
-           select's native text box added 1-2px it would not give up. Both broke
-           the baseline alignment and the grid read as broken rather than full.
-           With the height declared here, a control cannot push the grid. */
-        height: 17px;
-    }
-    .gen-preview-item b { color: var(--text-meta); font-weight: 600; flex-shrink: 0; }
-    /* Baseline alignment is meaningless with a fixed row height and an inline
-       control, so centre both. */
-    .gen-preview-item { align-items: center; }
-    .gen-preview-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* Dotted underline = "there is more here", so a caveat hidden in a tooltip
-       is at least discoverable. */
-    .gen-preview-item.has-note { cursor: help; }
-    /* text-decoration rather than border-bottom: a 1px border made this item a
-       pixel taller than its neighbours and broke the row's baseline alignment. */
-    .gen-preview-item.has-note .gen-preview-value {
-        text-decoration: underline dotted var(--warn-text); text-underline-offset: 2px;
-    }
-    /* A limitation the user is about to pay for, stated in full rather than
-       hidden in a tooltip. Only rendered when the server flags the reasoning
-       note as a warning (reasoning.warn), so "this model does not reason" stays
-       quiet. grid-column spans every cell so it sits under the whole grid. */
-    .gen-preview-warn {
-        grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 6px;
-        font-size: 0.78em; line-height: 1.45; color: var(--warn-text);
-    }
-    .gen-preview-warn i { flex-shrink: 0; margin-top: 0.15em; }
     /* Request controls for the one step that knows the model. Only the settings
        the chosen model actually offers are rendered, so this card can be as
        short as two controls. It sits above the summary grid because it REPLACES
@@ -1138,10 +1094,9 @@
         flex-shrink: 0; border: 1px solid var(--border-details); border-radius: 6px;
         padding: 8px 10px; margin-bottom: 10px; background: var(--bg-meta);
     }
-    /* nowrap is deliberate. A wrapped control would change this card's height
-       and push the prompt down, which is the exact failure the fixed-height
-       .gen-preview-item exists to prevent; removing a control costs width here,
-       never height. */
+    /* nowrap is deliberate. A wrapped control would change this card's height and
+       push the prompt down as the model changes; removing a control costs width
+       here, never height. */
     .gen-controls-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 16px; height: 24px; }
     .gen-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .gen-ctl-label { font-size: 0.78em; color: var(--text-meta); white-space: nowrap; }
@@ -1153,14 +1108,17 @@
     .gen-ctl input[type="number"] { width: 76px; }
     .gen-ctl select { max-width: 140px; }
     .gen-ctl input:focus, .gen-ctl select:focus { outline: 1px solid var(--color-primary); }
-    /* The hint line is always present and always one line tall, whether or not
-       it has anything to say, so switching model cannot move the prompt. The
-       full sentence lives in the title, the same way a truncated grid value
-       does. */
-    .gen-controls-hint {
-        font-size: 0.72em; color: var(--text-meta); line-height: 1.4; margin-top: 5px;
-        min-height: 1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    /* The read-only facts, under a hairline inside the SAME card as the controls.
+       One box rather than two: they are one request, and the separator says
+       "these you set / these are what you chose" without spending a second
+       border and 40px on it. */
+    .gen-static-line {
+        font-size: 0.78em; color: var(--text-secondary);
+        border-top: 1px solid var(--border-details); padding-top: 7px; margin-top: 8px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .gen-static-line b { color: var(--text-meta); font-weight: 600; }
+    .gen-static-line span { margin-right: 14px; }
     .gen-preview-body {
         flex: 1 1 auto; overflow-y: auto; margin: 12px 16px; padding: 12px 14px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76em;
@@ -1490,9 +1448,8 @@
                 </div>
                 <div class="gen-controls" id="setupRequestControls">
                     <div class="gen-controls-row" id="setupRequestControlsRow"></div>
-                    <div class="gen-controls-hint" id="setupRequestHint"></div>
+                    <div class="gen-static-line" id="setupStaticLine"></div>
                 </div>
-                <div class="gen-preview-config" id="setupPreviewConfig" style="border:1px solid var(--border-details); border-radius:6px; margin-bottom:10px;"></div>
                 <div class="prompt-lab-hint" id="setupPreviewNote" style="margin-bottom:6px;"></div>
                 <div id="setupPreviewBody" class="gen-preview-body" style="margin:0;"></div>
             </div>
@@ -1514,17 +1471,23 @@
             <h3 id="promptLabHeading">Story Prompt</h3>
             <button id="promptLabCloseBtn" class="modal-close" title="Close">&times;</button>
         </div>
-        <div class="prompt-lab-bar">
-            <select id="promptLabPreset" title="Prompt presets"></select>
-            <span class="prompt-lab-active-tag" id="promptLabActiveTag" style="display:none;">in use</span>
-            <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
-            <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
-            <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
-            <button id="promptLabResetBtn" class="sort-btn" title="Restore the shipped prompt in this preset">Reset</button>
-            <button id="promptLabResetSysBtn" class="sort-btn" title="Restore the shipped system message">Reset sys</button>
-        </div>
         <div class="prompt-lab-body">
             <div class="prompt-lab-props">
+                <!-- The preset picker and its actions live here rather than in a
+                     bar across the top: they ARE the preset, and the name and
+                     style right below them are the same thing. A bar separated
+                     them by a border and a screen-width gap from the fields they
+                     edit. -->
+                <div class="prompt-lab-field">
+                    <label for="promptLabPreset">Preset</label>
+                    <select id="promptLabPreset" title="Prompt presets"></select>
+                    <div class="prompt-lab-actions">
+                        <span class="prompt-lab-active-tag" id="promptLabActiveTag" style="display:none;">in use</span>
+                        <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
+                        <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
+                        <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
                 <div class="prompt-lab-field">
                     <label for="promptLabName">Preset name</label>
                     <input type="text" id="promptLabName" maxlength="60" placeholder="Reddit default">
@@ -3671,7 +3634,7 @@ function showSetupPreviewStep() {
 async function renderSetupPreview(opts) {
   const keepControls = !!(opts && opts.keepControls);
   const words = Array.from(selectedWords);
-  const cfgBox = document.getElementById('setupPreviewConfig');
+  const cfgBox = document.getElementById('setupStaticLine');
   const body = document.getElementById('setupPreviewBody');
   if (!words.length) {
     cfgBox.innerHTML = '';
@@ -3733,13 +3696,13 @@ function setupCtl(label, node, hint) {
 
 function renderSetupControls(d) {
   const row = document.getElementById('setupRequestControlsRow');
-  const hintEl = document.getElementById('setupRequestHint');
   if (!row) return;
   row.innerHTML = '';
   const r = d.reasoning || {};
   const supports = r.supports || {};
   const capRequested = Number(d.reasoning_cap_requested || 0);
-  const skipped = [];
+  let reasonCtl = null;
+  let budgetCtl = null;
 
   const num = (id, value, attrs) => {
     const i = document.createElement('input');
@@ -3755,20 +3718,19 @@ function renderSetupControls(d) {
     row.appendChild(setupCtl('Temperature',
       num('setupCfgTemperature', d.temperature, { min: 0, max: 2, step: 0.05 }),
       SETUP_CTL_HINTS.temperature));
-  } else {
-    skipped.push('temperature');
   }
 
   const levels = r.supported || [];
   if (levels.length) {
     const sel = document.createElement('select');
     sel.id = 'setupCfgReasoning';
-    // The modes first, then whatever levels THIS model lists. "minimal" is both
-    // a mode and a level some models offer, so the second pass has to skip names
-    // already present or the control shows it twice.
+    // The model's OWN levels, straight from OpenRouter, cheapest first. "Off"
+    // is only offered when the model can actually stop reasoning
+    // (reasoning.mandatory false) -- on a model that always thinks it would be
+    // a switch that does nothing, which is the same mistake as showing a cap
+    // the model cannot honour.
     const seen = new Set();
-    [['auto', 'Auto'], ['off', 'Off'], ['minimal', 'Minimal']]
-      .concat(levels.map(l => [l, l]))
+    (r.off_allowed ? [['off', 'Off']] : []).concat(levels.map(l => [l, l]))
       .forEach(([value, text]) => {
         if (seen.has(value)) return;
         seen.add(value);
@@ -3777,15 +3739,17 @@ function renderSetupControls(d) {
         opt.textContent = text;
         sel.appendChild(opt);
       });
-    // reasoning_mode is the preset's stored value verbatim; reasoning.requested
-    // is coerced to "auto" for anything unrecognised, which would rewrite the
-    // setting the control is editing.
-    sel.value = d.reasoning_mode || r.requested || 'auto';
-    if (!seen.has(sel.value)) sel.value = 'auto';
+    // Default to the cheapest level. `supported` arrives cheapest-first from the
+    // server (the catalogue lists them dearest-first -- gpt-6.1-sol-pro comes
+    // back as [max, xhigh, high, medium, low] -- and the ordering lives next to
+    // the canonical list that defines it, not here where it could drift).
+    // A preset that stored "auto" or "minimal" means exactly this level, so it
+    // is simply written down as what it always meant.
+    sel.value = seen.has(levels[0]) ? levels[0] : (sel.options[0] && sel.options[0].value) || 'auto';
     sel.addEventListener('change', scheduleSetupConfigSave);
-    row.appendChild(setupCtl('Reasoning', sel, SETUP_CTL_HINTS.reasoning));
-  } else {
-    skipped.push('reasoning');
+    const ctl = setupCtl('Reasoning', sel, SETUP_CTL_HINTS.reasoning);
+    row.appendChild(ctl);
+    reasonCtl = ctl;
   }
 
   if (r.cap_supported) {
@@ -3796,26 +3760,24 @@ function renderSetupControls(d) {
   }
 
   if (supports.max_tokens) {
-    row.appendChild(setupCtl('Output budget',
+    const ctl = setupCtl('Output budget',
       num('setupCfgBudget', d.max_tokens, { min: 1000, max: 32000, step: 500 }),
-      SETUP_CTL_HINTS.budget));
-  } else {
-    skipped.push('output budget');
+      SETUP_CTL_HINTS.budget);
+    row.appendChild(ctl);
+    budgetCtl = ctl;
   }
 
-  // One line, always one line tall, so switching model cannot move the prompt.
-  // The full sentence is in the title, the same way a truncated grid value is.
-  const parts = [];
-  if (skipped.length) {
-    parts.push(`${skipped.length} setting${skipped.length === 1 ? '' : 's'} not offered by this model (${skipped.join(', ')})`);
+  // The caveats stay, but as a tooltip on the Reasoning control rather than as
+  // lines under the card. They are the reason a setting is or is not there, so
+  // they belong on the setting; they are not instructions, so they do not earn
+  // a row of their own. Nothing on screen claims a cost it cannot bound.
+  if (r.note) {
+    const target = reasonCtl || budgetCtl || row.lastElementChild;
+    if (target) {
+      const own = target.getAttribute('title');
+      target.title = (own ? own + '\n\n' : '') + r.note;
+    }
   }
-  if (capRequested > 0 && !r.cap_supported) {
-    // Hidden, but not forgotten: the value stays in the preset for the models
-    // that can use it, and saying so stops it looking like it was lost.
-    parts.push(`reasoning cap ${capRequested.toLocaleString()} is not used here — kept for other models`);
-  }
-  const text = parts.join(' · ');
-  if (hintEl) { hintEl.textContent = text; hintEl.title = text; }
 }
 
 let setupConfigTimer = null;
@@ -3824,44 +3786,36 @@ function scheduleSetupConfigSave() {
   setupConfigTimer = setTimeout(saveSetupConfig, 600);
 }
 
-// Writes the edited controls back to the ACTIVE preset. Deliberately not a
-// per-story override: a preset is a recipe, stories.prompt_preset names it, and
-// the row's snapshot has to keep describing the request that was actually sent.
+// Writes the edited controls to shared settings, beside the model and provider
+// they depend on. Deliberately not a per-story override: a preset is the
+// prompt, this is the request, and the row's request_config snapshot has to
+// keep describing the request that was actually sent.
 async function saveSetupConfig() {
   const cap = document.getElementById('setupCfgReasonCap');
   const lvl = document.getElementById('setupCfgReasoning');
   const tmp = document.getElementById('setupCfgTemperature');
   const bud = document.getElementById('setupCfgBudget');
   try {
-    // Re-read rather than trusting promptLab.presets: Story Setup can be opened
-    // without the Lab ever having been, so the cache may not be there at all.
-    const state = await fetch('/api/prompts').then(r => r.json());
-    const p = (state.presets || []).find(x => x.id === state.active);
-    if (!p) return;
-    const payload = {
-      id: p.id, name: p.name, template: p.template, style: p.style || '',
-      system: p.system,
-      // A hidden control keeps its stored value: the settings that are not on
-      // screen are still part of the recipe.
-      temperature: tmp ? (parseFloat(tmp.value) || 0) : (p.temperature != null ? p.temperature : 0.7),
-      max_tokens: bud ? (parseInt(bud.value, 10) || p.max_tokens || 20000) : (p.max_tokens || 20000),
-      // 0 is MEANINGFUL here ("no cap"), so it must not go through the
-      // `|| 20000` idiom the budget uses -- that would read a cap of 0 as
-      // "field left blank" and send nothing, which is the opposite of the point.
-      reasoning_max_tokens: cap ? (parseInt(cap.value, 10) || 0) : (p.reasoning_max_tokens || 0),
-      reasoning: lvl ? lvl.value : (p.reasoning || 'auto'),
-    };
-    const res = await fetch('/api/prompts', {
+    const body = {};
+    // A hidden control is not sent at all, so its stored value survives: the
+    // settings that are not on screen are still part of the request.
+    if (tmp) body.temperature = parseFloat(tmp.value) || 0;
+    if (bud) body.max_tokens = parseInt(bud.value, 10) || 20000;
+    if (lvl) body.reasoning = lvl.value;
+    if (cap) {
+      // 0 is MEANINGFUL here ("no cap"), so it must not go through an `|| nnnn`
+      // idiom -- that would read a cap of 0 as "field left blank".
+      body.reasoning_max_tokens = parseInt(cap.value, 10) || 0;
+    }
+    if (!Object.keys(body).length) return;
+    const res = await fetch('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
     if (!res.ok) return;
-    const saved = (await res.json()).preset;
-    const i = (promptLab.presets || []).findIndex(x => x.id === saved.id);
-    if (i >= 0) promptLab.presets[i] = saved;
-    setSetupStepHint(`Saved to “${saved.name}”`);
+    setSetupStepHint('Saved');
     renderSetupPreview({ keepControls: true });
-  } catch (e) { /* leave the preset as it was; the field still shows the edit */ }
+  } catch (e) { /* leave the stored values as they were; the field still shows the edit */ }
 }
 
 function setupBackToProviders() {
@@ -4793,22 +4747,15 @@ function labCurrentPreset() {
 }
 
 function labPayload() {
-  // Temperature, output budget, reasoning level and reasoning cap are NOT in
-  // this modal any more -- they live on the Story Setup screen, which is the
-  // only place that knows the model. They are read from the stored preset rather
-  // than omitted, because POST /api/prompts is a whole-object upsert: leaving
-  // them out would save the prompt text and quietly reset the recipe's settings
-  // to their defaults.
-  const p = labCurrentPreset() || {};
+  // A preset is now just the prompt: name, system, template, style. The request
+  // settings (temperature, output budget, reasoning level, reasoning cap) are
+  // shared state beside the model and provider, edited on the Story Setup
+  // screen -- so this save neither carries them nor has to preserve them.
   return {
     id: promptLab.currentId,
     name: document.getElementById('promptLabName').value.trim(),
     template: document.getElementById('promptLabTemplate').value,
     style: document.getElementById('promptLabStyle').value,
-    temperature: p.temperature != null ? p.temperature : 0.7,
-    max_tokens: p.max_tokens != null ? p.max_tokens : 20000,
-    reasoning_max_tokens: p.reasoning_max_tokens || 0,
-    reasoning: p.reasoning || 'auto',
     system: document.getElementById('promptLabSystem').value,
   };
 }
@@ -4983,8 +4930,6 @@ function setLabReadonly(on) {
   document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabCopyBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabDeleteBtn').style.display = on ? 'none' : '';
-  document.getElementById('promptLabResetBtn').style.display = on ? 'none' : '';
-  document.getElementById('promptLabResetSysBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabPreset').disabled = on;
 }
 
@@ -5090,7 +5035,7 @@ async function usePromptLabPreset() {
 // (tweak the copy, generate, compare health lines).
 async function duplicatePromptLabPreset() {
   const src = labCurrentPreset();
-  const base = src || { name: 'New preset', template: promptLab.defaultTemplate, style: '', temperature: 0.7, max_tokens: 20000, reasoning: 'auto' };
+  const base = src || { name: 'New preset', template: promptLab.defaultTemplate, style: '' };
   const name = window.prompt('Name for the new preset:', `${base.name} copy`);
   if (name == null) return;
   try {
@@ -5101,13 +5046,6 @@ async function duplicatePromptLabPreset() {
         name: name.trim() || 'New preset',
         template: document.getElementById('promptLabTemplate').value || base.template,
         style: document.getElementById('promptLabStyle').value,
-        temperature: base.temperature != null ? base.temperature : 0.7,
-        max_tokens: base.max_tokens != null ? base.max_tokens : 20000,
-        // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
-        // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
-        // "field left blank" and send nothing, which is the opposite of the point.
-        reasoning_max_tokens: base.reasoning_max_tokens || 0,
-        reasoning: base.reasoning || 'auto',
         system: document.getElementById('promptLabSystem').value,
       }),
     });
@@ -5157,22 +5095,6 @@ async function deletePromptLabPreset() {
 
 // Restores the template shipped in openrouter_agent._DEFAULT_TEMPLATE — not a
 // backup of the last save — so "Reset" always means "what the code ships".
-function resetPromptLabTemplate() {
-  if (!window.confirm('Replace this preset\'s prompt with the shipped default? The style and budget are kept. Save to apply.')) return;
-  document.getElementById('promptLabTemplate').value = promptLab.defaultTemplate;
-  scheduleLabRefresh();
-  showToast('Restored the shipped prompt — press Save to apply');
-}
-
-// The system message has its own reset because it is a separate contract with
-// the parsers: the shipped one is the version known to produce a parseable title.
-function resetPromptLabSystem() {
-  if (!window.confirm('Replace the system message with the shipped default? The output labels are what the title and Read Aloud depend on. Save to apply.')) return;
-  document.getElementById('promptLabSystem').value = promptLab.defaultSystem;
-  scheduleLabRefresh();
-  showToast('Restored the shipped system message — press Save to apply');
-}
-
 function updatePromptLabToolbarLabel() {
   const label = document.getElementById('promptLabToolbarLabel');
   const btn = document.getElementById('promptLabToolbarBtn');
@@ -5193,83 +5115,37 @@ function updatePromptLabToolbarLabel() {
 //  - Reasoning shows the EFFECTIVE value for the chosen model, not the
 //    requested one. A preset asking for "off" against a mandatory-reasoning
 //    model cannot be honoured, and showing "off" would be a lie.
-function genPreviewConfigItem(label, value, cls) {
-  const div = document.createElement('div');
-  div.className = 'gen-preview-item' + (cls ? ' ' + cls : '');
-  const b = document.createElement('b');
-  b.textContent = label;
-  div.appendChild(b);
-  // The value needs its own element: `text-overflow: ellipsis` cannot apply to
-  // a bare text node inside a flex container.
-  const span = document.createElement('span');
-  span.className = 'gen-preview-value';
-  span.textContent = value;
-  div.appendChild(span);
-  // A truncated value must still be readable, so anything long enough to be
-  // cut off carries the full text as its tooltip.
-  if (String(value).length > 24) div.title = String(value);
-  return div;
-}
-
-// Renders a /api/story/preview payload into a config grid + prompt body.
-// Used by step 3 of Story Setup — the only place the prompt is previewed,
-// since picking the model and provider is what the preview depends on.
+// Renders a /api/story/preview payload into the read-only line under the
+// controls + the prompt body. Used by step 3 of Story Setup — the only place
+// the prompt is previewed, since picking the model and provider is what the
+// preview depends on.
+//
+// Only three facts are not already on screen: the model, the provider and how
+// many words are going in. The prompt preset, the style and the reasoning
+// outcome used to have rows here; each one is either visible somewhere else
+// (the preset is named by the toolbar that opened this) or already editable
+// directly above, and a value shown twice is noise.
 function fillGenPreview(cfgBox, body, d, noteId) {
-  const r = d.reasoning || {};
   cfgBox.innerHTML = '';
   [
-    ['Prompt preset', d.preset],
     ['Model', d.model],
     ['Provider', d.provider],
-    ['Style', d.resolved_style || d.style],
     ['Words', String(d.words_total)],
-    // Kept even though the strip above edits the same setting: this row is the
-    // OUTCOME (asked -> what will be sent), not the input, so it is not a
-    // duplicate of the control. It is where "your cap is not used here" and
-    // "minimal was clamped to low" become visible.
-    // Asked vs. effective, so a request the provider will ignore is visible
-    // rather than assumed.
-    ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
-  ].forEach(([label, value]) => cfgBox.appendChild(genPreviewConfigItem(label, value)));
+  ].forEach(([label, value]) => {
+    const b = document.createElement('b');
+    b.textContent = label + ' ';
+    const span = document.createElement('span');
+    span.textContent = value;
+    cfgBox.appendChild(b);
+    cfgBox.appendChild(span);
+  });
 
   // The style on screen is the style that will be sent, so remember it for the
   // generate request. Without this the generation would draw its own style and
   // the preview would be a sample again, which is the whole thing this cell
-  // exists to prevent.
+  // exists to prevent. NOTE: read from the payload, never from a displayed row
+  // — that is what keeps removing the Style row from changing what is sent.
   if (d.resolved_style) storyStyleShown = d.resolved_style;
-
-  // The reasoning caveat and the model's level list are reference detail, not
-  // a call to action, so they hang off the Reasoning item as a tooltip. They
-  // used to be two extra rows (one of them a full-width amber line) and pushed
-  // the actual prompt below the fold.
-  const reasoningItem = cfgBox.lastElementChild;
-  if (reasoningItem) {
-    const bits = [];
-    if (r.note) bits.push(r.note);
-    if (r.supported && r.supported.length) bits.push('This model offers: ' + r.supported.join(', ') + '.');
-    if (bits.length) {
-      // Keep whatever tooltip the value itself earned -- the value is the
-      // first thing anyone wants from a truncated cell.
-      const own = reasoningItem.getAttribute('title');
-      reasoningItem.title = (own ? own + ' — ' : '') + bits.join(' ');
-      reasoningItem.classList.add('has-note');
-    }
-  }
-
-  // A warning about what this request will cost, shown as text the user cannot
-  // miss. It was tooltip-only, which is the worst place for it: the tooltip is
-  // invisible until hovered, and this is the case where the user is about to
-  // pay for reasoning they cannot switch off. The supported-effort list stays
-  // in the tooltip -- it is reference detail, not a call to action.
-  if (r.warn && r.note) {
-    const warnRow = document.createElement('div');
-    warnRow.className = 'gen-preview-warn';
-    warnRow.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
-    const warnText = document.createElement('span');
-    warnText.textContent = r.note;
-    warnRow.appendChild(warnText);
-    cfgBox.appendChild(warnRow);
-  }
 
   const note = document.getElementById(noteId);
   if (note) {
@@ -5742,8 +5618,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('promptLabUseBtn').addEventListener('click', usePromptLabPreset);
     document.getElementById('promptLabCopyBtn').addEventListener('click', duplicatePromptLabPreset);
     document.getElementById('promptLabDeleteBtn').addEventListener('click', deletePromptLabPreset);
-    document.getElementById('promptLabResetBtn').addEventListener('click', resetPromptLabTemplate);
-    document.getElementById('promptLabResetSysBtn').addEventListener('click', resetPromptLabSystem);
     document.getElementById('promptLabPreset').addEventListener('change', (e) => {
         if (promptLab.asUsed) return;
         loadPromptLabPreset(e.target.value);
