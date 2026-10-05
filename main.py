@@ -922,6 +922,16 @@ def api_preview_story(data: StoryPreview):
         # Reasoning cap, resolved the same way -- what will actually be sent,
         # not what the preset happens to say.
         "reasoning_max_tokens": (reasoning.get("config") or {}).get("max_tokens", 0),
+        # ...and what the preset ASKED for. These differ whenever the model has
+        # no token budget, and the UI needs both: the first to say what goes
+        # out, the second to tell the user their stored value is kept rather
+        # than lost ("2,000 kept for other models") instead of silently
+        # disappearing along with the control.
+        "reasoning_cap_requested": preset.get("reasoning_max_tokens", 0) or 0,
+        # The preset's stored mode, verbatim. `reasoning.requested` is coerced to
+        # "auto" for anything unrecognised, so a round-trip through the control
+        # would quietly rewrite the value it was editing.
+        "reasoning_mode": preset.get("reasoning", "auto"),
         "reasoning": reasoning,
         "words_total": len(words),
         "system": messages[0]["content"],

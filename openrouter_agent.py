@@ -54,6 +54,11 @@ _STORY_MAX_ELAPSED = 480
 _STORY_CONNECT_TIMEOUT = 10
 _STORY_READ_TIMEOUT = 30
 
+# A reasoning cap larger than the story budget would let the model think the
+# whole budget away and leave no prose at all, so a cap is clamped to leave this
+# much of max_tokens for the story itself.
+_REASON_CAP_MIN_HEADROOM = 500
+
 # Error strings shared with the UI / log.
 _STORY_ERR_CANCELLED = "Story generation cancelled."
 _STORY_ERR_DISCONNECTED = "Error generating story: connection closed."
@@ -243,15 +248,15 @@ def _get_reasoning_config(model_id: str, mode: str = "auto", max_tokens: int = N
     if model_id in ("openrouter/free", "openrouter/auto"):
         # Meta-routers pick a backend for you, so there is nothing meaningful to
         # hold on or off; reasoning stays off whatever was asked.
-        return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
+        return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens, model_id)
 
     if model is None:
         # Unknown model (custom id, catalogue fetch failed). "off" is still
         # worth sending: a provider that honours it will use it. An explicit
         # effort goes out as requested -- there is nothing to clamp it to.
         if mode == "off":
-            return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
-        return _with_reason_cap({"effort": mode, "exclude": True}, max_tokens) if mode in EFFORT_ORDER else None
+            return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens, model_id)
+        return _with_reason_cap({"effort": mode, "exclude": True}, max_tokens, model_id) if mode in EFFORT_ORDER else None
 
     reasoning = model.get("reasoning")
     if not reasoning:
@@ -260,26 +265,43 @@ def _get_reasoning_config(model_id: str, mode: str = "auto", max_tokens: int = N
         # reasoning to cap, and sending it would imply there is.
         return None
 
-    efforts = reasoning.get("supported_efforts") or ["low"]
+    # The catalogue lists no levels, so there is nothing honest to clamp to.
+    # This used to fall back to ["low"], which invented a level the model never
+    # advertised -- and the UI shows no level control for such a model, so the
+    # invention would also have been invisible.
+    efforts = reasoning.get("supported_efforts") or []
     mandatory = bool(reasoning.get("mandatory", False))
 
+    def with_effort(effort):
+        # No level to send is not a failure: a cap, if this model has one, is a
+        # complete request on its own.
+        config = {"effort": effort, "exclude": True} if effort else None
+        return _with_reason_cap(config, max_tokens, model_id)
+
     if mode == "off" and not mandatory:
-        return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
+        return with_effort("none")
     if mode == "minimal":
-        lowest, _ = _resolve_effort("minimal", efforts)
-        return _with_reason_cap({"effort": lowest or efforts[-1], "exclude": True}, max_tokens)
+        return with_effort(_lowest_effort(efforts))
     if mode not in REASONING_MODES:
         # An explicit effort level. Clamped to what this model supports.
         effort, _ = _resolve_effort(mode, efforts)
-        return _with_reason_cap({"effort": effort, "exclude": True}, max_tokens)
+        return with_effort(effort)
     # mandatory: cannot be turned off, so ask for the cheapest thing available.
     if mandatory:
-        lowest, _ = _resolve_effort("minimal", efforts)
-        return _with_reason_cap({"effort": lowest or efforts[-1], "exclude": True}, max_tokens)
-    return _with_reason_cap({"effort": "none", "exclude": True}, max_tokens)
+        return with_effort(_lowest_effort(efforts))
+    return with_effort("none")
 
 
-def _with_reason_cap(config, max_tokens):
+def _lowest_effort(efforts):
+    """The cheapest level a model offers, or None when it lists none."""
+    efforts = list(efforts or [])
+    if not efforts:
+        return None
+    lowest, _ = _resolve_effort("minimal", efforts)
+    return lowest or efforts[-1]
+
+
+def _with_reason_cap(config, max_tokens, model_id=None):
     """Apply the preset's reasoning rule: a CAP REPLACES the level.
 
     OpenRouter accepts either ``reasoning.effort`` or ``reasoning.max_tokens``,
@@ -293,15 +315,25 @@ def _with_reason_cap(config, max_tokens):
     Both fields stay in the preset either way, so clearing the cap brings the
     level straight back. That is the whole reason this is a rule about which
     knob wins rather than a lossy merge.
+
+    The one case where NEITHER replacement is acceptable is a model with no
+    token budget: the cap would be dropped by the provider (measured), and
+    displacing the level to send it would leave the model at whatever default
+    it happens to have. On gpt-6.1-sol-pro that turned a "low" run into a
+    "medium" one -- 5.2x the reasoning for a cap that was never enforced. So an
+    unsupported cap is dropped and the level is sent untouched. Losing a ceiling
+    is survivable; silently buying a more expensive model is not.
     """
-    if not config:
-        return config
+    config = config or {}
     try:
         cap = int(max_tokens or 0)
     except (TypeError, ValueError):
-        return config
+        return config or None
     if cap <= 0:
-        return config
+        return config or None
+    supported, _reason = _reasoning_cap_support(model_id)
+    if not supported:
+        return config or None
     # The cap wins: drop the effort rather than 400-ing. The shape is rebuilt
     # from scratch rather than dict.pop()'d so what is returned cannot depend on
     # which branch produced it.
@@ -312,6 +344,44 @@ def _reasoning_model(model_id: str):
     """The catalogue entry for a model, or None if it is not known."""
     models, _ = _fetch_models()
     return next((m for m in models if m["id"] == model_id), None)
+
+
+def _model_supports(model_id: str, parameter: str) -> bool:
+    """Whether the model accepts a request parameter at all.
+
+    True when the model is unknown: a custom id or a catalogue fetch that failed
+    must not make controls disappear, because we cannot prove they do nothing.
+    """
+    model = _reasoning_model(model_id)
+    if model is None:
+        return True
+    return parameter in (model.get("supported_parameters") or [])
+
+
+def _reasoning_cap_support(model_id: str):
+    """``(supported, reason)`` -- can this model bound reasoning with tokens?
+
+    Two architectures exist. A token-budget model (Anthropic, Qwen, Nemotron,
+    longcat) advertises ``reasoning.supports_max_tokens`` and can be told to
+    stop thinking after N tokens. An effort-level model (OpenAI, xAI, Gemini)
+    has no such control -- measured on gpt-6.1-sol-pro: a 50-token cap came back
+    with 394 reasoning tokens, the same band as sending no cap at all, while
+    effort:low genuinely worked. The catalogue states this per model, so the
+    app can tell the two apart instead of guessing.
+    """
+    if not model_id:
+        return True, "no model chosen yet"
+    model = _reasoning_model(model_id)
+    if model is None:
+        # Unknown model. Sending the cap is harmless: a model that does not
+        # reason ignores it (verified, HTTP 200), and there is nothing to check
+        # it against.
+        return True, "this model is not in the catalogue, so the cap is sent as a request"
+    reasoning = model.get("reasoning") or {}
+    if reasoning.get("supports_max_tokens"):
+        return True, ""
+    return False, ("this model thinks in effort levels, not a token budget "
+                   "-- so a cap cannot be honoured")
 
 
 def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = None):
@@ -370,7 +440,23 @@ def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = No
     # A cap REPLACES the level, so any note about the level the user chose is now
     # describing something that is not sent. It has to be replaced rather than
     # appended, or the preview shows a caveat about a level that never leaves.
-    if config and config.get("max_tokens"):
+    cap_requested = 0
+    try:
+        cap_requested = int(max_tokens or 0)
+    except (TypeError, ValueError):
+        pass
+    cap_supported, cap_reason = _reasoning_cap_support(model_id)
+    if cap_requested > 0 and not cap_supported:
+        # The cap is not sent, and the level is sent untouched rather than being
+        # displaced by a field the provider drops. Without this the preview
+        # claimed a ceiling that did not exist.
+        note = (f"Your reasoning cap of {cap_requested:,} tokens is not used by this "
+                f"model: {cap_reason}. Your reasoning level is sent exactly as it "
+                f"would be with no cap, so nothing is silently made dearer.")
+        # warn=True: this is a ceiling the user chose that cannot be bought, and
+        # the run stays unbounded in the one direction they were trying to bound.
+        warn = True
+    elif config and config.get("max_tokens"):
         note = (f"A reasoning cap of {config['max_tokens']:,} tokens replaces the "
                 f"reasoning level — the model reasons at its own default "
                 f"intensity and stops there. This is a ceiling on time and cost, "
@@ -386,26 +472,46 @@ def use_reasoning_status(model_id: str, mode: str = "auto", max_tokens: int = No
         "config": config,
         "note": note,
         "warn": warn,
+        # What the preview panel gates its controls on. A model that lists no
+        # effort levels gets no level control, and a model with no token budget
+        # gets no cap control -- a control that cannot affect anything is not
+        # worth the space.
+        "cap_supported": cap_supported,
+        "cap_reason": cap_reason,
+        "supports": {
+            "temperature": _model_supports(model_id, "temperature"),
+            "max_tokens": _model_supports(model_id, "max_tokens"),
+        },
     }
 
 
-def _reason_cfg_label(reasoning_config) -> str:
+def _reason_cfg_label(reasoning_config, ignored_cap=0) -> str:
     """Compact label for request logs: none / low / not-set, plus the cap.
 
     The cap is in the label rather than a separate line because the two are one
     decision: "low (cap 2000)" says what a run actually allowed, where "low"
     alone would read as unlimited right next to a `reason/vis=12.1`.
+
+    `ignored_cap` is the cap the preset asked for and the model could not
+    honour. It has to appear here: a label reading "cap 2000" for a request that
+    carried no cap at all is the exact sentence that made this look like a cap
+    that "didn't work", when in fact no cap was ever sent.
     """
     if not reasoning_config:
-        return "not-set"
-    cap = reasoning_config.get("max_tokens")
-    effort = reasoning_config.get("effort")
-    if cap:
-        # The cap REPLACES the level, so there is no effort to name. Labelling it
-        # "on (cap 2000)" would read as "on, and also capped" -- the exact
-        # combination the API rejects.
-        return f"cap {cap}"
-    return effort if effort else "on"
+        label = "not-set"
+    else:
+        cap = reasoning_config.get("max_tokens")
+        effort = reasoning_config.get("effort")
+        if cap:
+            # The cap REPLACES the level, so there is no effort to name.
+            # Labelling it "on (cap 2000)" would read as "on, and also capped"
+            # -- the exact combination the API rejects.
+            label = f"cap {cap}"
+        else:
+            label = effort if effort else "on"
+    if ignored_cap:
+        label += f" (cap {ignored_cap:,} ignored)"
+    return label
 
 
 def _fetch_models(force=False):
@@ -426,6 +532,12 @@ def _fetch_models(force=False):
                         "completion": float(p.get("completion") or 0),
                     },
                     "reasoning": m.get("reasoning"),
+                    # Which request parameters this model actually accepts.
+                    # Cached because the UI must not offer a control the model
+                    # cannot honour: gpt-6.1-sol-pro, for one, accepts no
+                    # temperature at all, and has been ignoring the 0.7 this app
+                    # has been sending it since the beginning.
+                    "supported_parameters": m.get("supported_parameters") or [],
                 })
             _models_cache["data"] = models
             _models_cache["fetched_at"] = now
@@ -1537,9 +1649,40 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
 
     # Reasoning config: derived from the model catalogue, or from the preset's
     # preference. `reasoning` is only a request -- see use_reasoning_status().
-    reasoning_config = _get_reasoning_config(model, reasoning, reasoning_max_tokens)
+    #
+    # Two corrections happen here rather than at save time, because this is the
+    # first point where the cap, the model's capability and the story budget are
+    # all known at once (the preset is model-independent, so it can check none of
+    # them on its own):
+    #   1. A cap larger than the story budget is incoherent -- the model could
+    #      spend the entire budget thinking and leave no room for prose.
+    #   2. A cap the model cannot honour is dropped, and the effort level is
+    #      sent untouched. Displacing the level to send it would leave the model
+    #      at its own default, which on gpt-6.1-sol-pro is "medium": 5.2x the
+    #      reasoning of the "low" the user actually asked for.
+    cap_requested = 0
+    try:
+        cap_requested = int(reasoning_max_tokens or 0)
+    except (TypeError, ValueError):
+        pass
+    cap_applied = cap_requested
+    if cap_requested > 0:
+        headroom = max(0, max_tokens - _REASON_CAP_MIN_HEADROOM)
+        if cap_requested > headroom:
+            cap_applied = headroom
+    cap_supported, cap_reason = _reasoning_cap_support(model)
+    ignored_cap = cap_requested if (cap_requested > 0 and not cap_supported) else 0
+
+    reasoning_config = _get_reasoning_config(model, reasoning, cap_applied)
     if reasoning_config:
         payload["reasoning"] = reasoning_config
+    if cap_requested > 0 and cap_applied != cap_requested:
+        print(f"[story] reasoning cap {cap_requested} clamped to {cap_applied} for story {story_id}: "
+              f"a cap at or above the story budget would leave no room for prose "
+              f"(max_tokens={max_tokens})", file=sys.stderr, flush=True)
+    if ignored_cap:
+        print(f"[story] reasoning cap {ignored_cap} NOT sent for story {story_id}: {cap_reason}; "
+              f"the reasoning level was sent instead", file=sys.stderr, flush=True)
 
     def post():
         return requests.post(
@@ -1733,7 +1876,7 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         print(
             f"[story] {id_part}ok | model={actual_model} via {provider_name}{gen_part} | words={len(words)} | "
             f"in={prompt_tokens} out={completion_tokens} (reason={reasoning_tokens}, visible={visible_tokens}) "
-            f"total={total_tokens}{native_part} | reason_cfg={_reason_cfg_label(reasoning_config)} | "
+            f"total={total_tokens}{native_part} | reason_cfg={_reason_cfg_label(reasoning_config, ignored_cap)} | "
             f"{elapsed:.1f}s | {finish}{trunc_part} | ${cost:.4f} | chars={chars} | {health}",
             flush=True,
         )

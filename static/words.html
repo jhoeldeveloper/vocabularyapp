@@ -1129,6 +1129,38 @@
         font-size: 0.78em; line-height: 1.45; color: var(--warn-text);
     }
     .gen-preview-warn i { flex-shrink: 0; margin-top: 0.15em; }
+    /* Request controls for the one step that knows the model. Only the settings
+       the chosen model actually offers are rendered, so this card can be as
+       short as two controls. It sits above the summary grid because it REPLACES
+       the four rows the grid used to spend on these same values -- showing a
+       value in an editable field and again in a row beneath it was noise. */
+    .gen-controls {
+        flex-shrink: 0; border: 1px solid var(--border-details); border-radius: 6px;
+        padding: 8px 10px; margin-bottom: 10px; background: var(--bg-meta);
+    }
+    /* nowrap is deliberate. A wrapped control would change this card's height
+       and push the prompt down, which is the exact failure the fixed-height
+       .gen-preview-item exists to prevent; removing a control costs width here,
+       never height. */
+    .gen-controls-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 16px; height: 24px; }
+    .gen-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .gen-ctl-label { font-size: 0.78em; color: var(--text-meta); white-space: nowrap; }
+    .gen-ctl input, .gen-ctl select {
+        font: inherit; font-size: 0.8em; padding: 3px 6px;
+        border: 1px solid var(--border-input); border-radius: 4px;
+        background: var(--bg-card); color: var(--text-primary);
+    }
+    .gen-ctl input[type="number"] { width: 76px; }
+    .gen-ctl select { max-width: 140px; }
+    .gen-ctl input:focus, .gen-ctl select:focus { outline: 1px solid var(--color-primary); }
+    /* The hint line is always present and always one line tall, whether or not
+       it has anything to say, so switching model cannot move the prompt. The
+       full sentence lives in the title, the same way a truncated grid value
+       does. */
+    .gen-controls-hint {
+        font-size: 0.72em; color: var(--text-meta); line-height: 1.4; margin-top: 5px;
+        min-height: 1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .gen-preview-body {
         flex: 1 1 auto; overflow-y: auto; margin: 12px 16px; padding: 12px 14px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76em;
@@ -1456,6 +1488,10 @@
                     <span class="model-name" id="setupPreviewModelLabel"></span>
                     <button id="setupBackToProvidersBtn" class="sort-btn" style="margin-left:auto; font-size:0.78em;">&#8592; Provider</button>
                 </div>
+                <div class="gen-controls" id="setupRequestControls">
+                    <div class="gen-controls-row" id="setupRequestControlsRow"></div>
+                    <div class="gen-controls-hint" id="setupRequestHint"></div>
+                </div>
                 <div class="gen-preview-config" id="setupPreviewConfig" style="border:1px solid var(--border-details); border-radius:6px; margin-bottom:10px;"></div>
                 <div class="prompt-lab-hint" id="setupPreviewNote" style="margin-bottom:6px;"></div>
                 <div id="setupPreviewBody" class="gen-preview-body" style="margin:0;"></div>
@@ -1497,32 +1533,6 @@
                     <label for="promptLabStyle">Style</label>
                     <select id="promptLabStyle"></select>
                     <div class="prompt-lab-hint" id="promptLabStyleHint">One is drawn at random for every story.</div>                </div>
-                <div class="prompt-lab-field">
-                    <label for="promptLabTemp">Temperature</label>
-                    <input type="number" id="promptLabTemp" min="0" max="2" step="0.05">
-                    <div class="prompt-lab-hint">Higher is looser. 0.7 is the default.</div>
-                </div>
-                <div class="prompt-lab-field">
-                    <label for="promptLabReasoning">Reasoning</label>
-                    <select id="promptLabReasoning"></select>
-                    <div class="prompt-lab-hint" id="promptLabReasoningHint">Auto reads the model
-                        catalogue: reasoning off when it can be, cheapest effort when it cannot.</div>
-                </div>
-                <div class="prompt-lab-field">
-                    <label for="promptLabReasonMaxTokens">Reasoning cap (max tokens)</label>
-                    <input type="number" id="promptLabReasonMaxTokens" min="0" max="100000" step="250" placeholder="0 = no cap">
-                    <div class="prompt-lab-hint">0 means no cap, and the reasoning level is used. Above 0 the cap
-                        <em>replaces</em> that level &mdash; the model reasons at its own default intensity and
-                        stops there. It bounds reasoning only; the output budget below bounds the
-                        <em>story</em>. Some providers ignore it.</div>
-                </div>
-                <div class="prompt-lab-field">
-                    <label for="promptLabMaxTokens">Output budget (max tokens)</label>
-                    <input type="number" id="promptLabMaxTokens" min="1000" max="32000" step="500">
-                    <div class="prompt-lab-hint" id="promptLabBudgetHint">The only length bound. It does <em>not</em> bound
-                        reasoning: a mandatory-reasoning model can spend tens of thousands of tokens thinking and still
-                        hit this, which publishes the story as &ldquo;cut off&rdquo;.</div>
-                </div>
             </div>
             <div class="prompt-lab-main">
                 <!-- One tab per message. They are separate messages to the API
@@ -3658,7 +3668,8 @@ function showSetupPreviewStep() {
 
 // The same payload and the same renderer as the standalone Preview button --
 // one code path, so the two cannot describe different stories.
-async function renderSetupPreview() {
+async function renderSetupPreview(opts) {
+  const keepControls = !!(opts && opts.keepControls);
   const words = Array.from(selectedWords);
   const cfgBox = document.getElementById('setupPreviewConfig');
   const body = document.getElementById('setupPreviewBody');
@@ -3680,9 +3691,177 @@ async function renderSetupPreview() {
     }).then(r => r.json());
     if (d.detail) { body.textContent = d.detail; return; }
     fillGenPreview(cfgBox, body, d, 'setupPreviewNote');
+    // Rebuilding the controls mid-edit would steal focus from the field being
+    // typed into, so a save-triggered refresh leaves them alone.
+    if (!keepControls) renderSetupControls(d);
   } catch (e) {
     body.textContent = 'Could not render the preview.';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Request controls: Story Setup step 3
+// ---------------------------------------------------------------------------
+// These four settings used to live in the Prompt Lab, where they were described
+// without knowing which model would run them. A reasoning cap set there looked
+// active on every model, and on one with no token budget it silently displaced
+// the effort level and let the model fall back to its own default -- measured on
+// gpt-6.1-sol-pro as 5.2x the reasoning of the "low" that was asked for. They
+// live on this step because it is the only one that knows the model.
+//
+// A setting the model cannot honour is NOT rendered greyed out: it is left off
+// the screen entirely. A control that provably cannot affect anything should not
+// occupy the row, and hiding one costs width here, never height.
+const SETUP_CTL_HINTS = {
+  temperature: 'Higher is looser. 0.7 is the default.',
+  reasoning: 'How hard the model thinks. "Off" is a request, not a guarantee: a model that always reasons will think anyway.',
+  cap: '0 means no cap, and the reasoning level is used. Above 0 the cap REPLACES that level: the model reasons at its own default intensity and stops there. It bounds reasoning only, never the story.',
+  budget: 'The only length bound, and it does not bound reasoning. A model can spend tens of thousands of tokens thinking and still hit this, which publishes the story as "cut off".',
+};
+
+function setupCtl(label, node, hint) {
+  const wrap = document.createElement('label');
+  wrap.className = 'gen-ctl';
+  const l = document.createElement('span');
+  l.className = 'gen-ctl-label';
+  l.textContent = label;
+  wrap.appendChild(l);
+  wrap.appendChild(node);
+  if (hint) wrap.title = hint;
+  return wrap;
+}
+
+function renderSetupControls(d) {
+  const row = document.getElementById('setupRequestControlsRow');
+  const hintEl = document.getElementById('setupRequestHint');
+  if (!row) return;
+  row.innerHTML = '';
+  const r = d.reasoning || {};
+  const supports = r.supports || {};
+  const capRequested = Number(d.reasoning_cap_requested || 0);
+  const skipped = [];
+
+  const num = (id, value, attrs) => {
+    const i = document.createElement('input');
+    i.type = 'number';
+    i.id = id;
+    Object.assign(i, attrs);
+    i.value = value;
+    i.addEventListener('input', scheduleSetupConfigSave);
+    return i;
+  };
+
+  if (supports.temperature) {
+    row.appendChild(setupCtl('Temperature',
+      num('setupCfgTemperature', d.temperature, { min: 0, max: 2, step: 0.05 }),
+      SETUP_CTL_HINTS.temperature));
+  } else {
+    skipped.push('temperature');
+  }
+
+  const levels = r.supported || [];
+  if (levels.length) {
+    const sel = document.createElement('select');
+    sel.id = 'setupCfgReasoning';
+    // The modes first, then whatever levels THIS model lists. "minimal" is both
+    // a mode and a level some models offer, so the second pass has to skip names
+    // already present or the control shows it twice.
+    const seen = new Set();
+    [['auto', 'Auto'], ['off', 'Off'], ['minimal', 'Minimal']]
+      .concat(levels.map(l => [l, l]))
+      .forEach(([value, text]) => {
+        if (seen.has(value)) return;
+        seen.add(value);
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = text;
+        sel.appendChild(opt);
+      });
+    // reasoning_mode is the preset's stored value verbatim; reasoning.requested
+    // is coerced to "auto" for anything unrecognised, which would rewrite the
+    // setting the control is editing.
+    sel.value = d.reasoning_mode || r.requested || 'auto';
+    if (!seen.has(sel.value)) sel.value = 'auto';
+    sel.addEventListener('change', scheduleSetupConfigSave);
+    row.appendChild(setupCtl('Reasoning', sel, SETUP_CTL_HINTS.reasoning));
+  } else {
+    skipped.push('reasoning');
+  }
+
+  if (r.cap_supported) {
+    row.appendChild(setupCtl('Reasoning cap',
+      num('setupCfgReasonCap', capRequested,
+          { min: 0, max: 100000, step: 250, placeholder: '0 = no cap' }),
+      SETUP_CTL_HINTS.cap));
+  }
+
+  if (supports.max_tokens) {
+    row.appendChild(setupCtl('Output budget',
+      num('setupCfgBudget', d.max_tokens, { min: 1000, max: 32000, step: 500 }),
+      SETUP_CTL_HINTS.budget));
+  } else {
+    skipped.push('output budget');
+  }
+
+  // One line, always one line tall, so switching model cannot move the prompt.
+  // The full sentence is in the title, the same way a truncated grid value is.
+  const parts = [];
+  if (skipped.length) {
+    parts.push(`${skipped.length} setting${skipped.length === 1 ? '' : 's'} not offered by this model (${skipped.join(', ')})`);
+  }
+  if (capRequested > 0 && !r.cap_supported) {
+    // Hidden, but not forgotten: the value stays in the preset for the models
+    // that can use it, and saying so stops it looking like it was lost.
+    parts.push(`reasoning cap ${capRequested.toLocaleString()} is not used here — kept for other models`);
+  }
+  const text = parts.join(' · ');
+  if (hintEl) { hintEl.textContent = text; hintEl.title = text; }
+}
+
+let setupConfigTimer = null;
+function scheduleSetupConfigSave() {
+  clearTimeout(setupConfigTimer);
+  setupConfigTimer = setTimeout(saveSetupConfig, 600);
+}
+
+// Writes the edited controls back to the ACTIVE preset. Deliberately not a
+// per-story override: a preset is a recipe, stories.prompt_preset names it, and
+// the row's snapshot has to keep describing the request that was actually sent.
+async function saveSetupConfig() {
+  const cap = document.getElementById('setupCfgReasonCap');
+  const lvl = document.getElementById('setupCfgReasoning');
+  const tmp = document.getElementById('setupCfgTemperature');
+  const bud = document.getElementById('setupCfgBudget');
+  try {
+    // Re-read rather than trusting promptLab.presets: Story Setup can be opened
+    // without the Lab ever having been, so the cache may not be there at all.
+    const state = await fetch('/api/prompts').then(r => r.json());
+    const p = (state.presets || []).find(x => x.id === state.active);
+    if (!p) return;
+    const payload = {
+      id: p.id, name: p.name, template: p.template, style: p.style || '',
+      system: p.system,
+      // A hidden control keeps its stored value: the settings that are not on
+      // screen are still part of the recipe.
+      temperature: tmp ? (parseFloat(tmp.value) || 0) : (p.temperature != null ? p.temperature : 0.7),
+      max_tokens: bud ? (parseInt(bud.value, 10) || p.max_tokens || 20000) : (p.max_tokens || 20000),
+      // 0 is MEANINGFUL here ("no cap"), so it must not go through the
+      // `|| 20000` idiom the budget uses -- that would read a cap of 0 as
+      // "field left blank" and send nothing, which is the opposite of the point.
+      reasoning_max_tokens: cap ? (parseInt(cap.value, 10) || 0) : (p.reasoning_max_tokens || 0),
+      reasoning: lvl ? lvl.value : (p.reasoning || 'auto'),
+    };
+    const res = await fetch('/api/prompts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return;
+    const saved = (await res.json()).preset;
+    const i = (promptLab.presets || []).findIndex(x => x.id === saved.id);
+    if (i >= 0) promptLab.presets[i] = saved;
+    setSetupStepHint(`Saved to “${saved.name}”`);
+    renderSetupPreview({ keepControls: true });
+  } catch (e) { /* leave the preset as it was; the field still shows the edit */ }
 }
 
 function setupBackToProviders() {
@@ -4614,80 +4793,24 @@ function labCurrentPreset() {
 }
 
 function labPayload() {
+  // Temperature, output budget, reasoning level and reasoning cap are NOT in
+  // this modal any more -- they live on the Story Setup screen, which is the
+  // only place that knows the model. They are read from the stored preset rather
+  // than omitted, because POST /api/prompts is a whole-object upsert: leaving
+  // them out would save the prompt text and quietly reset the recipe's settings
+  // to their defaults.
+  const p = labCurrentPreset() || {};
   return {
     id: promptLab.currentId,
     name: document.getElementById('promptLabName').value.trim(),
     template: document.getElementById('promptLabTemplate').value,
     style: document.getElementById('promptLabStyle').value,
-    temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
-    max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
-    // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
-    // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
-    // "field left blank" and send nothing, which is the opposite of the point.
-    reasoning_max_tokens: parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0,
-    reasoning: document.getElementById('promptLabReasoning').value,
+    temperature: p.temperature != null ? p.temperature : 0.7,
+    max_tokens: p.max_tokens != null ? p.max_tokens : 20000,
+    reasoning_max_tokens: p.reasoning_max_tokens || 0,
+    reasoning: p.reasoning || 'auto',
     system: document.getElementById('promptLabSystem').value,
   };
-}
-
-// The reasoning hint has to say what each mode actually does, because "Off"
-// reads as a guarantee and is not one: a mandatory-reasoning model has no way
-// to switch it off. The pre-generation preview reports the effective value for
-// the chosen model, so this is the general statement, not the per-model one.
-const LAB_REASONING_HINTS = {
-  auto: 'Auto reads the model catalogue: reasoning off when it can be, cheapest effort when it cannot.',
-  minimal: 'Minimal asks for the lowest effort the model supports. On a model that does not reason, nothing is sent.',
-  off: 'Off is a request, not a guarantee — a model that always reasons (reasoning.mandatory) will think anyway. The preview shows what will really be sent.',
-};
-
-function updateLabReasoningHint() {
-  const sel = document.getElementById('promptLabReasoning');
-  const mode = sel.value;
-  // A reasoning cap REPLACES the level: OpenRouter accepts either
-  // reasoning.effort or reasoning.max_tokens, never both (sending both is a 400).
-  // So when a cap is set the dropdown is disabled and says why -- a live
-  // dropdown next to a cap that silently overrides it is a control that cannot
-  // affect anything, and reads as if it does.
-  const cap = parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0;
-  sel.disabled = cap > 0;
-  if (cap > 0) {
-    document.getElementById('promptLabReasoningHint').textContent =
-      `Ignored while a reasoning cap is set: the cap replaces the level. ` +
-      `“${mode}” comes back if you set the cap to 0.`;
-    return;
-  }
-  const hint = LAB_REASONING_HINTS[mode];
-  document.getElementById('promptLabReasoningHint').textContent = hint
-    || 'An effort level. Not every model offers every level — the preview shows the nearest one the chosen model supports.';
-}
-
-// Effort levels come from the catalogue (GET /api/prompts.reasoning_efforts),
-// not a hardcoded list, so the dropdown only ever offers levels that exist
-// somewhere. Which of them the *chosen* model honours is resolved at
-// generation time and reported in the preview.
-function renderLabReasoningOptions() {
-  const sel = document.getElementById('promptLabReasoning');
-  const current = sel.value;
-  sel.innerHTML = '';
-  const modes = [
-    ['auto', 'Auto (from the model)'],
-    ['off', 'Off'],
-    ['minimal', 'Minimal'],
-  ];
-  // "minimal" is both a named mode and a level some models list in their
-  // catalogue, so the level list has to skip names the modes already cover or
-  // the dropdown shows it twice.
-  (promptLab.reasoningEfforts || []).forEach(e => {
-    if (!modes.some(m => m[0] === e)) modes.push([e, e]);
-  });
-  modes.forEach(([value, label]) => {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    sel.appendChild(opt);
-  });
-  sel.value = current;
-  updateLabReasoningHint();
 }
 
 // "in use" tag, so it is always obvious which preset Generate will pick up.
@@ -4840,14 +4963,6 @@ function fillLabForm(preset) {
   document.getElementById('promptLabName').value = preset.name || '';
   document.getElementById('promptLabTemplate').value = preset.template || '';
   document.getElementById('promptLabSystem').value = preset.system || promptLab.defaultSystem || '';
-  document.getElementById('promptLabTemp').value = preset.temperature != null ? preset.temperature : 0.7;
-  document.getElementById('promptLabMaxTokens').value = preset.max_tokens != null ? preset.max_tokens : 20000;
-  // Presets saved before the cap existed have no such key; show 0, which is what
-  // the server treats them as, rather than blank (which reads as unset).
-  document.getElementById('promptLabReasonMaxTokens').value = preset.reasoning_max_tokens || 0;
-  renderLabReasoningOptions();
-  document.getElementById('promptLabReasoning').value = preset.reasoning || 'auto';
-  updateLabReasoningHint();
   renderLabStyleOptions();
   document.getElementById('promptLabStyle').value = preset.style || '';
   updateLabStyleHint();
@@ -4862,7 +4977,7 @@ function setLabReadonly(on) {
   // note): the stored snapshot is the only thing to show.
   modal.classList.toggle('is-asused', !!promptLab.asUsed);
   modal.classList.toggle('is-readonly', on);
-  ['promptLabName', 'promptLabTemplate', 'promptLabSystem', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabReasonMaxTokens', 'promptLabStyle', 'promptLabReasoning']
+  ['promptLabName', 'promptLabTemplate', 'promptLabSystem', 'promptLabStyle']
     .forEach(id => document.getElementById(id).disabled = on);
   document.getElementById('promptLabSaveBtn').style.display = on ? 'none' : '';
   document.getElementById('promptLabUseBtn').style.display = on ? 'none' : '';
@@ -4921,7 +5036,6 @@ async function openPromptLab(storyId) {
     promptLab.reasoningEfforts = data.reasoning_efforts || [];
     promptLab.currentId = promptLab.activeId || (promptLab.presets[0] && promptLab.presets[0].id);
     renderLabPresetList();
-    renderLabReasoningOptions();
     renderLabStyleOptions();
     const preset = labCurrentPreset();
     if (preset) fillLabForm(preset);
@@ -4987,13 +5101,13 @@ async function duplicatePromptLabPreset() {
         name: name.trim() || 'New preset',
         template: document.getElementById('promptLabTemplate').value || base.template,
         style: document.getElementById('promptLabStyle').value,
-        temperature: parseFloat(document.getElementById('promptLabTemp').value) || 0,
-        max_tokens: parseInt(document.getElementById('promptLabMaxTokens').value, 10) || 20000,
-    // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
-    // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
-    // "field left blank" and send nothing, which is the opposite of the point.
-    reasoning_max_tokens: parseInt(document.getElementById('promptLabReasonMaxTokens').value, 10) || 0,
-        reasoning: document.getElementById('promptLabReasoning').value || 'auto',
+        temperature: base.temperature != null ? base.temperature : 0.7,
+        max_tokens: base.max_tokens != null ? base.max_tokens : 20000,
+        // 0 is a MEANINGFUL value here ("no cap"), so it must not go through the
+        // `|| 20000` idiom the budget uses -- that idiom would read a cap of 0 as
+        // "field left blank" and send nothing, which is the opposite of the point.
+        reasoning_max_tokens: base.reasoning_max_tokens || 0,
+        reasoning: base.reasoning || 'auto',
         system: document.getElementById('promptLabSystem').value,
       }),
     });
@@ -5108,14 +5222,11 @@ function fillGenPreview(cfgBox, body, d, noteId) {
     ['Model', d.model],
     ['Provider', d.provider],
     ['Style', d.resolved_style || d.style],
-    ['Temperature', String(d.temperature)],
-    ['Output budget', `${Number(d.max_tokens).toLocaleString()} tokens`],
-    // The cap is shown even when it is 0, because "no cap" is a decision the
-    // user made rather than a missing value: on a reasoning model an uncapped
-    // run is the one that costs 400s.
-    ['Reasoning cap', d.reasoning_max_tokens
-      ? `${Number(d.reasoning_max_tokens).toLocaleString()} tokens` : 'none (unbounded)'],
     ['Words', String(d.words_total)],
+    // Kept even though the strip above edits the same setting: this row is the
+    // OUTCOME (asked -> what will be sent), not the input, so it is not a
+    // duplicate of the control. It is where "your cap is not used here" and
+    // "minimal was clamped to low" become visible.
     // Asked vs. effective, so a request the provider will ignore is visible
     // rather than assumed.
     ['Reasoning', r.requested === 'auto' ? `auto → ${r.effective}` : `${r.requested} → ${r.effective}`],
@@ -5637,14 +5748,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (promptLab.asUsed) return;
         loadPromptLabPreset(e.target.value);
     });
-    ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle', 'promptLabTemp', 'promptLabMaxTokens', 'promptLabReasonMaxTokens']
+    ['promptLabTemplate', 'promptLabSystem', 'promptLabName', 'promptLabStyle']
         .forEach(id => document.getElementById(id).addEventListener('input', scheduleLabRefresh));
-    document.getElementById('promptLabReasoning').addEventListener('change', updateLabReasoningHint);
-    // The cap decides whether the level dropdown is live at all, so typing in it
-    // has to re-run the hint -- otherwise the dropdown stays enabled with a cap
-    // set, and a level the request will never carry.
-    document.getElementById('promptLabReasonMaxTokens')
-        .addEventListener('input', updateLabReasoningHint);
     document.querySelectorAll('.prompt-lab-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             if (promptLab.asUsed) return;
