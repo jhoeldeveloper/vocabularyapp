@@ -3988,6 +3988,14 @@ function renderFilterResults(data) {
     // checkbox below stays live, and a word already selected stays selected
     // whichever group it is in.
     cb.checked = selectedWords.has(w.word) || !w.learned;
+    // The tick has to be pushed into selectedWords HERE, because setting
+    // `.checked` in script does NOT fire a change event -- the handler below
+    // never runs for an auto-ticked box. Without this the boxes look selected
+    // while the set Generate reads is still empty, so a story would be built
+    // from no words at all and the count would read nothing.
+    // Only ever ADDS: a word the user unticked by hand keeps its state through
+    // the next render, and a learnt word stays ticked if it was chosen before.
+    if (cb.checked) selectedWords.add(w.word);
     cb.addEventListener('change', () => {
       if (cb.checked) selectedWords.add(w.word); else selectedWords.delete(w.word);
       renderChips();
@@ -4002,6 +4010,10 @@ function renderFilterResults(data) {
     label.appendChild(meta);
     box.appendChild(label);
   });
+  // The count, after the auto-ticks above have been folded into the set -- the
+  // ordering matters, because renderChips() reports selectedWords.size and would
+  // otherwise print a stale (usually empty) number on the very first Show.
+  renderChips();
   updateSelectToggleUI();
 }
 
