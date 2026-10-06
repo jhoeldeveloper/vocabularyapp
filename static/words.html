@@ -1108,17 +1108,12 @@
     .gen-ctl input[type="number"] { width: 76px; }
     .gen-ctl select { max-width: 140px; }
     .gen-ctl input:focus, .gen-ctl select:focus { outline: 1px solid var(--color-primary); }
-    /* The read-only facts, under a hairline inside the SAME card as the controls.
-       One box rather than two: they are one request, and the separator says
-       "these you set / these are what you chose" without spending a second
-       border and 40px on it. */
-    .gen-static-line {
-        font-size: 0.78em; color: var(--text-secondary);
-        border-top: 1px solid var(--border-details); padding-top: 7px; margin-top: 8px;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .gen-static-line b { color: var(--text-meta); font-weight: 600; }
-    .gen-static-line span { margin-right: 14px; }
+    .gen-ctl select:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Price and word count sit in the header, beside the model name. They were
+       a separate bordered row holding two values that were already on screen
+       (the model is in this very header) plus one number -- mostly whitespace. */
+    .setup-header-meta { font-size: 0.78em; color: var(--text-meta); white-space: nowrap; }
+    .setup-header-meta:not(:empty) { margin-left: 12px; }
     .gen-preview-body {
         flex: 1 1 auto; overflow-y: auto; margin: 12px 16px; padding: 12px 14px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76em;
@@ -1444,11 +1439,12 @@
                 <div class="setup-model-summary">
                     <span>Model:</span>
                     <span class="model-name" id="setupPreviewModelLabel"></span>
+                    <span class="setup-header-meta" id="setupPreviewPrice"></span>
+                    <span class="setup-header-meta" id="setupPreviewWords"></span>
                     <button id="setupBackToProvidersBtn" class="sort-btn" style="margin-left:auto; font-size:0.78em;">&#8592; Provider</button>
                 </div>
                 <div class="gen-controls" id="setupRequestControls">
                     <div class="gen-controls-row" id="setupRequestControlsRow"></div>
-                    <div class="gen-static-line" id="setupStaticLine"></div>
                 </div>
                 <div class="prompt-lab-hint" id="setupPreviewNote" style="margin-bottom:6px;"></div>
                 <div id="setupPreviewBody" class="gen-preview-body" style="margin:0;"></div>
@@ -3634,10 +3630,9 @@ function showSetupPreviewStep() {
 async function renderSetupPreview(opts) {
   const keepControls = !!(opts && opts.keepControls);
   const words = Array.from(selectedWords);
-  const cfgBox = document.getElementById('setupStaticLine');
   const body = document.getElementById('setupPreviewBody');
   if (!words.length) {
-    cfgBox.innerHTML = '';
+    setSetupHeaderMeta('');
     body.textContent = 'No words are selected.';
     return;
   }
@@ -3653,7 +3648,7 @@ async function renderSetupPreview(opts) {
       }),
     }).then(r => r.json());
     if (d.detail) { body.textContent = d.detail; return; }
-    fillGenPreview(cfgBox, body, d, 'setupPreviewNote');
+    fillGenPreview(body, d, 'setupPreviewNote');
     // Rebuilding the controls mid-edit would steal focus from the field being
     // typed into, so a save-triggered refresh leaves them alone.
     if (!keepControls) renderSetupControls(d);
@@ -3681,6 +3676,36 @@ const SETUP_CTL_HINTS = {
   cap: '0 means no cap, and the reasoning level is used. Above 0 the cap REPLACES that level: the model reasons at its own default intensity and stops there. It bounds reasoning only, never the story.',
   budget: 'The only length bound, and it does not bound reasoning. A model can spend tens of thousands of tokens thinking and still hit this, which publishes the story as "cut off".',
 };
+
+// Price and word count in the step-3 header, beside the model name.
+function setSetupHeaderMeta(text) {
+  const el = document.getElementById('setupPreviewWords');
+  if (el) el.textContent = text || '';
+}
+
+// The price of the PROVIDER that will serve this request, not the model's
+// catalogue price: the two can differ, and a pinned provider is exactly what
+// makes the request reproducible, so its price is the one that will be paid.
+// Shown only when a provider is pinned -- with Default (auto-route) OpenRouter
+// picks the endpoint, so there is no single price to state, and half these
+// models are free anyway. Rendered from the SAME cached provider list the
+// picker drew its rows from, so the header cannot quote a different price than
+// the row the user clicked.
+function setSetupProviderPrice() {
+  const el = document.getElementById('setupPreviewPrice');
+  if (!el) return;
+  if (!storyProviderSelection) { el.textContent = ''; el.removeAttribute('title'); return; }
+  const list = setupProvidersCache[storyModelSelection] || [];
+  const p = list.find(x => x.tag === storyProviderSelection);
+  if (!p || !p.pricing) { el.textContent = ''; el.removeAttribute('title'); return; }
+  const per = v => `$${(v * 1e6).toFixed(2)}`;
+  const promptPrice = p.pricing.prompt != null ? per(p.pricing.prompt) : '—';
+  const compPrice = p.pricing.completion != null ? per(p.pricing.completion) : '—';
+  const discount = p.discount > 0 ? ` (-${Math.round(p.discount * 100)}%)` : '';
+  const full = `Prompt ${promptPrice}/M in, ${compPrice}/M out${discount} -- ${p.provider_name}`;
+  el.textContent = `${promptPrice} / ${compPrice} per M`;
+  el.title = full;
+}
 
 function setupCtl(label, node, hint) {
   const wrap = document.createElement('label');
@@ -3753,10 +3778,10 @@ function renderSetupControls(d) {
   }
 
   if (r.cap_supported) {
-    row.appendChild(setupCtl('Reasoning cap',
-      num('setupCfgReasonCap', capRequested,
-          { min: 0, max: 100000, step: 250, placeholder: '0 = no cap' }),
-      SETUP_CTL_HINTS.cap));
+    const capInput = num('setupCfgReasonCap', capRequested,
+                         { min: 0, max: 100000, step: 250, placeholder: '0 = no cap' });
+    capInput.addEventListener('input', updateSetupCapLock);
+    row.appendChild(setupCtl('Reasoning cap', capInput, SETUP_CTL_HINTS.cap));
   }
 
   if (supports.max_tokens) {
@@ -3778,6 +3803,31 @@ function renderSetupControls(d) {
       target.title = (own ? own + '\n\n' : '') + r.note;
     }
   }
+  updateSetupCapLock();
+}
+
+// A cap REPLACES the level: OpenRouter accepts reasoning.effort or
+// reasoning.max_tokens, never both (sending both is a 400). So on a model that
+// has BOTH -- Nemotron 3 Super has a token budget and two effort levels -- the
+// two controls contradict each other: the cap wins and the level on screen is
+// not what gets sent. The dropdown therefore stays visible but dimmed, and says
+// why. It keeps its value and comes back when the cap is cleared, which is why
+// this is a lock rather than the "last write wins" alternative: that one would
+// have to discard the level, and a setting the user chose should not vanish
+// because they touched a different one.
+function updateSetupCapLock() {
+  const cap = document.getElementById('setupCfgReasonCap');
+  const sel = document.getElementById('setupCfgReasoning');
+  if (!sel) return;
+  const capped = cap && (parseInt(cap.value, 10) || 0) > 0;
+  sel.disabled = !!capped;
+  const label = sel.parentElement;
+  if (!label) return;
+  const base = SETUP_CTL_HINTS.reasoning;
+  label.title = capped
+    ? base + '\n\nIgnored while a reasoning cap is set: the cap replaces the level. \u201c' +
+      (sel.value || 'this level') + '\u201d comes back if you set the cap to 0.'
+    : base;
 }
 
 let setupConfigTimer = null;
@@ -5125,20 +5175,9 @@ function updatePromptLabToolbarLabel() {
 // outcome used to have rows here; each one is either visible somewhere else
 // (the preset is named by the toolbar that opened this) or already editable
 // directly above, and a value shown twice is noise.
-function fillGenPreview(cfgBox, body, d, noteId) {
-  cfgBox.innerHTML = '';
-  [
-    ['Model', d.model],
-    ['Provider', d.provider],
-    ['Words', String(d.words_total)],
-  ].forEach(([label, value]) => {
-    const b = document.createElement('b');
-    b.textContent = label + ' ';
-    const span = document.createElement('span');
-    span.textContent = value;
-    cfgBox.appendChild(b);
-    cfgBox.appendChild(span);
-  });
+function fillGenPreview(body, d, noteId) {
+  setSetupProviderPrice();
+  setSetupHeaderMeta(`${Number(d.words_total).toLocaleString()} word${d.words_total === 1 ? '' : 's'}`);
 
   // The style on screen is the style that will be sent, so remember it for the
   // generate request. Without this the generation would draw its own style and
