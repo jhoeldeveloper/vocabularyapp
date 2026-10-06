@@ -1366,6 +1366,35 @@ def _allowed_bold_terms(words):
         allowed |= _token_forms(word)
     return allowed
 
+def _enforce_word_bold(meaning, word):
+    """Bold marks the word and nothing else.
+
+    Asked for "the word in **bold**", models bold the entire example sentence
+    (`**She had to run to catch the bus.**`), which is both wrong and the main
+    reason the meanings block reads as noise: every example shouts louder than
+    the sense it illustrates. The prompt cannot be trusted to prevent this, so
+    the answer is enforced here -- exactly the arrangement `_strip_stray_bold`
+    already makes for stories, but applied in the opposite direction, keeping the
+    target and removing emphasis everywhere else.
+
+    An inflected form of the word is kept (`**runs**` for "run"), since the
+    allowed set comes from the same lemminflect tables as the Family row.
+    """
+    text = (meaning or "").strip()
+    if not text:
+        return text
+    allowed = _allowed_bold_terms([word])
+
+    def fix(match):
+        inner = match.group(1)
+        core = inner.strip().strip("*").strip(".,;:!?'\"()").lower()
+        if core and (core in allowed or core.split()[-1] in allowed):
+            return f"**{inner.strip()}**"
+        return inner.strip()
+
+    return re.sub(r"\*\*(.+?)\*\*", fix, text, flags=re.S)
+
+
 def _strip_stray_bold(content, words):
     """Un-bold anything that is not a listed word or a variant of one.
 
@@ -2242,8 +2271,9 @@ def _build_meanings_prompt(word: str) -> str:
         f"one short example sentence using that sense with the word or phrase in "
         f"**bold**. Start a new sense as `2.`, `3.`. The senses must be genuinely "
         f"different from one another -- do not restate the same sense in "
-        f"different words. Use **bold** for emphasis in "
-        f"the gloss too where it genuinely helps; no other Markdown.\n"
+        f"different words. **Bold must mark the word or phrase itself and "
+        f"nothing else** -- never a whole sentence, and no other emphasis "
+        f"anywhere. No other Markdown.\n"
         f'  - "use": exactly one of "American", "British", or "Both". Use "Both" '
         f"unless the word or one of its senses is distinctly dialect-specific; if "
         f'the word has no dialect distinction at all, "Both" is the right answer.\n'
@@ -2280,7 +2310,9 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     data = json.loads(text, strict=False)
     if not isinstance(data, dict):
         raise ValueError("model did not return a JSON object")
-    meaning = str(data.get("meaning") or "").strip()
+    # Bold is normalised to "the word, and nothing else" BEFORE anything else
+    # reads the field, so no caller can see the model's raw emphasis.
+    meaning = _enforce_word_bold(str(data.get("meaning") or "").strip(), word)
     # Synonyms are the model's own judgement, unlike the measured fields: asked
     # for once when the word is added and then stored. A comma-separated list is
     # kept verbatim (Markdown stripped) rather than split and re-joined, so the

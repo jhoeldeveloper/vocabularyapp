@@ -276,15 +276,20 @@
         padding: 15px;
         cursor: pointer;
         display: flex;
-        justify-content: space-between;
+        /* NOT space-between. With four children that pushed the speaker to the
+           far left and the word title away from it, so the pronounce button read
+           as unrelated to the word. Everything but the indicator now sits
+           together on the left, and the indicator is pushed right with an auto
+           margin instead. */
+        justify-content: flex-start;
         align-items: center;
         font-size: 1em;
         font-weight: 600;
         user-select: none;
     }
     .word-header:hover { background-color: var(--bg-hover); }
-    .word-header .word-title { flex-grow: 0; user-select: text; cursor: text; margin-right: 4px; padding-right: 4px; margin-left: 6px; }
-    .word-header .indicator { font-size: 1.2em; line-height: 1; color: var(--color-primary); width: 1em; text-align: center; flex-shrink: 0; }
+    .word-header .word-title { flex-grow: 0; user-select: text; cursor: text; margin-right: 4px; padding-right: 4px; margin-left: 2px; }
+    .word-header .indicator { font-size: 1.2em; line-height: 1; color: var(--color-primary); width: 1em; text-align: center; flex-shrink: 0; margin-left: auto; }
     .freq-badge {
         display: inline-flex;
         align-items: center;
@@ -314,12 +319,31 @@
         border-top: 1px solid var(--border-details);
     }
     .detail-section { margin-bottom: 12px; }
-    /* The two measured sections. Visually quieter than the editable prose
-       around them, because they are facts rather than writing: no speaker
-       button, no double-click-to-edit, and a dash when the word is not in the
-       corpus. The padlock in the header explains that on hover. */
-    .lex-measured .lex-value { color: var(--text-main); font-size: 0.9em; padding: 2px 0; }
-    .lex-measured .section-header h4 i { font-size: 0.7em; opacity: 0.45; cursor: help; margin-left: 4px; }
+    /* The meanings card is the ONLY bordered block in the panel, because it is
+       the only prose here. Everything below it (dialect, the two measurements,
+       synonyms) is a one-line fact, and giving each one a header and a border
+       made the panel read as a form rather than a dictionary entry. */
+    .meaning-card {
+        border: 1px solid var(--border-input);
+        border-radius: 8px;
+        padding: 10px 14px;
+        background: var(--bg-editable);
+    }
+    .meaning-card ol { margin: 0; padding-left: 1.5em; }
+    .meaning-card li { margin-bottom: 9px; line-height: 1.45; }
+    .meaning-card li:last-child { margin-bottom: 0; }
+    .meaning-card ol > li::marker { color: var(--text-meta); font-weight: 600; }
+    /* The example belongs to the sense above it, so it is quieter than the
+       sense and never competes with it. Only the word inside it is bold. */
+    .meaning-card .lex-example { color: var(--text-meta); font-style: italic; }
+    .meaning-card .lex-example strong { color: var(--text-main); font-style: normal; }
+    /* One compact row per fact: dim uppercase label, value beside it. */
+    .lex-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
+    .lex-label {
+        font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--text-meta); min-width: 74px; flex-shrink: 0;
+    }
+    .lex-val { font-size: 0.92em; min-width: 0; }
     .lex-unknown { color: var(--text-meta); }
     .detail-section .metadata {
         font-size: 0.75em;
@@ -1904,14 +1928,12 @@ function pronounceWord(btn, event) {
 
 function speakSection(btn, event) {
     event.stopPropagation();
-    const section = btn.closest('.detail-section');
-    // Falls back to the read-only value: the synonyms section is measured data
-    // with no editable-content (it is not stored, so there is nothing to save),
-    // but it is a list of real words and reading them aloud is the point of a
-    // vocabulary app.
-    const content = section.querySelector('.editable-content, .lex-value');
+    // Only the meanings block has a speaker: it is the only prose here. The one
+    // word facts below it are labels on a value, and reading "Zipf 5.5, top
+    // thirty words" aloud is noise rather than help.
+    const content = btn.closest('.detail-section').querySelector('.editable-content');
     if (!content) return;
-    const text = stripMarkdown(content.dataset.raw || content.textContent || '');
+    const text = stripMarkdown(content.dataset.raw || '');
     if (!text) return;
     playTTS(text, btn);
 }
@@ -2010,38 +2032,24 @@ function renderGrid(data) {
                         <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to meanings"><i class="fa-solid fa-headphones"></i></button>
                     </div>
                     <div class="editable-content meaning-content" data-raw="${escAttr(meaningMarkdown)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${marked.parse(meaningMarkdown)}</div>
+                         <div class="rendered">${meaningCardHtml(meaningMarkdown)}</div>
                     </div>
                 </div>
-                <div class="detail-section">
-                    <div class="section-header">
-                        <h4>Use</h4>
-                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to use"><i class="fa-solid fa-headphones"></i></button>
-                    </div>
-                    <div class="editable-content use-content" data-raw="${escAttr(useRegion)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${escHtml(useRegion) || '<span class="lex-unknown">—</span>'}</div>
-                    </div>
+                <div class="lex-row">
+                    <span class="lex-label">Use</span>
+                    <span class="editable-content lex-val use-content" data-raw="${escAttr(useRegion)}" ondblclick="makeEditable(this)">${useRegion ? escHtml(useRegion) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
-                <div class="detail-section lex-measured">
-                    <div class="section-header">
-                        <h4>Frequency <i class="fa-solid fa-lock" title="Measured from a corpus (wordfreq), not written by a model. Shown as — when the word is not in the corpus."></i></h4>
-                    </div>
-                    <div class="lex-value">${freqLabel ? escHtml(freqLabel) : '<span class="lex-unknown">—</span>'}</div>
+                <div class="lex-row">
+                    <span class="lex-label">Frequency</span>
+                    <span class="lex-val" title="Measured from a corpus (wordfreq), not written by a model. Shown as — when the word is not in the corpus. Not editable: a hand-edited number would disagree with the corpus on the next refresh with nothing to say which was right.">${freqLabel ? escHtml(freqLabel) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
-                <div class="detail-section lex-measured">
-                    <div class="section-header">
-                        <h4>Family <i class="fa-solid fa-lock" title="Inflected forms from an inflection engine, checked against the corpus. Not editable, because a hand-edited form would disagree with the corpus on the next refresh with nothing to say which was right."></i></h4>
-                    </div>
-                    <div class="lex-value">${family ? escHtml(family) : '<span class="lex-unknown">—</span>'}</div>
+                <div class="lex-row">
+                    <span class="lex-label">Family</span>
+                    <span class="lex-val" title="Inflected forms from an inflection engine, checked against the corpus. Not editable, for the same reason as Frequency.">${family ? escHtml(family) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
-                <div class="detail-section">
-                    <div class="section-header">
-                        <h4>Synonyms</h4>
-                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to synonyms"><i class="fa-solid fa-headphones"></i></button>
-                    </div>
-                    <div class="editable-content synonyms-content" data-raw="${escAttr(synonyms)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${synonyms ? marked.parse(synonyms) : '<span class="lex-unknown">—</span>'}</div>
-                    </div>
+                <div class="lex-row">
+                    <span class="lex-label">Synonyms</span>
+                    <span class="editable-content lex-val synonyms-content" data-raw="${escAttr(synonyms)}" ondblclick="makeEditable(this)">${synonyms ? escHtml(synonyms) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
                 <div class="detail-section">
                     <h4>Metadata</h4>
@@ -2598,6 +2606,37 @@ function formatDate(ts) {
   const hours = String(d.getHours()).padStart(2, '0');
   const minutes = String(d.getMinutes()).padStart(2, '0');
   return `${day}/${month}/${year} ${hours}:${minutes}`;
+}
+
+function meaningCardHtml(markdown) {
+  // The meanings block is the only bordered, speakable thing in the panel, so it
+  // has to carry the visual hierarchy on its own: numbered senses, and each
+  // example styled as subordinate to the sense above it.
+  //
+  // The example is whatever follows the first <br> in each list item. marked
+  // renders "1. gloss\n   example" as exactly that, so the split is done on the
+  // rendered HTML rather than by re-parsing the Markdown -- which keeps this a
+  // display concern and leaves the stored text untouched for TTS and editing.
+  const html = marked.parse(markdown || "");
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  wrap.querySelectorAll('li').forEach(li => {
+    const br = li.querySelector('br');
+    if (!br) return;
+    const example = document.createElement('span');
+    example.className = 'lex-example';
+    let node = br.nextSibling;
+    while (node) {
+      const next = node.nextSibling;
+      example.appendChild(node);
+      node = next;
+    }
+    li.appendChild(example);
+  });
+  const card = document.createElement('div');
+  card.className = 'meaning-card';
+  card.appendChild(wrap);
+  return card.outerHTML;
 }
 
 function escHtml(s) {
