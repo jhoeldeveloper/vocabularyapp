@@ -989,10 +989,6 @@
        dialogs does not resize the world under the cursor. Only the internal
        layout differs. */
     .prompt-lab-modal, .story-setup-modal { width: 90vw; height: 88vh; max-width: none; max-height: none; display: flex; flex-direction: column; }
-    /* One row of preset actions under the picker. They wrap rather than shrink:
-       a button too narrow to read its own label is worse than a second line. */
-    .prompt-lab-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-    .prompt-lab-actions .sort-btn { font-size: 0.78em; }
     #promptLabPreset { width: 100%; box-sizing: border-box; min-width: 0; font: inherit; font-size: 0.82em; padding: 5px 7px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
 
     .prompt-lab-body { flex: 1 1 auto; display: flex; min-height: 0; }
@@ -1480,15 +1476,14 @@
             <div class="prompt-lab-props">
                 <!-- The preset picker and its actions live here rather than in a
                      bar across the top: they ARE the preset, and the name and
-                     style right below them are the same thing. A bar separated
-                     them by a border and a screen-width gap from the fields they
-                     edit. -->
+                     style below them are the same thing. A bar separated them
+                     by a border and a screen-width gap from the fields they
+                     edit. The three actions sit at the bottom of the column
+                     because they act on the preset as a whole, while the two
+                     fields edit its current state. -->
                 <div class="prompt-lab-field">
                     <label for="promptLabPreset">Preset</label>
                     <select id="promptLabPreset" title="Prompt presets"></select>
-                    <div class="prompt-lab-actions">
-                        <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
-                    </div>
                 </div>
                 <div class="prompt-lab-field">
                     <label for="promptLabName">Preset name</label>
@@ -1499,6 +1494,7 @@
                     <select id="promptLabStyle"></select>
                     <div class="prompt-lab-hint" id="promptLabStyleHint">One is drawn at random for every story.</div>                </div>
                 <div class="prompt-lab-props-actions">
+                    <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
                     <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
                     <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
                 </div>
@@ -4870,7 +4866,15 @@ function labPayload() {
 // to, and the footer says which preset is live.
 function renderLabActiveState() {
   const isActive = promptLab.currentId === promptLab.activeId;
-  document.getElementById('promptLabUseBtn').style.display = isActive ? 'none' : '';
+  const use = document.getElementById('promptLabUseBtn');
+  // Disabled, NOT hidden. Hiding it meant the button was absent every time the
+  // Lab opened, because it opens on the preset already in use -- so there was
+  // no way to discover that switching presets was even possible from here.
+  // A dimmed button that says why is the affordance; a missing one is not.
+  use.disabled = isActive;
+  use.title = isActive
+    ? 'This preset is already the one new stories use.'
+    : 'Use this preset for new stories';
   document.getElementById('promptLabFooterNote').textContent = isActive
     ? 'New stories use this preset.'
     : 'Not in use yet — press “Use” to generate with it.';
