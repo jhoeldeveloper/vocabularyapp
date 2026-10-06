@@ -1150,6 +1150,18 @@
     .story-list-item:hover { border-color: var(--color-primary); }
     .story-list-title { font-weight: 600; color: var(--text-heading); }
     .story-list-title-box { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    /* The id and the title share a line. `flex-wrap: wrap` rather than a nowrap
+       + ellipsis, deliberately: the title used to wrap to a second line when it
+       was long, and truncating it here would be an unasked-for change to how
+       every row reads. The id is `flex: none` so a long title can never squeeze
+       it out of view. */
+    .story-list-title-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
+    .story-list-id {
+        color: var(--text-meta);
+        font-size: 0.8em;
+        font-variant-numeric: tabular-nums;
+        flex: none;
+    }
     .story-list-meta { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; min-width: 0; margin-top: 2px; }
     .story-list-meta-line {
         font-size: 0.7em; color: var(--text-meta); white-space: nowrap;
@@ -1598,6 +1610,26 @@
   <div class="panel-section">
     <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Generate a Story</h3>
     <div class="gen-filter">
+      <!-- Two checkboxes rather than a three-way select: "learnt only" and
+           "unlearnt only" are each one click away instead of a dropdown cycle,
+           and both-on is reachable in a single click back.
+
+           ONE compact group with a fixed height, so the label cannot wrap and
+           change this row's height -- the rule the config grid and the stat bar
+           already follow. A bare label plus checkbox would let a longer word
+           push the row over its neighbours and break the baseline.
+
+           INDEPENDENT of the identical pair in the word toolbar: which words go
+           into this story and which words are on screen are different questions,
+           and one silently moving the other would be baffling. -->
+      <span class="filter-learnt-group" title="Which words to offer for the next story">
+        <label class="filter-learnt-opt"><input type="checkbox" id="filterLearnt" checked> Learnt</label>
+        <label class="filter-learnt-opt"><input type="checkbox" id="filterUnlearnt" checked> Unlearnt</label>
+      </span>
+      <input type="number" id="filterMinEncounter" value="2" min="2" step="1" size="3" placeholder="enc" title="Only words you have met at least this many times (blank = no minimum). Minimum 2.">
+      <!-- Sort field and direction now sit AFTER the encounters box: the two numbers
+           decide HOW MANY words there are, and the sort decides which of them you
+           see first, so the size controls read together on the left. -->
       <select id="filterField" title="Sort by">
         <option value="id">ID</option>
         <option value="encounters">Encounters</option>
@@ -1617,27 +1649,12 @@
         <option value="asc">Ascending</option>
       </select>
       <button id="filterSortOrderBtn" class="sort-btn" title="Descending &#8212; click for ascending"><i class="fa-solid fa-arrow-down-wide-short"></i></button>
-      <!-- Two checkboxes rather than a three-way select: "learnt only" and
-           "unlearnt only" are each one click away instead of a dropdown cycle,
-           and both-on is reachable in a single click back.
-
-           ONE compact group with a fixed height, so the label cannot wrap and
-           change this row's height -- the rule the config grid and the stat bar
-           already follow. A bare label plus checkbox would let a longer word
-           push the row over its neighbours and break the baseline.
-
-           INDEPENDENT of the identical pair in the word toolbar: which words go
-           into this story and which words are on screen are different questions,
-           and one silently moving the other would be baffling. -->
-      <span class="filter-learnt-group" title="Which words to offer for the next story">
-        <label class="filter-learnt-opt"><input type="checkbox" id="filterLearnt" checked> Learnt</label>
-        <label class="filter-learnt-opt"><input type="checkbox" id="filterUnlearnt" checked> Unlearnt</label>
-      </span>
-      <input type="number" id="filterMinEncounter" value="2" min="2" step="1" size="3" placeholder="enc" title="Only words you have met at least this many times (blank = no minimum). Minimum 2.">
-      <button id="applyFilterBtn" class="sort-btn">Show</button>
-      <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
-      <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" style="display:none;">Unselect all</button>
-      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results">Clear results</button>
+      <!-- Icon-only, like the toolbar's sortOrderBtn/volumeToggle/themeToggle: the
+           identity lives in the tooltip and the aria-label, and a text-free
+           button keeps the row on one baseline. -->
+      <button id="selectAllBtn" class="sort-btn" title="Select all shown" aria-label="Select all shown"><i class="fa-solid fa-check-double"></i></button>
+      <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" aria-label="Unselect all shown" style="display:none;"><i class="fa-solid fa-check"></i></button>
+      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results" aria-label="Reset filter and clear results"><i class="fa-solid fa-rotate-left"></i></button>
       <span id="selCount" class="sel-count" style="margin-left: 8px; font-size: 0.8em; color: var(--text-meta);"></span>
     </div>
     <div id="filterResults" class="filter-results"></div>
@@ -3905,6 +3922,10 @@ function highlightWordInStory(word) {
 let selectedWords = new Set();
 let currentStoryId = null;
 let wordStoryCounts = {};
+// The candidate list is fetched once per visit to the Stories panel, on the way
+// in. Not per toggle: re-entering Stories must not discard a list the user just
+// worked through.
+let storiesFilterLoaded = false;
 
 // The encounters box: numbers only, minimum 2, blank allowed.
 //
@@ -3963,8 +3984,24 @@ async function applyFilter() {
 function renderFilterResults(data) {
   const box = document.getElementById('filterResults');
   box.innerHTML = '';
+  // The selection is REPLACED, not merged, on every render. It used to only ever
+  // add, which meant the count described a set the filter no longer showed:
+  // raise `enc` from 2 to 3 and the list shrinks, but the 354 words picked the
+  // first time stayed in the set, so "Selected: 354" sat unchanged above 200
+  // rows. Merging was only ever right while the auto-ticks were few; now that
+  // Show can pull in hundreds, the filter has to be what DEFINES the selection,
+  // otherwise the count and the list disagree -- and a word the list no longer
+  // shows would still be sent to the model.
+  const nextSelected = new Set();
   if (!data.length) {
     box.innerHTML = '<span style="font-size:0.8em;color:var(--text-meta);">No words match this filter.</span>';
+    // An empty list clears the selection too. Leaving words selected that the
+    // filter now excludes is the same disagreement as above, in its worst form:
+    // the box says nothing matches while Generate would still send the old
+    // words.
+    selectedWords = nextSelected;
+    renderChips();
+    updateSelectToggleUI();
     return;
   }
   // Every render auto-ticks the unlearnt words: practising what you don't know
@@ -3988,14 +4025,12 @@ function renderFilterResults(data) {
     // checkbox below stays live, and a word already selected stays selected
     // whichever group it is in.
     cb.checked = selectedWords.has(w.word) || !w.learned;
-    // The tick has to be pushed into selectedWords HERE, because setting
-    // `.checked` in script does NOT fire a change event -- the handler below
-    // never runs for an auto-ticked box. Without this the boxes look selected
-    // while the set Generate reads is still empty, so a story would be built
-    // from no words at all and the count would read nothing.
-    // Only ever ADDS: a word the user unticked by hand keeps its state through
-    // the next render, and a learnt word stays ticked if it was chosen before.
-    if (cb.checked) selectedWords.add(w.word);
+    // The tick has to be pushed into the set HERE, because setting `.checked`
+    // in script does NOT fire a change event -- the handler below never runs
+    // for an auto-ticked box. Without this the boxes look selected while the
+    // set Generate reads is still empty, so a story would be built from no
+    // words at all and the count would read nothing.
+    if (cb.checked) nextSelected.add(w.word);
     cb.addEventListener('change', () => {
       if (cb.checked) selectedWords.add(w.word); else selectedWords.delete(w.word);
       renderChips();
@@ -4010,9 +4045,10 @@ function renderFilterResults(data) {
     label.appendChild(meta);
     box.appendChild(label);
   });
-  // The count, after the auto-ticks above have been folded into the set -- the
-  // ordering matters, because renderChips() reports selectedWords.size and would
-  // otherwise print a stale (usually empty) number on the very first Show.
+  // Publish the rebuilt selection, then report it. Order matters:
+  // renderChips() reads selectedWords.size, so swapping the set first is what
+  // makes the count describe THIS list.
+  selectedWords = nextSelected;
   renderChips();
   updateSelectToggleUI();
 }
@@ -4781,7 +4817,12 @@ async function _doGenerateStory(words, model, provider, reasoning) {
     status.style.display = 'block';
     status.textContent = `Story queued (#${story.id}) \u2014 generating in the background. Click it to watch it being written.`;
     loadStories();
-    document.getElementById('storiesList').scrollIntoView({ behavior: 'smooth' });
+    // No scroll after queueing. There was a scrollIntoView on the stories list
+    // here from the start, and it was fine while the filter box above it was
+    // empty until you pressed Show. Loading the filter on entry (the Show
+    // button is gone) means that box now holds hundreds of rows before you
+    // generate, so the same line threw the viewport a long way down the page,
+    // past the status line that was written for exactly this moment.
   } catch (e) {
     alert('Error: ' + e.message);
   } finally {
@@ -5332,10 +5373,25 @@ async function loadStories(wordId) {
       + (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : isTruncated ? ' is-truncated' : '');
     const titleBox = document.createElement('span');
     titleBox.className = 'story-list-title-box';
+    // The id sits on the SAME line as the title, not above it: the title box is
+    // a column flex, so appending the tag directly would have given it a row of
+    // its own and pushed every title down.
+    const titleRow = document.createElement('span');
+    titleRow.className = 'story-list-title-row';
+    // It is what the status line above quotes ("Story queued (#123)"), what the
+    // log lines and the request-log filename use, and what the prompt endpoint's
+    // URL takes -- so it belongs where it can be read off the row rather than
+    // only found by opening the story.
+    const idTag = document.createElement('span');
+    idTag.className = 'story-list-id';
+    idTag.textContent = `#${s.id}`;
+    idTag.title = `Story id ${s.id}`;
     const title = document.createElement('span');
     title.className = 'story-list-title';
     title.textContent = s.title || 'Untitled';
-    titleBox.appendChild(title);
+    titleRow.appendChild(idTag);
+    titleRow.appendChild(title);
+    titleBox.appendChild(titleRow);
     if (isGenerating || isFailed) {
       const statusLine = document.createElement('span');
       statusLine.className = 'story-list-status-line';
@@ -5431,6 +5487,12 @@ function openStoriesForWord(wordId) {
   document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book"></i> Words';
   loadStories(wordId);
   populateModelSelect();
+  // With the Show button gone there is no control left to press to populate
+  // the candidate list, so entering the panel runs the filter itself. Once per
+  // visit, not on every toggle: coming back to Stories should not refetch and
+  // reset a list the user had just been through, and the panel starts empty
+  // after a reload anyway.
+  if (!storiesFilterLoaded) { storiesFilterLoaded = true; applyFilter(); }
 }
 
 // ===========================================================================
@@ -6195,6 +6257,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<i class="fa-solid fa-book"></i> Words';
             loadStories();
             populateModelSelect();
+            if (!storiesFilterLoaded) { storiesFilterLoaded = true; applyFilter(); }
         } else {
             panel.style.display = 'none';
             grid.style.display = '';
@@ -6202,7 +6265,10 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<i class="fa-solid fa-book-open"></i> Stories';
         }
     });
-    document.getElementById('applyFilterBtn').addEventListener('click', applyFilter);
+    // No Show button: every control in this row re-runs the filter itself, so
+    // one button that did the same thing as its neighbours was a click that
+    // looked like the only way to make it happen.
+    document.getElementById('filterField').addEventListener('change', applyFilter);
     // The two boxes re-run the filter immediately: with only two states, making
     // you also press Show to see the consequence of a click is the kind of extra
     // step that gets people to believe the control did nothing.
