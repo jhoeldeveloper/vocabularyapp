@@ -75,6 +75,17 @@ _STORY_ERR_DEADLINE = (
 # "story" is a sentence or two and is not worth keeping.
 _STORY_MIN_VISIBLE_TOKENS = 50
 
+# Top-level and per-choice keys the reassembled story payload already models.
+# Anything else a provider sends is captured into the payload's `extra` field
+# so the request log records it instead of silently dropping it.
+_STREAM_KNOWN_KEYS = frozenset({
+    "id", "model", "choices", "usage", "provider_responses", "finish_reason",
+    "native_finish_reason", "native_tokens_reasoning",
+})
+_CHOICE_KNOWN_KEYS = frozenset({
+    "delta", "message", "finish_reason", "index",
+})
+
 # raw_decode on this gives (record, chars_consumed), which is how the stream
 # reader tells one SSE record from several packed onto a single line.
 _JSON_DECODER = json.JSONDecoder()
@@ -1472,7 +1483,7 @@ def _detect_degeneracy(content, words):
     return reasons
 
 
-def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=None):
+def _read_story_stream(response, started, model, story_id, on_delta):
     """Consume an OpenRouter SSE body and reassemble the final payload.
 
     Returns ``(data, None)`` on success or ``(None, error_message)`` when the
@@ -1482,11 +1493,9 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
     Providers that ignore ``"stream": true`` and answer with a single plain
     JSON body are handled too: the raw body is parsed and emitted as one delta.
 
-    ``raw_sink``, when given, is called with every raw line of the body exactly
-    as received, before any parsing. It exists for the STORY_DEBUG_REQUEST log:
-    the assembled payload below is a *reconstruction*, so it cannot show a
-    field the reassembly drops, a provider's odd casing, or a malformed record
-    that was resynced past. Only the raw stream is the provider's actual answer.
+    The reassembled payload this returns is what the request log records; the
+    raw SSE body is not, because a 300-chunk stream is unreadable next to it
+    and every field that matters survives the reassembly.
     """
     content_parts = []
     reasoning_parts = []
@@ -1500,6 +1509,23 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
     saw_sse = False
     done = False
     plain_lines = []
+    # Every top-level / per-choice key the returned payload does NOT carry.
+    # The dict at the end of this function is a fixed shape WE choose, so
+    # anything a provider sends outside it is otherwise invisible in the
+    # request log -- including usage.cost (which the health line would
+    # otherwise have to reconstruct from catalogue pricing) and reasoning_details.
+    # Last value wins; the point is that the key is recorded at all.
+    extra = {}
+
+    def _collect(chunk):
+        for key, value in chunk.items():
+            if key not in _STREAM_KNOWN_KEYS:
+                extra[key] = value
+        for choice in chunk.get("choices") or []:
+            for key, value in choice.items():
+                if key not in _CHOICE_KNOWN_KEYS:
+                    extra.setdefault("choices_extra", {})
+                    extra["choices_extra"][key] = value
 
     for raw_line in response.iter_lines():
         # Decode explicitly as UTF-8: "text/event-stream" carries no charset,
@@ -1507,8 +1533,6 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
         # em dash and curly quote in the story.
         if isinstance(raw_line, bytes):
             raw_line = raw_line.decode("utf-8", "replace")
-        if raw_sink:
-            raw_sink(raw_line)
         if not raw_line or not raw_line.strip():
             continue
 
@@ -1557,6 +1581,8 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
             if not isinstance(chunk, dict):
                 break
 
+            _collect(chunk)
+
             if chunk.get("model"):
                 seen_model = chunk["model"]
             if chunk.get("id"):
@@ -1602,6 +1628,7 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
         except ValueError:
             payload = None
         if isinstance(payload, dict):
+            _collect(payload)
             seen_model = payload.get("model") or seen_model
             generation_id = payload.get("id") or generation_id
             usage = payload.get("usage") or usage
@@ -1639,6 +1666,10 @@ def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=No
         "finish_reason": finish_reason,
         "native_finish_reason": native_finish_reason,
         "native_tokens_reasoning": native_tokens_reasoning,
+        # Keys the provider sent that this dict does not model. Empty on a
+        # response that carried nothing extra, and omitted from the log when
+        # empty so a clean run does not gain a field for no reason.
+        **({"extra": extra} if extra else {}),
     }, None
 
 
@@ -1823,10 +1854,6 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             stream=True,
             timeout=(_STORY_CONNECT_TIMEOUT, _STORY_READ_TIMEOUT),
         )
-        if log_path:
-            with open(log_path, "a", encoding="utf-8") as fh:
-                fh.write("--- response headers ---\n")
-                fh.write(json.dumps(dict(resp.headers), indent=2, ensure_ascii=False) + "\n")
         return resp
 
     started = time.monotonic()
@@ -1891,28 +1918,9 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             else:
                 return {"ok": False, "error": f"Error generating story ({response.status_code}): {detail}"}
 
-        # Tee the raw SSE body into the request log as it arrives. The file
-        # handle stays open for the life of the stream (one append per line is
-        # debug-only cost) and is closed in the finally below.
-        raw_sink = None
-        stream_fh = None
-        if log_path:
-            try:
-                stream_fh = open(log_path, "a", encoding="utf-8")
-                stream_fh.write("--- response stream (raw, verbatim) ---\n")
-                stream_fh.flush()
-
-                def raw_sink(line, _fh=stream_fh):
-                    _fh.write(line + "\n")
-                    _fh.flush()
-            except OSError as e:
-                print(f"[story] could not open request log for streaming: {e}",
-                      file=sys.stderr, flush=True)
-                stream_fh = None
-
         # The deadline is enforced inside this loop, chunk by chunk.
         try:
-            data, stream_error = _read_story_stream(response, started, model, story_id, on_delta, raw_sink)
+            data, stream_error = _read_story_stream(response, started, model, story_id, on_delta)
         except requests.exceptions.Timeout:
             if _story_cancelled(story_id):
                 return {"ok": False, "error": _STORY_ERR_CANCELLED}
@@ -1923,20 +1931,19 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             return {"ok": False, "error": _STORY_ERR_DISCONNECTED}
         finally:
             _safe_close(response)
-            if stream_fh:
-                stream_fh.close()
         if stream_error:
             return {"ok": False, "error": stream_error}
 
         if log_path:
-            # The reassembled payload, for convenience: the raw stream above is
-            # the source of truth, this is the same body after _read_story_stream
-            # has pulled it apart. `id` is the generation id, and it is the only
-            # place it appears -- the x-openrouter-generation-id header is absent
-            # on free models, which is why the log showed an empty gen= before.
+            # Only the reassembled payload, not the raw SSE body: the stream is
+            # hundreds of near-identical `data:` lines, and every field that
+            # matters (id, usage, finish_reason, the story) survives the
+            # reassembly. `id` is the generation id, and it is the only place it
+            # appears -- the x-openrouter-generation-id header is absent on free
+            # models, which is why the log used to show an empty gen=.
             try:
                 with open(log_path, "a", encoding="utf-8") as fh:
-                    fh.write("--- response (reassembled) ---\n")
+                    fh.write("--- response ---\n")
                     fh.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
             except OSError:
                 pass
