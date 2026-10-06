@@ -959,6 +959,15 @@
     }
     .gen-filter .filter-learnt-opt input { min-width: 0; width: auto; padding: 0; margin: 0; cursor: pointer; }
     .filter-learnt-opt:hover { color: var(--learnt); }
+    /* The encounters box is a number field sitting in a row of text fields, so
+       it gets the same box metrics -- only the inner control differs. A fixed
+       width rather than min-width: this row must not change width as the user
+       types a longer number. */
+    .gen-filter input[type="number"] {
+        width: 62px;
+        min-width: 62px;
+        text-align: center;
+    }
     .gen-filter select:focus, .gen-filter input:focus { border-color: var(--color-primary); }
     .filter-results {
         max-height: 220px; overflow-y: auto; border: 1px solid var(--border-card);
@@ -1356,6 +1365,20 @@
             <option value="id">ID</option>
         </select>
         <button id="sortOrderBtn" class="sort-btn" title="Toggle ascending/descending"><i class="fa-solid fa-arrow-down-wide-short"></i></button>
+        <!-- The SAME pair as the story filter, and deliberately INDEPENDENT of
+             it: that one answers "which words go into the next story", this one
+             answers "which words am I looking at". Sharing one control was
+             considered and rejected -- unchecking "learnt" to review your
+             vocabulary would silently change what a later story is built from.
+             Placed before the add-word input, not after: it belongs with the
+             search and sort controls it sits beside, and the add box is the
+             start of a different job.
+             Filtering happens in applyGridFilters over the words already in
+             memory, so no request is made -- allWords holds the whole set. -->
+        <span class="filter-learnt-group" title="Which words to show">
+          <label class="filter-learnt-opt"><input type="checkbox" id="gridLearnt" checked> Learnt</label>
+          <label class="filter-learnt-opt"><input type="checkbox" id="gridUnlearnt" checked> Unlearnt</label>
+        </span>
         <div class="add-word-group">
             <input type="text" id="newWordInput" placeholder="Add new word..." autocomplete="off">
             <button id="addWordBtn" onclick="addWord()">Add</button>
@@ -1581,16 +1604,19 @@
         <option value="createdAt">Created</option>
         <option value="updatedAt">Updated</option>
       </select>
-      <select id="filterDirection" title="Sort direction">
+      <!-- Direction as an icon-only toggle, the same control as the word grid's
+           sortOrderBtn: two states do not need a dropdown, and a dropdown that
+           is almost always left on its default is one click longer than it needs
+           to be. The state lives in the arrow direction and the tooltip, and
+           DESCENDING is the default because the newest or highest numbers are
+           what you usually want to generate from.
+           The select is kept, hidden, purely as the place the value is stored,
+           so the existing read/write sites keep working untouched. -->
+      <select id="filterDirection" hidden aria-hidden="true">
         <option value="desc">Descending</option>
         <option value="asc">Ascending</option>
       </select>
-      <input type="text" id="filterMin" placeholder="from (#)" title="Result start (1-based), e.g. 1">
-      <input type="text" id="filterMax" placeholder="to (#)" title="Result end, e.g. 100">
-      <button id="applyFilterBtn" class="sort-btn">Show</button>
-      <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
-      <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" style="display:none;">Unselect all</button>
-      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results">Clear results</button>
+      <button id="filterSortOrderBtn" class="sort-btn" title="Descending &#8212; click for ascending"><i class="fa-solid fa-arrow-down-wide-short"></i></button>
       <!-- Two checkboxes rather than a three-way select: "learnt only" and
            "unlearnt only" are each one click away instead of a dropdown cycle,
            and both-on is reachable in a single click back.
@@ -1598,11 +1624,20 @@
            ONE compact group with a fixed height, so the label cannot wrap and
            change this row's height -- the rule the config grid and the stat bar
            already follow. A bare label plus checkbox would let a longer word
-           push the row over its neighbours and break the baseline. -->
+           push the row over its neighbours and break the baseline.
+
+           INDEPENDENT of the identical pair in the word toolbar: which words go
+           into this story and which words are on screen are different questions,
+           and one silently moving the other would be baffling. -->
       <span class="filter-learnt-group" title="Which words to offer for the next story">
         <label class="filter-learnt-opt"><input type="checkbox" id="filterLearnt" checked> Learnt</label>
         <label class="filter-learnt-opt"><input type="checkbox" id="filterUnlearnt" checked> Unlearnt</label>
       </span>
+      <input type="number" id="filterMinEncounter" value="2" min="2" step="1" size="3" placeholder="enc" title="Only words you have met at least this many times (blank = no minimum). Minimum 2.">
+      <button id="applyFilterBtn" class="sort-btn">Show</button>
+      <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
+      <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" style="display:none;">Unselect all</button>
+      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results">Clear results</button>
       <span id="selCount" class="sel-count" style="margin-left: 8px; font-size: 0.8em; color: var(--text-meta);"></span>
     </div>
     <div id="filterResults" class="filter-results"></div>
@@ -2353,9 +2388,48 @@ function updateSortOrderBtn() {
     btn.title = isAsc ? 'Ascending — click for descending' : 'Descending — click for ascending';
 }
 
+// Icon-only direction toggle, mirroring the grid's sortOrderBtn exactly: same
+// two arrow glyphs, same "Ascending — click for descending" phrasing. The
+// hidden <select> stays the stored value so the direction survives a re-render
+// without a second variable to keep in step with it.
+function updateFilterSortOrderBtn() {
+  const btn = document.getElementById('filterSortOrderBtn');
+  const sel = document.getElementById('filterDirection');
+  if (!btn || !sel) return;
+  const isAsc = sel.value === 'asc';
+  btn.innerHTML = isAsc
+    ? '<i class="fa-solid fa-arrow-up-wide-short"></i>'
+    : '<i class="fa-solid fa-arrow-down-wide-short"></i>';
+  btn.title = isAsc ? 'Ascending — click for descending' : 'Descending — click for ascending';
+}
+
 function applySearch() {
+  applyGridFilters();
+}
+
+// The grid's two filters -- the search box and the independent Learnt/Unlearnt
+// pair -- combine here and nowhere else, so the two can never each render their
+// own idea of the grid. Client-side on purpose: allWords already holds every
+// word, so this is a re-render rather than a request, and it stays instant while
+// the grid is mid-edit.
+function applyGridFilters() {
+  if (!allWords) return;
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
-  const filtered = query ? allWords.filter(w => w.word.toLowerCase().includes(query)) : allWords;
+  const learnt = document.getElementById('gridLearnt').checked;
+  const unlearnt = document.getElementById('gridUnlearnt').checked;
+  let filtered = query
+    ? allWords.filter(w => w.word.toLowerCase().includes(query))
+    : allWords.slice();
+  if (!learnt && !unlearnt) {
+    // Both unticked means "show me neither", deliberately NOT the same as
+    // leaving them alone -- an empty grid is the honest answer to that, and
+    // silently showing everything would read as the boxes doing nothing.
+    filtered = [];
+  } else if (!learnt) {
+    filtered = filtered.filter(w => !w.learned);
+  } else if (!unlearnt) {
+    filtered = filtered.filter(w => !!w.learned);
+  }
   renderGrid(filtered);
 }
 
@@ -3832,14 +3906,41 @@ let selectedWords = new Set();
 let currentStoryId = null;
 let wordStoryCounts = {};
 
+// The encounters box: numbers only, minimum 2, blank allowed.
+//
+// type="number" alone is not validation. It stops most letters, but the field
+// still holds "" , "1.5", "-3" and "-", and a negative or fractional value would
+// be sent straight to the endpoint and rejected there with a 422 whose body the
+// filter renderer cannot read -- which shows up as "No words match this filter",
+// an empty result that looks like an answer.
+//
+// So the value is normalised in ONE place, readEncounterMin(), and both the
+// auto-rerun and Show go through it. Clamping rather than rejecting: a typo in a
+// numeric box should land on the nearest sensible value, not on a refusal the
+// user then has to interpret.
+const MIN_ENCOUNTER = 2;
+function readEncounterMin() {
+  const input = document.getElementById('filterMinEncounter');
+  const raw = input.value.trim();
+  if (raw === '') return { value: '', param: null, ok: true };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) { input.value = String(MIN_ENCOUNTER); return { value: MIN_ENCOUNTER, param: MIN_ENCOUNTER, ok: true }; }
+  const rounded = Math.floor(n);
+  const clamped = Math.max(MIN_ENCOUNTER, rounded);
+  // Rewrite the box only when the typed text was not already canonical, so
+  // typing "10" does not fight the cursor mid-keystroke.
+  if (String(clamped) !== raw) input.value = String(clamped);
+  return { value: clamped, param: clamped, ok: clamped === rounded && rounded >= MIN_ENCOUNTER };
+}
+
 async function applyFilter() {
   const field = document.getElementById('filterField').value;
   const direction = document.getElementById('filterDirection').value;
-  const min = document.getElementById('filterMin').value.trim();
-  const max = document.getElementById('filterMax').value.trim();
   const qs = new URLSearchParams({ field, direction });
-  if (min) qs.set('min', min);
-  if (max) qs.set('max', max);
+  // No range: the from/to boxes were removed, and the endpoint keeps its
+  // min/max parameters for anything else that might call it.
+  const minEnc = readEncounterMin();
+  if (minEnc.param !== null) qs.set('min_encounter', minEnc.param);
   // Two independent flags rather than one three-way value: each state is one
   // click away. Both boxes ticked means "no filter" -- and sends nothing, so an
   // old client and a default panel behave identically. Both UNticked sends both
@@ -3866,11 +3967,17 @@ function renderFilterResults(data) {
     box.innerHTML = '<span style="font-size:0.8em;color:var(--text-meta);">No words match this filter.</span>';
     return;
   }
-  // Absolute position is tied to the from/to config (1-based).
-  const minRaw = document.getElementById('filterMin').value.trim();
-  const start = minRaw ? Math.max(1, parseInt(minRaw, 10) || 1) : 1;
+  // Every render auto-ticks the unlearnt words: practising what you don't know
+  // is the reason to mark anything at all. An INITIAL state, not a lock -- the
+  // checkbox stays live, and a word already selected stays selected whichever
+  // group it is in.
+  //
+  // There is deliberately no cap on how many get ticked. One was tried and
+  // removed: with the range inputs gone there is no way to narrow the list
+  // except the encounters box, so a guard that silently declined to tick
+  // anything would look like the filter had stopped working.
   data.forEach((w, idx) => {
-    const pos = start + idx;
+    const pos = idx + 1;
     const label = document.createElement('label');
     label.className = 'filter-item';
     label.dataset.word = w.word;
@@ -6089,11 +6196,32 @@ document.addEventListener('DOMContentLoaded', () => {
     // step that gets people to believe the control did nothing.
     ['filterLearnt', 'filterUnlearnt'].forEach(id =>
         document.getElementById(id).addEventListener('change', applyFilter));
+    // The icon toggle writes the hidden select and repaints itself from it, so
+    // the arrow and the tooltip can never disagree with the value applyFilter
+    // reads. Update on load too, not just on click, or the button's first paint
+    // would come from the markup rather than from the state.
+    document.getElementById('filterSortOrderBtn').addEventListener('click', () => {
+        const sel = document.getElementById('filterDirection');
+        sel.value = sel.value === 'asc' ? 'desc' : 'asc';
+        updateFilterSortOrderBtn();
+        applyFilter();
+    });
+    updateFilterSortOrderBtn();
+    ['gridLearnt', 'gridUnlearnt'].forEach(id =>
+        document.getElementById(id).addEventListener('change', applyGridFilters));
+    // Clamp the encounters box as soon as it settles, so an invalid value is
+    // corrected where the user is looking rather than on the next click of Show.
+    document.getElementById('filterMinEncounter').addEventListener('change', () => {
+        readEncounterMin();
+        applyFilter();
+    });
     document.getElementById('clearFilterBtn').addEventListener('click', () => {
-        document.getElementById('filterMin').value = '';
-        document.getElementById('filterMax').value = '';
+        document.getElementById('filterMinEncounter').value = '2';
         document.getElementById('filterField').value = 'id';
         document.getElementById('filterDirection').value = 'desc';
+        // The direction button reads the select, so it has to be repainted or
+        // Clear leaves an ascending arrow sitting on top of a descending sort.
+        updateFilterSortOrderBtn();
         document.getElementById('filterResults').innerHTML = '';
         document.getElementById('selCount').textContent = '';
         selectedWords.clear();

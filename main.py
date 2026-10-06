@@ -888,6 +888,7 @@ def api_filter_words(
     max_val: str = Query(None, alias="max"),
     include_learnt: Optional[bool] = Query(None),
     include_unlearnt: Optional[bool] = Query(None),
+    min_encounter: Optional[int] = Query(None),
 ):
     if field not in VALID_FILTER_FIELDS:
         raise HTTPException(status_code=400, detail="Invalid filter field.")
@@ -897,17 +898,22 @@ def api_filter_words(
 
     # min/max define a 1-based result-index range within the sorted list
     # (e.g. from=1, to=100 shows the first 100 results; 101-200 the next slice).
+    #
+    # An EMPTY "to" means NO LIMIT, and an empty "from" means start at the
+    # beginning. That is the request, not an oversight: the number inputs are
+    # pre-filled 1 and 200 so the row is honest about the usual page size, and
+    # clearing them is how you ask for the whole list. limit stays None for
+    # "unbounded" and the LIMIT clause is then left out of the SQL entirely,
+    # rather than being given a huge number that looks like a real bound.
     offset = 0
-    limit = 200
+    limit = None
     try:
-        if min_val not in (None, ""):
-            start = max(1, int(min_val))
+        start = max(1, int(min_val)) if min_val not in (None, "") else None
+        if start is not None:
             offset = start - 1
-            if max_val not in (None, ""):
-                end = max(start, int(max_val))
-                limit = end - start + 1
-        elif max_val not in (None, ""):
-            limit = max(1, int(max_val))
+        if max_val not in (None, ""):
+            end = max(1, int(max_val))
+            limit = end - offset if start is not None else end
     except ValueError:
         raise HTTPException(status_code=400, detail="min/max must be integers (result positions).")
 
@@ -931,16 +937,37 @@ def api_filter_words(
         # tidiness: min/max are RESULT POSITIONS ("show me 1-100"), so filtering
         # after the limit would return the wrong page -- you would tick through
         # 100 rows, hit the end at 60, and quietly miss the rest.
-        learned_clause = ("WHERE " + " OR ".join(parts)) if parts else "WHERE 0"
+        learned_clause = ("(" + " OR ".join(parts) + ")") if parts else "(0)"
+
+    # Minimum encounters: the same rule as the learnt filter, and for the same
+    # reason -- it narrows the SET before the range is applied, so "1 to 100" is
+    # a slice of the words that meet the threshold rather than of the whole
+    # dictionary. `encounters` is the dictionary's own counter, not the Zipf
+    # measurement: this is "words I have actually met", which is what you want
+    # when choosing material for a story.
+    encounter_clause, encounter_args = "", []
+    if min_encounter is not None:
+        encounter_clause = "encounters >= ?"
+        encounter_args = [max(1, int(min_encounter))]
+
+    clauses = [c for c in (learned_clause, encounter_clause) if c]
+    where_clause = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
     query = (
         f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, learned, encounters, createdAt, updatedAt "
-        f"FROM dictionary {learned_clause} ORDER BY {field} {sql_direction}, id {sql_direction} LIMIT ? OFFSET ?"
+        f"FROM dictionary {where_clause} ORDER BY {field} {sql_direction}, id {sql_direction}"
     )
+    # LIMIT/OFFSET are appended only when a range was actually asked for. With
+    # no "to" the whole matching set is returned, and SQLite is happier with the
+    # clause absent than with a sentinel limit.
+    params = list(encounter_args)
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params += [limit, offset]
     conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute(query, (limit, offset))
+    cursor.execute(query, tuple(params))
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
