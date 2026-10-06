@@ -22,16 +22,25 @@ def is_ready() -> bool:
     return client is not None
 
 
+_MEANINGS_PROMPT = (
+    "For the English word or phrase '{word}', write the 2 most common senses as a "
+    "numbered Markdown list. Each item is `1. <concise gloss>` and, on the next "
+    "line indented by three spaces, one short example sentence using that sense "
+    "with the word highlighted in **bold**. The senses must be genuinely "
+    "different. Do not give a frequency score, word class or inflected forms "
+    "-- those are measured elsewhere."
+)
+
+
 def sync_get_meanings_of(word: str) -> str:
     if not client:
         return "Groq client not initialized."
     try:
-        prompt = f"Define the word/phrase '{word}'. Provide a concise, natural and clear definition. Do not use dictionary format. Do not use lists or bullet points. Use smart highlighting for emphasis."
         print("sending prompt for meanings...")
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a helpful dictionary assistant."},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": _MEANINGS_PROMPT.format(word=word)},
             ],
             model=GROQ_MODEL_NAME,
         )
@@ -41,35 +50,60 @@ def sync_get_meanings_of(word: str) -> str:
         return f"Error fetching meaning: {e}"
 
 
-def sync_get_sentences_with(word: str) -> str:
+def sync_get_use_of(word: str) -> str:
+    """American / British / Both, matching the OpenRouter agent's field set.
+
+    Kept in step deliberately: main.py fans out to the same two functions for
+    whichever agent is configured, and its fail-closed check inspects both
+    results. An agent that returns a third field, or a different one, would
+    write a word the others cannot read.
+    """
     if not client:
         return "Groq client not initialized."
     try:
-        prompt = f"Create 5 example sentences using the word '{word}'. Do not use lists or numbered formats. Use line breaks between sentences and always highlight the word '{word}'."
-        print("sending prompt for sentences...")
+        print("sending prompt for dialect use...")
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a helpful dictionary assistant."},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": (
+                    f"Is the English word '{word}' distinctly American, distinctly "
+                    f"British, or both? Answer with exactly one word: American, "
+                    f"British or Both. If the word has no dialect distinction, "
+                    f"answer Both."
+                )},
             ],
             model=GROQ_MODEL_NAME,
         )
-        print("received response for sentences")
-        return response.choices[0].message.content
+        print("received response for dialect use")
+        answer = (response.choices[0].message.content or "").strip().lower()
+        for option in ("american", "british", "both"):
+            if option in answer:
+                return option.capitalize() if option != "both" else "Both"
+        return "Both"
     except Exception as e:
-        return f"Error fetching sentences: {e}"
+        return f"Error fetching use: {e}"
+
+
+
+_SYNONYMS_PROMPT = (
+    "List up to 5 true synonyms for the most common sense of the English word "
+    "or phrase '{word}', as a single comma-separated line. Prefer everyday words "
+    "a learner would actually use and leave out obscure or archaic ones. If it "
+    "genuinely has no synonym, reply with nothing. Output only the list."
+)
 
 
 def sync_get_synonyms_of(word: str) -> str:
+    """Stored once at add time. Not measured and not derived: the model's own
+    judgement, which is why it round-trips through the DB unlike freq/family."""
     if not client:
         return "Groq client not initialized."
     try:
-        prompt = f"List 5 synonyms for the word '{word}'. Provide them as a comma-separated list. If the word has multiple meanings, include synonyms for each. Only output the synonyms, no extra text."
         print("sending prompt for synonyms...")
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a helpful dictionary assistant."},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": _SYNONYMS_PROMPT.format(word=word)},
             ],
             model=GROQ_MODEL_NAME,
         )

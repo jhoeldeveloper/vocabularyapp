@@ -314,6 +314,13 @@
         border-top: 1px solid var(--border-details);
     }
     .detail-section { margin-bottom: 12px; }
+    /* The two measured sections. Visually quieter than the editable prose
+       around them, because they are facts rather than writing: no speaker
+       button, no double-click-to-edit, and a dash when the word is not in the
+       corpus. The padlock in the header explains that on hover. */
+    .lex-measured .lex-value { color: var(--text-main); font-size: 0.9em; padding: 2px 0; }
+    .lex-measured .section-header h4 i { font-size: 0.7em; opacity: 0.45; cursor: help; margin-left: 4px; }
+    .lex-unknown { color: var(--text-meta); }
     .detail-section .metadata {
         font-size: 0.75em;
         color: var(--text-meta);
@@ -1239,8 +1246,10 @@
         </div>
         <div class="tts-voice-body">
             <p class="tts-voice-hint">Runs locally and offline. This voice is used by the
-                <i class="fa-solid fa-volume-high"></i> buttons on meanings, sentences and
-                synonyms. Stories have their own voice, changed in the story modal.</p>
+                <i class="fa-solid fa-volume-high"></i> buttons on the meanings and use
+                sections. Frequency and family are corpus measurements rather than
+                prose, so they have no speaker. Stories have their own voice, changed in the
+                story modal.</p>
 
             <div class="tts-card" data-tts-root data-tts-context="meanings">
                 <div class="tts-card-row">
@@ -1749,17 +1758,24 @@ async function saveCellChanges(cell) {
   const word = wordItem.dataset.word;
   const encounters = parseInt(wordItem.dataset.encounters);
   const meaningDiv = wordItem.querySelector('.meaning-content');
-  const examplesDiv = wordItem.querySelector('.examples-content');
+  const useDiv = wordItem.querySelector('.use-content');
   const synonymsDiv = wordItem.querySelector('.synonyms-content');
   const editedMarkdownValue = cell.innerText.trim();
-  let meaningMarkdown = (cell === meaningDiv) ? editedMarkdownValue : (meaningDiv.dataset.raw || '');
-  let examplesMarkdown = (cell === examplesDiv) ? editedMarkdownValue : (examplesDiv.dataset.raw || '');
-  let synonymsMarkdown = (cell === synonymsDiv) ? editedMarkdownValue : (synonymsDiv.dataset.raw || '');
+  const meaningMarkdown = (cell === meaningDiv) ? editedMarkdownValue : (meaningDiv.dataset.raw || '');
+  const useRegion = (cell === useDiv) ? editedMarkdownValue : (useDiv.dataset.raw || '');
+  // Synonyms are the model's own judgement, stored once at add time like the
+  // meaning -- so unlike the measured fields they are editable and round-trip.
+  const synonymsMarkdown = (cell === synonymsDiv) ? editedMarkdownValue : (synonymsDiv.dataset.raw || '');
+  // `use` is an editable LINE, not Markdown, so its text is sent as-is rather
+  // than stripped of emphasis. The two measured fields (freq_zipf, family) are
+  // absent from this payload on purpose: they are measurements, not prose, and a
+  // hand-edited number would silently disagree with the corpus on the next
+  // regeneration with nothing to say which one was right.
   try {
     const response = await fetch('/api/words', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, word, meaning: meaningMarkdown, sentences: examplesMarkdown, synonyms: synonymsMarkdown, encounters })
+      body: JSON.stringify({ id, word, meaning: meaningMarkdown, synonyms: synonymsMarkdown, use_region: useRegion, freq_zipf: wordItem.dataset.freqzipf === '' ? null : parseFloat(wordItem.dataset.freqzipf), family: wordItem.dataset.family === '' ? null : wordItem.dataset.family, encounters })
     });
     if (!response.ok) throw new Error(`Update failed: ${response.status} ${await response.text()}`);
     cell.dataset.raw = editedMarkdownValue;
@@ -1888,8 +1904,14 @@ function pronounceWord(btn, event) {
 
 function speakSection(btn, event) {
     event.stopPropagation();
-    const content = btn.closest('.detail-section').querySelector('.editable-content');
-    const text = stripMarkdown(content.dataset.raw || '');
+    const section = btn.closest('.detail-section');
+    // Falls back to the read-only value: the synonyms section is measured data
+    // with no editable-content (it is not stored, so there is nothing to save),
+    // but it is a list of real words and reading them aloud is the point of a
+    // vocabulary app.
+    const content = section.querySelector('.editable-content, .lex-value');
+    if (!content) return;
+    const text = stripMarkdown(content.dataset.raw || content.textContent || '');
     if (!text) return;
     playTTS(text, btn);
 }
@@ -1944,7 +1966,10 @@ function renderGrid(data) {
            data-word="${item.word}"
            data-encounters="${item.encounters}"
            data-meaning="${encodeURIComponent(item.meaning || '')}"
-           data-sentences="${encodeURIComponent(item.sentences || '')}"
+           data-use="${encodeURIComponent(item.use_region || '')}"
+           data-freqzipf="${item.freq_zipf == null ? '' : item.freq_zipf}"
+           data-freqlabel="${item.freq_label || ''}"
+           data-family="${encodeURIComponent(item.family || '')}"
            data-synonyms="${encodeURIComponent(item.synonyms || '')}"
            data-createdat="${item.createdAt || ''}"
            data-updatedat="${item.updatedAt || ''}">
@@ -1969,8 +1994,10 @@ function renderGrid(data) {
           const isVisible = details.style.display === 'block';
           if (!isVisible && !details.dataset.rendered) {
               const meaningMarkdown = decodeURIComponent(wordItem.dataset.meaning || '');
-              const sentencesMarkdown = decodeURIComponent(wordItem.dataset.sentences || '');
-              const synonymsMarkdown = decodeURIComponent(wordItem.dataset.synonyms || '');
+              const useRegion = decodeURIComponent(wordItem.dataset.use || '');
+              const freqLabel = wordItem.dataset.freqlabel || '';
+              const family = decodeURIComponent(wordItem.dataset.family || '');
+              const synonyms = decodeURIComponent(wordItem.dataset.synonyms || '');
               const escAttr = s => s.replace(/"/g, '&quot;');
               const createdAt = wordItem.dataset.createdat || '';
               const updatedAt = wordItem.dataset.updatedat || '';
@@ -1979,8 +2006,8 @@ function renderGrid(data) {
               details.innerHTML = `
                 <div class="detail-section">
                     <div class="section-header">
-                        <h4>Meaning</h4>
-                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to meaning"><i class="fa-solid fa-headphones"></i></button>
+                        <h4>Meanings</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to meanings"><i class="fa-solid fa-headphones"></i></button>
                     </div>
                     <div class="editable-content meaning-content" data-raw="${escAttr(meaningMarkdown)}" ondblclick="makeEditable(this)">
                          <div class="rendered">${marked.parse(meaningMarkdown)}</div>
@@ -1988,20 +2015,32 @@ function renderGrid(data) {
                 </div>
                 <div class="detail-section">
                     <div class="section-header">
-                        <h4>Synonyms</h4>
-                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to synonyms"><i class="fa-solid fa-headphones"></i></button>
+                        <h4>Use</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to use"><i class="fa-solid fa-headphones"></i></button>
                     </div>
-                    <div class="editable-content synonyms-content" data-raw="${escAttr(synonymsMarkdown)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${marked.parse(synonymsMarkdown)}</div>
+                    <div class="editable-content use-content" data-raw="${escAttr(useRegion)}" ondblclick="makeEditable(this)">
+                         <div class="rendered">${escHtml(useRegion) || '<span class="lex-unknown">—</span>'}</div>
                     </div>
+                </div>
+                <div class="detail-section lex-measured">
+                    <div class="section-header">
+                        <h4>Frequency <i class="fa-solid fa-lock" title="Measured from a corpus (wordfreq), not written by a model. Shown as — when the word is not in the corpus."></i></h4>
+                    </div>
+                    <div class="lex-value">${freqLabel ? escHtml(freqLabel) : '<span class="lex-unknown">—</span>'}</div>
+                </div>
+                <div class="detail-section lex-measured">
+                    <div class="section-header">
+                        <h4>Family <i class="fa-solid fa-lock" title="Inflected forms from an inflection engine, checked against the corpus. Not editable, because a hand-edited form would disagree with the corpus on the next refresh with nothing to say which was right."></i></h4>
+                    </div>
+                    <div class="lex-value">${family ? escHtml(family) : '<span class="lex-unknown">—</span>'}</div>
                 </div>
                 <div class="detail-section">
                     <div class="section-header">
-                        <h4>Examples</h4>
-                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to examples"><i class="fa-solid fa-headphones"></i></button>
+                        <h4>Synonyms</h4>
+                        <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to synonyms"><i class="fa-solid fa-headphones"></i></button>
                     </div>
-                    <div class="editable-content examples-content" data-raw="${escAttr(sentencesMarkdown)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${marked.parse(sentencesMarkdown)}</div>
+                    <div class="editable-content synonyms-content" data-raw="${escAttr(synonyms)}" ondblclick="makeEditable(this)">
+                         <div class="rendered">${synonyms ? marked.parse(synonyms) : '<span class="lex-unknown">—</span>'}</div>
                     </div>
                 </div>
                 <div class="detail-section">
@@ -2561,8 +2600,12 @@ function formatDate(ts) {
   return `${day}/${month}/${year} ${hours}:${minutes}`;
 }
 
-function formatDateTime(ts) {
-  if (!ts) return '';
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatDateTime(ts) {  if (!ts) return '';
   const d = new Date(String(ts).replace(' ', 'T') + 'Z');
   if (isNaN(d.getTime())) return ts;
   const day = String(d.getDate()).padStart(2, '0');

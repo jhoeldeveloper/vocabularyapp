@@ -20,3 +20,11 @@ num2words
 Unidecode
 groq
 requests
+# Word detail panel: the two MEASURED fields, never model-written.
+# wordfreq supplies the Zipf frequency (real corpus counts); lemminflect supplies
+# inflected forms (it knows "ran" and "children", which no suffix rule reaches).
+# A model asked for either will return a confident, well-formatted invention.
+# Synonyms are the deliberate exception: the model's own judgement, asked once at
+# add time and stored.
+wordfreq
+lemminflect

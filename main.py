@@ -36,13 +36,15 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
 # source of truth for both.
 
 if AI_PROVIDER == "groq":
-    from groq_agent import sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready
+    from groq_agent import sync_get_meanings_of, sync_get_use_of, sync_get_synonyms_of, is_ready
 elif AI_PROVIDER == "openrouter":
     from openrouter_agent import (
-        sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready,
+        sync_get_meanings_of, sync_get_use_of, sync_get_synonyms_of, is_ready,
     )
 else:
-    from gemini_agent import sync_get_meanings_of, sync_get_sentences_with, sync_get_synonyms_of, is_ready
+    from gemini_agent import sync_get_meanings_of, sync_get_use_of, sync_get_synonyms_of, is_ready
+
+import lexicon
 
 import openrouter_agent
 
@@ -167,8 +169,10 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         word TEXT NOT NULL UNIQUE,
         meaning TEXT,
-        sentences TEXT,
         synonyms TEXT,
+        use_region TEXT,
+        freq_zipf REAL,
+        family TEXT,
         encounters INTEGER DEFAULT 1,
         createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
         updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
@@ -182,8 +186,7 @@ def init_db():
     needs_migration = (
         'frequency' in columns or   # old column name
         'createdAt' not in columns or
-        'updatedAt' not in columns or
-        'synonyms' not in columns    # new column added
+        'updatedAt' not in columns
     )
 
     if needs_migration:
@@ -203,24 +206,31 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT NOT NULL UNIQUE,
                 meaning TEXT,
-                sentences TEXT,
-                synonyms TEXT,
+                use_region TEXT,
+                freq_zipf REAL,
+                family TEXT,
                 encounters INTEGER DEFAULT 1,
                 createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
                 updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """)
 
-            # 3. Copy the data from the old table to the new one.
+            # 3. Copy the data over. `meaning` and `synonyms` survive: only
+            #    `sentences` is discarded (its examples now live inside the
+            #    numbered meaning), and the new measured columns are left NULL
+            #    rather than invented for rows that predate them.
+            def _col(name):
+                return name if name in columns else "NULL"
+            meaning_src, synonyms_src = _col("meaning"), _col("synonyms")
             if created_col:
                 cursor.execute(f"""
-                INSERT INTO dictionary (id, word, meaning, sentences, synonyms, encounters, createdAt, updatedAt)
-                SELECT id, word, meaning, sentences, NULL, {freq_col}, createdAt, createdAt FROM dictionary_old;
+                INSERT INTO dictionary (id, word, meaning, synonyms, encounters, createdAt, updatedAt)
+                SELECT id, word, {meaning_src}, {synonyms_src}, {freq_col}, createdAt, createdAt FROM dictionary_old;
                 """)
             else:
                 cursor.execute(f"""
-                INSERT INTO dictionary (id, word, meaning, sentences, synonyms, encounters)
-                SELECT id, word, meaning, sentences, NULL, {freq_col} FROM dictionary_old;
+                INSERT INTO dictionary (id, word, meaning, synonyms, encounters)
+                SELECT id, word, {meaning_src}, {synonyms_src}, {freq_col} FROM dictionary_old;
                 """)
 
             # 4. Drop the old, temporary table.
@@ -238,6 +248,49 @@ def init_db():
     else:
         # If the schema is already up to date, no migration is needed.
         conn.close()
+
+    # --- Additive/destructive column migration for an up-to-date table ---
+    # Reached by every existing installation: the table is otherwise current, so
+    # the rebuild above is skipped, but it still carries the retired columns and
+    # lacks the three new ones.
+    _conn = sqlite3.connect(DATABASE_URL)
+    _cur = _conn.cursor()
+    try:
+        _cur.execute("PRAGMA table_info(dictionary)")
+        _columns = [c[1] for c in _cur.fetchall()]
+
+        # The three fields the new detail panel renders. Zipf and family are
+        # MEASURED (lexicon.py) rather than model-written, which is why they are
+        # NULL rather than 0 for every pre-existing row -- and why they are never
+        # backfilled: a number we did not measure stays absent.
+        for name, decl in (("use_region", "TEXT"),
+                           ("freq_zipf", "REAL"),
+                           ("family", "TEXT"),
+                           ("synonyms", "TEXT")):
+            if name not in _columns:
+                _cur.execute(f"ALTER TABLE dictionary ADD COLUMN {name} {decl}")
+                print(f"MIGRATION: added dictionary.{name}")
+
+        # Only `sentences` is dropped. Its content is superseded -- the examples
+        # now live inside the numbered sense they illustrate -- so keeping a dead
+        # column full of text nothing renders is worse than removing it.
+        # `synonyms` is deliberately KEPT: it is the model's own judgement, asked
+        # once when the word is added and stored, not derived per render. DROP
+        # COLUMN needs SQLite 3.35+; on anything older the column is left in
+        # place and simply ignored, because no query references it.
+        for name in ("sentences",):
+            if name in _columns:
+                try:
+                    _cur.execute(f"ALTER TABLE dictionary DROP COLUMN {name}")
+                    print(f"MIGRATION: dropped dictionary.{name}")
+                except sqlite3.Error as e:
+                    print(f"MIGRATION: could not drop dictionary.{name}: {e}")
+        _conn.commit()
+    except Exception as e:
+        print(f"MIGRATION: dictionary column pass failed: {e}")
+        _conn.rollback()
+    finally:
+        _conn.close()
 
     # --- Feature tables: stories, story_words, settings ---
     _conn = sqlite3.connect(DATABASE_URL)
@@ -378,8 +431,10 @@ class WordEntry(BaseModel):
     id: int
     word: str
     meaning: Optional[str] = ""
-    sentences: Optional[str] = ""
     synonyms: Optional[str] = ""
+    use_region: Optional[str] = None
+    freq_zipf: Optional[float] = None
+    family: Optional[str] = None
     encounters: int
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
@@ -617,6 +672,29 @@ async def get_words_html_page():
     return FileResponse(file_path, media_type="text/html")
 
 
+def _zipf_label(value):
+    """Human-readable frequency band for a measured Zipf value, or None.
+
+    A bare 5.49 tells a learner nothing actionable; "top 40k words" does. The
+    rank is derived here rather than in the browser for the same reason the story
+    coverage percentage is stored server-side: one definition, so the API and any
+    future surface cannot disagree about what a number means. Zipf is
+    log10(rank per billion), so rank = 10 ** (7 - zipf).
+    """
+    if value is None:
+        return None
+    # Clamped at 1: "the" is Zipf 7.7, which is a rank below one per billion and
+    # rounds to "top 0 words" without this.
+    rank = max(1.0, 10 ** (7 - float(value)))
+    if rank < 1000:
+        band = f"top {max(10, int(round(rank / 10) * 10))}"
+    elif rank < 1_000_000:
+        band = f"top {round(rank / 1000)}k"
+    else:
+        band = f"top {round(rank / 100_000) / 10:.1f}M"
+    return f"Zipf {value:.1f} · {band} words"
+
+
 @app.get("/api/words")
 def api_get_words(
     sort_by: str = Query('updatedAt', enum=['id', 'encounters', 'createdAt', 'updatedAt', 'word']),
@@ -640,14 +718,17 @@ def api_get_words(
     else:
         order_clause = f"ORDER BY id {sql_dir}"
 
-    query = f"SELECT id, word, meaning, sentences, synonyms, encounters, createdAt, updatedAt FROM dictionary {order_clause}"
+    query = f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, encounters, createdAt, updatedAt FROM dictionary {order_clause}"
     conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(query)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    words = [dict(row) for row in rows]
+    for entry in words:
+        entry["freq_label"] = _zipf_label(entry.get("freq_zipf"))
+    return words
 
 
 @app.post("/api/word")
@@ -671,22 +752,30 @@ async def add_word(
     err = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         print(f"[add_word] Attempt {attempt}/{MAX_ATTEMPTS} for '{word}'", flush=True)
-        meanings, sentences, synonyms = await asyncio.gather(
+        meanings, use_region, synonyms = await asyncio.gather(
             run_in_threadpool(sync_get_meanings_of, *lookup_args),
-            run_in_threadpool(sync_get_sentences_with, *lookup_args),
+            run_in_threadpool(sync_get_use_of, *lookup_args),
             run_in_threadpool(sync_get_synonyms_of, *lookup_args)
         )
-        if not any(s.startswith("Error fetching") for s in (meanings, sentences, synonyms)):
+        if not any(s.startswith("Error fetching") for s in (meanings, use_region, synonyms)):
             print(f"[add_word] Success on attempt {attempt} for '{word}'", flush=True)
             break
-        err = next(s for s in (meanings, sentences, synonyms) if s.startswith("Error fetching"))
+        err = next(s for s in (meanings, use_region, synonyms) if s.startswith("Error fetching"))
         print(f"[add_word] Attempt {attempt} failed for '{word}': {err}", flush=True)
         if attempt < MAX_ATTEMPTS:
             await asyncio.sleep(5)
 
     # Fail-closed: do not mutate DB if all attempts failed
-    if err and any(s.startswith("Error fetching") for s in (meanings, sentences, synonyms)):
+    if err and any(s.startswith("Error fetching") for s in (meanings, use_region, synonyms)):
         raise HTTPException(status_code=502, detail=err)
+
+    # The measured fields. Computed here rather than asked for: a model asked for
+    # a frequency produces a confident invented number, and one asked for
+    # inflections produces "runing". Both come from wordfreq/lemminflect, and both
+    # are None rather than 0 when the word is unknown -- an absent measurement is
+    # displayed as a dash, and 0 would read as "utterly rare", which is a claim.
+    freq_zipf = lexicon.zipf_for(word)
+    family = lexicon.family_for(word)
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -697,15 +786,15 @@ async def add_word(
             if result:
                 new_count = result[1] + 1
                 cursor.execute(
-                    "UPDATE dictionary SET encounters = ?, meaning = ?, sentences = ?, synonyms = ?, updatedAt = CURRENT_TIMESTAMP WHERE word = ?",
-                    (new_count, meanings, sentences, synonyms, word)
+                    "UPDATE dictionary SET encounters = ?, meaning = ?, synonyms = ?, use_region = ?, freq_zipf = ?, family = ?, updatedAt = CURRENT_TIMESTAMP WHERE word = ?",
+                    (new_count, meanings, synonyms, use_region, freq_zipf, family, word)
                 )
                 message = f"'{word}' updated (count: {new_count})"
             else:
                 # The createdAt and updatedAt columns will be filled by the DB's DEFAULT rule.
                 cursor.execute(
-                    "INSERT INTO dictionary (word, meaning, sentences, synonyms, encounters) VALUES (?, ?, ?, ?, ?)",
-                    (word, meanings, sentences, synonyms, 1)
+                    "INSERT INTO dictionary (word, meaning, synonyms, use_region, freq_zipf, family, encounters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (word, meanings, synonyms, use_region, freq_zipf, family, 1)
                 )
                 message = f"'{word}' registered (count: 1)"
             conn.commit()
@@ -730,8 +819,8 @@ async def update_word(data: WordEntry):
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE dictionary SET word = ?, meaning = ?, sentences = ?, synonyms = ?, encounters = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
-                (data.word, data.meaning, data.sentences, data.synonyms, data.encounters, data.id)
+                "UPDATE dictionary SET word = ?, meaning = ?, synonyms = ?, use_region = ?, freq_zipf = ?, family = ?, encounters = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (data.word, data.meaning, data.synonyms, data.use_region, data.freq_zipf, data.family, data.encounters, data.id)
             )
             if cursor.rowcount == 0:
                 return False, "Word not found"
@@ -808,7 +897,7 @@ def api_filter_words(
         raise HTTPException(status_code=400, detail="min/max must be integers (result positions).")
 
     query = (
-        f"SELECT id, word, meaning, sentences, synonyms, encounters, createdAt, updatedAt "
+        f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, encounters, createdAt, updatedAt "
         f"FROM dictionary ORDER BY {field} {sql_direction}, id {sql_direction} LIMIT ? OFFSET ?"
     )
     conn = sqlite3.connect(DATABASE_URL)

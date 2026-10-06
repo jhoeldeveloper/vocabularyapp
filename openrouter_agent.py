@@ -31,7 +31,7 @@ _providers_cache: dict = {}
 _PROVIDERS_TTL = 300  # seconds
 
 # In-flight de-dup of concurrent lookups for the same (word, model). main.py
-# fans out to sync_get_meanings_of / sync_get_sentences_with / sync_get_synonyms_of
+# fans out to sync_get_meanings_of / sync_get_use_of
 # in parallel — without this, three identical HTTP requests would race. Keys
 # are (word, model); values are threading.Event + the shared result dict.
 _lookup_inflight: dict = {}
@@ -2223,22 +2223,37 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         _release_story_control(story_id)
 
 
-# --- Word-lookup (meanings / sentences / synonyms) ----------------------------
-# A single batched request returns all three fields as JSON, which is faster
-# and cheaper than three parallel calls (one round-trip, smaller total tokens)
-# and keeps the three fields consistent with each other. Public functions
+# --- Word-lookup (meanings / dialect use) ---------------------------------
+# A single batched request returns both fields as JSON, which is faster and
+# cheaper than parallel calls (one round-trip, smaller total tokens) and keeps
+# the meaning and the dialect use consistent with each other. Public functions
 # return strings so they remain drop-in replacements for the Gemini/Groq agents.
+#
+# The measured fields are NOT here: Zipf and the inflected family come from
+# lexicon.py, off the corpus rather than off a model. See that module for why.
 
 def _build_meanings_prompt(word: str) -> str:
     return (
         f"For the English word or short phrase '{word}', produce a JSON object "
         f"with exactly these three keys:\n"
-        f'  - "meaning": concise, natural definitions. Consider the more commons definitions. Use Markdown for emphasis '
-        f"(e.g. **bold**); do NOT use bullet points or numbered lists.\n"
-        f'  - "sentences": exactly 5 example sentences, one per line, with the '
-        f"word/phrase highlighted in **bold** on every occurrence.\n"
-        f'  - "synonyms": a comma-separated list of 5 synonyms. If the word has '
-        f"multiple senses, cover the most common one.\n"
+        f'  - "meaning": the 2 most common senses, as a numbered list in '
+        f"Markdown. One sense per numbered item, written as "
+        f"`1. <concise gloss>` and, on the next line indented by three spaces, "
+        f"one short example sentence using that sense with the word or phrase in "
+        f"**bold**. Start a new sense as `2.`, `3.`. The senses must be genuinely "
+        f"different from one another -- do not restate the same sense in "
+        f"different words. Use **bold** for emphasis in "
+        f"the gloss too where it genuinely helps; no other Markdown.\n"
+        f'  - "use": exactly one of "American", "British", or "Both". Use "Both" '
+        f"unless the word or one of its senses is distinctly dialect-specific; if "
+        f'the word has no dialect distinction at all, "Both" is the right answer.\n'
+        f'  - "synonyms": a comma-separated list of up to 5 true synonyms for the '
+        f"most common sense. Prefer the everyday word a learner would actually "
+        f"use; leave out obscure or archaic ones. If the word genuinely has no "
+        f'synonym, return an empty string.\n'
+        f"Do NOT give a frequency score, word class or inflected forms -- those "
+        f"are measured elsewhere and anything you write for them will be "
+        f"discarded.\n"
         f"Return ONLY the JSON object. No prose, no code fences, no preamble."
     )
 
@@ -2266,25 +2281,35 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("model did not return a JSON object")
     meaning = str(data.get("meaning") or "").strip()
-    sentences = str(data.get("sentences") or "").strip()
-    synonyms = str(data.get("synonyms") or "").strip()
-    if not (meaning or sentences or synonyms):
+    # Synonyms are the model's own judgement, unlike the measured fields: asked
+    # for once when the word is added and then stored. A comma-separated list is
+    # kept verbatim (Markdown stripped) rather than split and re-joined, so the
+    # text the user sees and edits is the text the model wrote.
+    synonyms = str(data.get("synonyms") or "").strip().strip('"').strip()
+    # `use` is a closed vocabulary, so anything else the model produces is
+    # discarded rather than displayed. "Both" is the honest default: a model
+    # asked to choose between American and British will pick one to look
+    # decisive, which is exactly the claim we cannot verify.
+    use = str(data.get("use") or "").strip().lower()
+    use = {"american": "American", "british": "British",
+           "both": "Both", "american and british": "Both"}.get(use, "Both")
+    if not meaning:
         raise ValueError("model returned an empty JSON object")
-    return {"meaning": meaning, "sentences": sentences, "synonyms": synonyms}
+    return {"meaning": meaning, "use": use, "synonyms": synonyms}
 
 
 def _sync_lookup_word(word: str, model: str | None = None) -> dict:
-    """One-shot lookup that fetches meaning, sentences and synonyms together.
+    """One-shot lookup that fetches the meaning and the dialect use together.
 
-    Returns ``{"ok": True, "meaning": ..., "sentences": ..., "synonyms": ...,
+    Returns ``{"ok": True, "meaning": ..., "use": ..., "synonyms": ...,
     "model": ..., "elapsed": ..., "cost": ...}`` on success, or
-    ``{"ok": False, "error": "..."}`` on any failure. The three string fields
-    may be empty if the model didn't supply them — the caller decides whether
-    to surface that as an error.
+    ``{"ok": False, "error": "..."}`` on any failure. The meaning may be empty if
+    the model didn't supply it — the caller decides whether to surface that as
+    an error.
 
     When called concurrently for the same (word, model) — main.py fans out
-    via ``asyncio.gather`` to three ``sync_get_*`` functions — the second and
-    third callers wait on the in-flight result instead of issuing duplicate
+    via ``asyncio.gather`` to two ``sync_get_*`` functions — the second
+    caller waits on the in-flight result instead of issuing duplicate
     HTTP requests. This is the "single batched prompt" promise: one round-trip
     per word regardless of how many fields the caller asks for.
     """
@@ -2446,7 +2471,7 @@ def _do_lookup_request(word: str, model: str) -> dict:
         return {
             "ok": True,
             "meaning": parsed["meaning"],
-            "sentences": parsed["sentences"],
+            "use": parsed["use"],
             "synonyms": parsed["synonyms"],
             "model": model,
             "elapsed": elapsed,
@@ -2461,21 +2486,39 @@ def _do_lookup_request(word: str, model: str) -> dict:
 # --- Public functions (drop-in replacements for gemini_agent / groq_agent) ---
 
 def sync_get_meanings_of(word: str, model: str | None = None) -> str:
+    """Numbered senses, each with one example. The only free-text field.
+
+    The examples used to be a separate `sentences` column of five sentences; they
+    now live inside the sense they illustrate, so there is one text field to
+    store and one to render.
+    """
     r = _sync_lookup_word(word, model)
     if r.get("ok"):
         return r["meaning"] or "(no meaning returned)"
     return f"Error fetching meaning: {r.get('error')}"
 
 
-def sync_get_sentences_with(word: str, model: str | None = None) -> str:
-    r = _sync_lookup_word(word, model)
-    if r.get("ok"):
-        return r["sentences"] or "(no sentences returned)"
-    return f"Error fetching sentences: {r.get('error')}"
-
-
 def sync_get_synonyms_of(word: str, model: str | None = None) -> str:
+    """Synonyms for the most common sense, stored once at add time.
+
+    The model's own judgement rather than a measurement, which is why it is the
+    one text field besides `meaning` that round-trips through the DB: derived
+    from nothing, stored, editable, and never recomputed per render.
+    """
     r = _sync_lookup_word(word, model)
     if r.get("ok"):
-        return r["synonyms"] or "(no synonyms returned)"
+        return r.get("synonyms") or ""
     return f"Error fetching synonyms: {r.get('error')}"
+
+
+def sync_get_use_of(word: str, model: str | None = None) -> str:
+    """American / British / Both. The other LLM-sourced field.
+
+    The measured fields (Zipf, family) are NOT exposed through this interface at
+    all: they are computed in lexicon.py and never round-trip through a model,
+    so there is no agent function that could return a wrong one.
+    """
+    r = _sync_lookup_word(word, model)
+    if r.get("ok"):
+        return r.get("use") or "Both"
+    return f"Error fetching use: {r.get('error')}"
