@@ -3755,22 +3755,29 @@ function renderSetupControls(d) {
     // a switch that does nothing, which is the same mistake as showing a cap
     // the model cannot honour.
     const seen = new Set();
+    const order = [];
     (r.off_allowed ? [['off', 'Off']] : []).concat(levels.map(l => [l, l]))
       .forEach(([value, text]) => {
         if (seen.has(value)) return;
         seen.add(value);
+        order.push(value);
         const opt = document.createElement('option');
         opt.value = value;
         opt.textContent = text;
         sel.appendChild(opt);
       });
-    // Default to the cheapest level. `supported` arrives cheapest-first from the
-    // server (the catalogue lists them dearest-first -- gpt-6.1-sol-pro comes
-    // back as [max, xhigh, high, medium, low] -- and the ordering lives next to
-    // the canonical list that defines it, not here where it could drift).
-    // A preset that stored "auto" or "minimal" means exactly this level, so it
-    // is simply written down as what it always meant.
-    sel.value = seen.has(levels[0]) ? levels[0] : (sel.options[0] && sel.options[0].value) || 'auto';
+    // Default to the CHEAPEST thing in the list, which is not always a level.
+    // `order` starts with "off" whenever the model can be told not to reason
+    // (reasoning.mandatory false), and no reasoning at all is cheaper than the
+    // cheapest effort -- selecting `levels[0]` instead opened Nemotron 3 Ultra on
+    // "medium" while the option above it said Off.
+    // `supported` arrives cheapest-first from the server (the catalogue lists
+    // them dearest-first -- gpt-6.1-sol-pro comes back as [max, xhigh, high,
+    // medium, low] -- and the ordering lives next to the canonical list that
+    // defines it, not here where it could drift). A preset that stored "auto"
+    // or "minimal" means exactly the cheapest entry, so it is simply written
+    // down as what it always meant.
+    sel.value = order[0] || 'auto';
     sel.addEventListener('change', scheduleSetupConfigSave);
     const ctl = setupCtl('Reasoning', sel, SETUP_CTL_HINTS.reasoning);
     row.appendChild(ctl);
