@@ -334,6 +334,28 @@
         background: var(--bg-editable);
     }
     .meaning-card { padding: 9px 13px; }
+    /* Up to 15 senses with examples is roughly triple the old height, so the
+       card scrolls internally rather than pushing the whole panel down. A single
+       word must not be able to change the height of every card below it. */
+    .meaning-card { max-height: 420px; overflow-y: auto; }
+    /* The label chip. A part of speech is dim and quiet; a register (slang,
+       informal, vulgar) gets its own colour, because "this sense is slang" and
+       "this sense is a noun" are different claims and one colour would blur
+       them. */
+    .lex-chip {
+        display: inline-block;
+        font-size: 0.72em;
+        line-height: 1.5;
+        padding: 0 6px;
+        margin-right: 7px;
+        border-radius: 999px;
+        background: var(--bg-editable);
+        color: var(--text-meta);
+        vertical-align: 2px;
+        white-space: nowrap;
+    }
+    .lex-chip.reg { background: rgba(217,119,6,0.16); color: #b45309; }
+    [data-theme="dark"] .lex-chip.reg { background: rgba(217,119,6,0.24); color: #f59e0b; }
     .meta-card {
         padding: 7px 13px;
         font-size: 0.75em;
@@ -342,7 +364,7 @@
     }
     .meta-card strong { color: var(--text-main); font-weight: 600; }
     .meaning-card ol { margin: 0; padding-left: 1.5em; }
-    .meaning-card li { margin-bottom: 9px; line-height: 1.45; }
+    .meaning-card li { margin-bottom: 9px; line-height: 1.45; padding-left: 2px; }
     .meaning-card li:last-child { margin-bottom: 0; }
     /* A blank line between senses makes marked wrap each item in <p>, which
        adds its own block margins and leaves a gap before the example. Rendered
@@ -1979,7 +2001,11 @@ function speakSection(btn, event) {
     // thirty words" aloud is noise rather than help.
     const content = btn.closest('.detail-section').querySelector('.editable-content');
     if (!content) return;
-    const text = stripMarkdown(content.dataset.raw || '');
+    let labels = null;
+    try { labels = JSON.parse(content.dataset.labels || 'null'); } catch (e) { labels = null; }
+    const text = labels
+      ? meaningTextForSpeech(content.dataset.raw || '', labels)
+      : stripMarkdown(content.dataset.raw || '');
     if (!text) return;
     playTTS(text, btn);
 }
@@ -2034,6 +2060,7 @@ function renderGrid(data) {
            data-word="${item.word}"
            data-encounters="${item.encounters}"
            data-meaning="${encodeURIComponent(item.meaning || '')}"
+           data-labels="${encodeURIComponent(JSON.stringify(item.sense_labels || []))}"
            data-use="${encodeURIComponent(item.use_region || '')}"
            data-freqzipf="${item.freq_zipf == null ? '' : item.freq_zipf}"
            data-freqlabel="${item.freq_label || ''}"
@@ -2062,6 +2089,9 @@ function renderGrid(data) {
           const isVisible = details.style.display === 'block';
           if (!isVisible && !details.dataset.rendered) {
               const meaningMarkdown = decodeURIComponent(wordItem.dataset.meaning || '');
+              let senseLabels = [];
+              try { senseLabels = JSON.parse(decodeURIComponent(wordItem.dataset.labels || '[]')); }
+              catch (e) { senseLabels = []; }
               const useRegion = decodeURIComponent(wordItem.dataset.use || '');
               const freqLabel = wordItem.dataset.freqlabel || '';
               const family = decodeURIComponent(wordItem.dataset.family || '');
@@ -2077,8 +2107,8 @@ function renderGrid(data) {
                         <h4>Meanings</h4>
                         <button class="listen-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="speakSection(this, event)" title="Listen to meanings"><i class="fa-solid fa-headphones"></i></button>
                     </div>
-                    <div class="editable-content meaning-content" data-raw="${escAttr(meaningMarkdown)}" ondblclick="makeEditable(this)">
-                         <div class="rendered">${meaningCardHtml(meaningMarkdown)}</div>
+                    <div class="editable-content meaning-content" data-raw="${escAttr(meaningMarkdown)}" data-labels='${escAttr(JSON.stringify(senseLabels))}' ondblclick="makeEditable(this)">
+                         <div class="rendered">${meaningCardHtml(meaningMarkdown, senseLabels)}</div>
                     </div>
                 </div>
                 <div class="lex-row">
@@ -2656,7 +2686,7 @@ function formatDate(ts) {
   return `${day}/${month}/${year} ${hours}:${minutes}`;
 }
 
-function meaningCardHtml(markdown) {
+function meaningCardHtml(markdown, labels) {
   // The meanings block is the only bordered, speakable thing in the panel, so it
   // has to carry the visual hierarchy on its own: numbered senses, and each
   // example styled as subordinate to the sense above it.
@@ -2673,7 +2703,28 @@ function meaningCardHtml(markdown) {
   // adds a pointless box between the border and the list.
   const host = document.createElement('div');
   host.innerHTML = html;
-  host.querySelectorAll('li').forEach(li => {
+  const items = host.querySelectorAll('li');
+  items.forEach((li, i) => {
+    // The label is the FIRST WORD of the sense and comes from the server, which
+    // owns the vocabulary (openrouter_agent.sense_labels). The browser never
+    // decides what counts as a label -- it only consumes labels[i] positionally,
+    // so a word edited by hand can never drift from the chip. An unknown first
+    // word is simply not a label and stays part of the gloss.
+    const label = (labels && labels[i]) || null;
+    if (label) {
+      const node = firstTextNode(li);
+      const match = node && node.nodeValue.match(/^\s*(\S+)\s*/);
+      if (match) {
+        node.nodeValue = node.nodeValue.slice(match[0].length);
+        const chip = document.createElement('span');
+        // Registers are visually distinct: "this sense is slang" is a different
+        // claim from "this sense is a noun", and sharing a colour would blur it.
+        const isRegister = label === 'slang' || label === 'informal' || label === 'vulgar';
+        chip.className = 'lex-chip' + (isRegister ? ' reg' : '');
+        chip.textContent = label;
+        li.insertBefore(chip, li.firstChild);
+      }
+    }
     const br = li.querySelector('br');
     if (!br) return;
     const example = document.createElement('span');
@@ -2688,6 +2739,44 @@ function meaningCardHtml(markdown) {
   });
   while (host.firstChild) card.appendChild(host.firstChild);
   return card.outerHTML;
+}
+
+function firstTextNode(el) {
+  // Recurses into element children. A model that leaves a blank line between
+  // senses makes marked wrap each one in <p>, and a flat scan of <li>'s own
+  // children finds only that element -- the label would silently lose its chip
+  // on exactly the words the model formats prettiest. A <br> still ends the
+  // search: there is no label past the gloss.
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) return node;
+    if (node.nodeName === 'BR') return null;
+    if (node.nodeType === 1) {
+      const inner = firstTextNode(node);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
+function meaningTextForSpeech(markdown, labels) {
+  // TTS must not read the labels aloud ("one noun, a farm building..."). The
+  // chip renderer consumes them for display and this consumes them for speech,
+  // both from the same server-supplied list, so the two can never disagree about
+  // which word was a label.
+  if (!labels || !labels.some(Boolean)) return stripMarkdown(markdown || '');
+  const kept = [];
+  let sense = 0;
+  (markdown || '').split('\n').forEach(line => {
+    const heading = line.match(/^\s*\d+\s*[.)]\s*/);
+    if (!heading) { kept.push(line); return; }
+    const label = labels[sense++] || null;
+    if (!label) { kept.push(line); return; }
+    // Drop the numbering and the label, leaving the gloss to be read.
+    const gloss = line.slice(heading[0].length);
+    const stripped = gloss.replace(new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*', 'i'), '');
+    kept.push(stripped);
+  });
+  return stripMarkdown(kept.join('\n'));
 }
 
 function escHtml(s) {

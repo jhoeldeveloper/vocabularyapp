@@ -1366,8 +1366,81 @@ def _allowed_bold_terms(words):
         allowed |= _token_forms(word)
     return allowed
 
-_MAX_SENSES = 10
+_MAX_SENSES = 15
+
+# Sense labels. The label is the FIRST WORD of a sense, so it is part of the
+# stored Markdown rather than a separate field -- which is why the parser
+# normalises it here and the browser reads it positionally rather than parsing
+# it out of the prose itself. Closed set on purpose: an open one means the model
+# invents labels like "interjective" or "transitive", and the chips stop being
+# scannable.
+#
+# Registers are kept separate from classes and rendered in a different colour,
+# because "this sense is slang" and "this sense is a noun" are different claims.
+# The class list is the standard set rather than only noun/verb/adjective/adverb:
+# a narrower list would leave every preposition and conjunction unlabelled, which
+# reads as a bug rather than as a missing label.
+SENSE_CLASSES = (
+    "noun", "verb", "adjective", "adverb", "preposition", "conjunction",
+    "interjection", "determiner", "pronoun", "numeral",
+)
+SENSE_REGISTERS = ("slang", "informal", "vulgar")
+SENSE_LABELS = frozenset(SENSE_CLASSES + SENSE_REGISTERS)
+
+# `use` is free text now -- it can be "informal, mainly North American", which
+# the old American|British|Both could only express by lying -- but it is still
+# one line in a compact row, so it is capped. Truncated rather than wrapped: a
+# wrapped value pushes its row taller than its neighbours, which is the same
+# "let the container own the geometry" rule the rest of the panel follows.
+_USE_MAX_CHARS = 60
+
 _SENSE_HEADING_RE = re.compile(r"^\s*(\d+)\s*[.)]\s")
+
+
+def _normalize_sense_labels(meaning):
+    """Clamp each sense's leading label to SENSE_LABELS. Returns (text, unlabelled).
+
+    A sense whose first word is not a known label is left completely alone --
+    that word is part of the gloss, and deleting it would mangle the meaning.
+    The count comes back so the caller can REPORT it: a silent drop reads as the
+    model forgetting labels, which is a different bug and a different fix.
+    """
+    lines = (meaning or "").split("\n")
+    unlabelled = 0
+    for i, line in enumerate(lines):
+        heading = _SENSE_HEADING_RE.match(line)
+        if not heading:
+            continue
+        rest = line[heading.end():].lstrip()
+        if not rest:
+            continue
+        first, _, remainder = rest.partition(" ")
+        candidate = first.strip().strip("*:_-").lower()
+        if candidate in SENSE_LABELS:
+            # Canonical casing, so "Noun" and "noun" cannot become two chips.
+            lines[i] = (line[:heading.end()] + candidate.capitalize()
+                        + (" " + remainder.lstrip() if remainder.strip() else ""))
+        else:
+            unlabelled += 1
+    return "\n".join(lines), unlabelled
+
+
+def sense_labels(meaning):
+    """The label of each sense, in order, for rendering. None where absent.
+
+    The other half of the contract with `_normalize_sense_labels`: the browser
+    consumes this list positionally and never parses labels out of the Markdown
+    itself, so the vocabulary lives in exactly one place.
+    """
+    labels = []
+    for line in (meaning or "").split("\n"):
+        heading = _SENSE_HEADING_RE.match(line)
+        if not heading:
+            continue
+        rest = line[heading.end():].lstrip()
+        first = rest.split(" ")[0].strip().strip("*:_-").lower() if rest else ""
+        labels.append(first if first in SENSE_LABELS else None)
+    return labels
 
 
 def _limit_senses(meaning, limit=_MAX_SENSES):
@@ -2299,19 +2372,25 @@ def _build_meanings_prompt(word: str) -> str:
         f"For the English word or short phrase '{word}', produce a JSON object "
         f"with exactly these three keys:\n"
         f'  - "meaning": the most common senses, as a numbered list in '
-        f"Markdown, up to 10 senses and never more than 10. Give fewer when the "
+        f"Markdown, up to 15 senses and never more than 15. Give fewer when the "
         f"word genuinely has fewer common senses -- do not pad the list out to "
-        f"reach 10. One sense per numbered item, written as "
-        f"`1. <concise gloss>` and, on the next line indented by three spaces, "
-        f"one short example sentence using that sense with the word or phrase in "
-        f"**bold**. Start a new sense as `2.`, `3.`. The senses must be genuinely "
-        f"different from one another -- do not restate the same sense in "
-        f"different words. **Bold must mark the word or phrase itself and "
-        f"nothing else** -- never a whole sentence, and no other emphasis "
-        f"anywhere. No other Markdown.\n"
-        f'  - "use": exactly one of "American", "British", or "Both". Use "Both" '
-        f"unless the word or one of its senses is distinctly dialect-specific; if "
-        f'the word has no dialect distinction at all, "Both" is the right answer.\n'
+        f"reach 15. Begin EVERY sense with its label as the first word, then the "
+        f"gloss, then -- on the next line indented by three spaces -- one short "
+        f"example sentence using that sense with the word or phrase in **bold**. "
+        f"Format each sense exactly as `1. noun  a farm building used for "
+        f"storage` followed by the indented example. The label must be one of: "
+        f"noun, verb, adjective, adverb, preposition, conjunction, "
+        f"interjection, determiner, pronoun, numeral, slang, informal, vulgar. "
+        f"Use slang/informal/vulgar for a sense that is non-standard or "
+        f"dialectal, and a part of speech otherwise. The senses must be "
+        f"genuinely different -- never restate one sense in different words. "
+        f"**Bold must mark the word or phrase itself and nothing else** -- never "
+        f"a whole sentence, and no other emphasis anywhere. No other Markdown.\n"
+        f'  - "use": one short line about dialect AND register, in your own '
+        f'words. Examples: "British", "American", "informal, mainly North '
+        f'American", "Both - verb in AmE, noun in BrE", "standard in both now". '
+        f'Keep it under 60 characters, no full stop, no line breaks. Say "Both" '
+        f"when there is no distinction worth noting.\n"
         f'  - "synonyms": a comma-separated list of up to 5 true synonyms for the '
         f"most common sense. Prefer the everyday word a learner would actually "
         f"use; leave out obscure or archaic ones. If the word genuinely has no "
@@ -2346,24 +2425,32 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("model did not return a JSON object")
     meaning = _limit_senses(str(data.get("meaning") or "").strip())
-    # Bold is normalised to "the word, and nothing else" AFTER the cap, so the
-    # senses that survive are the ones that get checked.
+    # Labels are clamped BEFORE the bold pass, so the chip vocabulary and the
+    # bold rule cannot disagree about what the first word of a sense is.
+    meaning, unlabelled = _normalize_sense_labels(meaning)
+    if unlabelled:
+        # Reported, never silent: a model that ignores the label format looks
+        # identical to one whose labels we dropped, and those need different fixes.
+        print(f"[meanings] {word}: {unlabelled} sense(s) without a recognised "
+              f"label", flush=True)
+    # Bold is normalised to "the word, and nothing else" AFTER the cap and the
+    # labels, so the senses that survive are the ones that get checked.
     meaning = _enforce_word_bold(meaning, word)
     # Synonyms are the model's own judgement, unlike the measured fields: asked
     # for once when the word is added and then stored. A comma-separated list is
-    # kept verbatim (Markdown stripped) rather than split and re-joined, so the
-    # text the user sees and edits is the text the model wrote.
+    # kept verbatim rather than split and re-joined, so the text the user sees
+    # and edits is the text the model wrote.
     synonyms = str(data.get("synonyms") or "").strip().strip('"').strip()
-    # `use` is a closed vocabulary, so anything else the model produces is
-    # discarded rather than displayed. "Both" is the honest default: a model
-    # asked to choose between American and British will pick one to look
-    # decisive, which is exactly the claim we cannot verify.
-    use = str(data.get("use") or "").strip().lower()
-    use = {"american": "American", "british": "British",
-           "both": "Both", "american and british": "Both"}.get(use, "Both")
+    # `use` is free text about dialect AND register. It used to be a closed
+    # American|British|Both, which could not say "informal, mainly North
+    # American" without lying, and a model forced into that choice picks one to
+    # look decisive. Collapsed to one line and capped so it cannot wrap its row.
+    use = " ".join(str(data.get("use") or "").split()).strip(" .")
+    if len(use) > _USE_MAX_CHARS:
+        use = use[:_USE_MAX_CHARS - 1].rstrip() + "…"
     if not meaning:
         raise ValueError("model returned an empty JSON object")
-    return {"meaning": meaning, "use": use, "synonyms": synonyms}
+    return {"meaning": meaning, "use": use or "Both", "synonyms": synonyms}
 
 
 def _sync_lookup_word(word: str, model: str | None = None) -> dict:

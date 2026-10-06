@@ -728,6 +728,12 @@ def api_get_words(
     words = [dict(row) for row in rows]
     for entry in words:
         entry["freq_label"] = _zipf_label(entry.get("freq_zipf"))
+        # Sense labels are DERIVED from the meaning text, not stored. They are
+        # the first word of each sense, so the label vocabulary has to live in
+        # exactly one place: `sense_labels()` reads it, and the browser consumes
+        # this list positionally instead of parsing Markdown of its own. Edit a
+        # label while double-clicking and the chip changes with the text.
+        entry["sense_labels"] = openrouter_agent.sense_labels(entry.get("meaning"))
     return words
 
 
