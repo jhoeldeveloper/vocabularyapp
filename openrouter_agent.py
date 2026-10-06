@@ -86,6 +86,23 @@ _CHOICE_KNOWN_KEYS = frozenset({
     "delta", "message", "finish_reason", "index",
 })
 
+# OpenRouter reports provider failures as an `error` object inside an otherwise
+# normal 200 stream chunk -- HTTP status is 200, the body is a valid chat
+# completion, and the only evidence is that chunk. Without this, a gpt-6.1
+# "Flex processing is temporarily unavailable" surfaced to the user as "the model
+# returned an empty response", which names the wrong layer entirely: nothing is
+# wrong with the model or the prompt, the upstream provider refused the request.
+_STREAM_ERR_ADVICE = {
+    "provider_unavailable": (
+        "The provider is temporarily down. Try again in a moment, or pick a "
+        "different provider."
+    ),
+    "provider_overloaded": (
+        "The provider is overloaded. Try again in a moment, or pick a "
+        "different provider."
+    ),
+}
+
 # raw_decode on this gives (record, chars_consumed), which is how the stream
 # reader tells one SSE record from several packed onto a single line.
 _JSON_DECODER = json.JSONDecoder()
@@ -590,6 +607,39 @@ def _get_pricing():
     return {m["id"]: m["pricing"] for m in models}
 
 
+def _provider_tier(tag):
+    """Short label for the endpoint variant, or "" when it is the standard one.
+
+    OpenRouter distinguishes endpoints by TAG, and the provider_name alone does
+    not: `openai`, `openai/flex` and `openai/fast` all render as "OpenAI", so a
+    provider list shows three identical-looking rows that mean different things
+    (and cost different amounts). The suffix after the base tag is the
+    discriminator, so it is parsed ONCE here rather than re-derived in the JS.
+
+    Known service tiers are labelled by name ("Flex", "Fast"); anything else in
+    the suffix position is a region ("eu", "us") and labelled as such. An
+    unrecognised suffix returns its own text rather than being hidden, because a
+    new tier appearing silently as a duplicate row is the exact confusion this
+    is meant to remove.
+    """
+    tag = (tag or "").strip()
+    if "/" not in tag:
+        return ""
+    suffix = tag.rsplit("/", 1)[-1].strip()
+    if not suffix:
+        return ""
+    lowered = suffix.lower()
+    if lowered in _PROVIDER_TIERS:
+        return _PROVIDER_TIERS[lowered]
+    return suffix.upper() if len(suffix) <= 4 else suffix.title()
+
+
+# Service tiers OpenRouter offers on an endpoint tag, beyond the default one.
+# Deliberately a small closed set: an unknown suffix is displayed rather than
+# dropped, so adding a tier upstream shows up as itself instead of nothing.
+_PROVIDER_TIERS = {"flex": "Flex", "fast": "Fast", "standard": "Standard"}
+
+
 def sync_list_providers(model_id: str) -> dict:
     """Return providers for a model with real throughput/latency data.
 
@@ -643,6 +693,10 @@ def sync_list_providers(model_id: str) -> dict:
             providers.append({
                 "tag": ep.get("tag", ""),
                 "provider_name": ep.get("provider_name", ""),
+                # "Flex" / "Fast" / "EU" / "" -- see _provider_tier. The UI shows
+                # this next to the name, because provider_name alone cannot tell
+                # openai from openai/flex.
+                "tier": _provider_tier(ep.get("tag", "")),
                 "quantization": ep.get("quantization", "unknown"),
                 "pricing": {
                     "prompt": float((ep.get("pricing") or {}).get("prompt") or 0),
@@ -1483,6 +1537,31 @@ def _detect_degeneracy(content, words):
     return reasons
 
 
+def _stream_error_text(error, provider=""):
+    """Turn a stream chunk's `error` object into one readable sentence.
+
+    Returns None for anything unusable, so a malformed error object falls back
+    to the generic empty-response message rather than printing "None".
+    """
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    message = (error.get("message") or "").strip()
+    meta = error.get("metadata") or {}
+    kind = (meta.get("error_type") or "").strip()
+    who = f"{provider} returned " if provider else "The provider returned "
+    head = f"{who}{code}: " if code else who
+    if not message:
+        return None
+    text = f"{head}{message}"
+    advice = _STREAM_ERR_ADVICE.get(kind)
+    if advice:
+        text += f" ({advice})"
+    elif kind:
+        text += f" ({kind})"
+    return text
+
+
 def _read_story_stream(response, started, model, story_id, on_delta):
     """Consume an OpenRouter SSE body and reassemble the final payload.
 
@@ -1516,6 +1595,10 @@ def _read_story_stream(response, started, model, story_id, on_delta):
     # otherwise have to reconstruct from catalogue pricing) and reasoning_details.
     # Last value wins; the point is that the key is recorded at all.
     extra = {}
+    # The provider's own failure report, if the stream carried one. Kept out of
+    # `extra` because it drives the returned error message rather than merely
+    # being recorded.
+    stream_error = None
 
     def _collect(chunk):
         for key, value in chunk.items():
@@ -1582,6 +1665,16 @@ def _read_story_stream(response, started, model, story_id, on_delta):
                 break
 
             _collect(chunk)
+
+            if chunk.get("error") and stream_error is None:
+                stream_error = chunk["error"]
+                if not content_parts:
+                    # Nothing has been written yet, so there is no partial story
+                    # to salvage: stop reading rather than wait out the read
+                    # timeout on a stream that has already failed.
+                    return None, _stream_error_text(
+                        stream_error, chunk.get("provider") or ""
+                    ) or "the provider reported an error with no message"
 
             if chunk.get("model"):
                 seen_model = chunk["model"]
@@ -1666,6 +1759,9 @@ def _read_story_stream(response, started, model, story_id, on_delta):
         "finish_reason": finish_reason,
         "native_finish_reason": native_finish_reason,
         "native_tokens_reasoning": native_tokens_reasoning,
+        "stream_error": _stream_error_text(
+            stream_error, (extra.get("provider") or "")
+        ) if stream_error else None,
         # Keys the provider sent that this dict does not model. Empty on a
         # response that carried nothing extra, and omitted from the log when
         # empty so a clean run does not gain a field for no reason.
@@ -1932,7 +2028,16 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         finally:
             _safe_close(response)
         if stream_error:
-            return {"ok": False, "error": stream_error}
+            # The reader bails at the error chunk, so no payload was assembled
+            # and the log would otherwise stop after the request.
+            if log_path:
+                try:
+                    with open(log_path, "a", encoding="utf-8") as fh:
+                        fh.write("--- response (stream error) ---\n")
+                        fh.write(stream_error + "\n")
+                except OSError:
+                    pass
+            return {"ok": False, "error": f"Error generating story: {stream_error}"}
 
         if log_path:
             # Only the reassembled payload, not the raw SSE body: the stream is
@@ -1948,6 +2053,14 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             except OSError:
                 pass
 
+        if data.get("stream_error"):
+            # An error arrived AFTER the story text, so there is something worth
+            # publishing. Kept rather than discarded: throwing away a whole
+            # generation over a trailing provider complaint costs a retry for
+            # tokens that were already spent.
+            print(f"[story] id={story_id} provider reported an error after the "
+                  f"story text: {data['stream_error']}", file=sys.stderr, flush=True)
+
         elapsed = time.monotonic() - started
         msg = (data.get("choices") or [{}])[0].get("message") or {}
         # Content only. A reasoning-only response used to be stored AS the story
@@ -1956,6 +2069,13 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         # channel and must never become content.
         content = msg.get("content") or ""
         if not content.strip():
+            # A provider error reported inside a 200 stream wins over the
+            # generic message: "the model returned an empty response" blames the
+            # model and the prompt when the truth is that the upstream endpoint
+            # refused the request.
+            provider_error = data.get("stream_error")
+            if provider_error:
+                return {"ok": False, "error": f"Error generating story: {provider_error}"}
             reason = ("the model returned only reasoning and no story text"
                       if msg.get("reasoning") else "the model returned an empty response")
             return {

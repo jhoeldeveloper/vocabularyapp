@@ -904,6 +904,15 @@
         font-size: 0.78em; padding: 1px 6px; border-radius: 999px;
         background: var(--bg-editable); color: var(--text-meta); flex-shrink: 0;
     }
+    /* Flex / Fast / EU — the endpoint's service tier. provider_name alone cannot
+       tell openai from openai/flex, so without this the list shows three rows
+       all reading "OpenAI" that differ in price and reliability. */
+    .provider-tier {
+        font-size: 0.72em; padding: 1px 6px; border-radius: 999px; font-weight: 600;
+        letter-spacing: 0.02em; flex-shrink: 0;
+        background: rgba(139,92,246,0.14); color: #8b5cf6;
+    }
+    .provider-item.selected .provider-tier { background: rgba(139,92,246,0.26); color: var(--color-primary); }
     .provider-stats {
         margin-left: auto; display: flex; gap: 12px; flex-shrink: 0;
         font-size: 0.8em; color: var(--text-meta);
@@ -4044,6 +4053,14 @@ function renderSetupProviderList(providers) {
     const nameEl = document.createElement('span');
     nameEl.className = 'provider-name';
     nameEl.textContent = p.provider_name;
+    // The tier is what distinguishes openai from openai/flex — both are "OpenAI".
+    // Computed server-side (_provider_tier) so the label cannot drift from the
+    // tag actually sent as the provider order.
+    const tierEl = document.createElement('span');
+    tierEl.className = 'provider-tier';
+    tierEl.textContent = p.tier || '';
+    if (!p.tier) tierEl.style.display = 'none';
+    else tierEl.title = `Endpoint ${p.tag} — ${p.tier} tier`;
     const quantEl = document.createElement('span');
     quantEl.className = 'provider-quant';
     quantEl.textContent = p.quantization;
@@ -4053,6 +4070,7 @@ function renderSetupProviderList(providers) {
     stats.innerHTML = `<span class="provider-stat throughput"><i class="fa-solid fa-gauge-high"></i> ${tp}</span><span class="provider-stat latency"><i class="fa-solid fa-clock"></i> ${lat}</span><span class="provider-stat price"><i class="fa-solid fa-coins"></i> ${promptPrice}/${compPrice} ${discountTag}</span><span class="provider-stat uptime"><i class="fa-solid fa-signal"></i> ${uptime}</span>`;
     div.appendChild(radio);
     div.appendChild(nameEl);
+    div.appendChild(tierEl);
     div.appendChild(quantEl);
     div.appendChild(stats);
     div.addEventListener('click', () => setupSelectProvider(p.tag));
