@@ -2436,8 +2436,26 @@ function applyStoryPills(s, add, opts) {
     if (s.model) {
         // The pill shows only the part after the last "/", so the tooltip
         // carries the full provider-qualified id.
-        add('fa-solid fa-robot', s.model.replace(/^.*\//, ''), '')
-            .title = `Model: ${s.model}`;
+        //
+        // The reasoning level rides INSIDE the model pill, in parentheses, rather
+        // than as a pill of its own: it qualifies the model rather than being a
+        // separate fact about the story, and a row has limited width. It is the
+        // EFFECTIVE value, computed server-side from the stored request_config --
+        // so a story that asked for `off` against a mandatory-reasoning model
+        // says `low`, which is what it actually did. Absent on rows written
+        // before the column existed: no pill, rather than a guess.
+        const reasoning = s.reasoning_label ? ` (${s.reasoning_label})` : '';
+        const pill = add('fa-solid fa-robot', s.model.replace(/^.*\//, '') + reasoning, '');
+        // `verified` false means the label is the level that was REQUESTED, not
+        // what the run resolved to -- only older rows, written before the
+        // effective level was recorded. Said plainly in the tooltip rather than
+        // presented as a measurement.
+        pill.title = !s.reasoning_label
+            ? `Model: ${s.model}`
+            : s.reasoning_verified === false
+                ? `Model: ${s.model}  ·  reasoning requested: ${s.reasoning_label}` +
+                  `\n(the effective level was not recorded for this story)`
+                : `Model: ${s.model}  ·  reasoning: ${s.reasoning_label}`;
     }
     // Which prompt preset produced this story. A button rather than a plain
     // pill: the stored snapshot is the only way to see what the model actually

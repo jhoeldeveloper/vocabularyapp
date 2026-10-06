@@ -2350,6 +2350,13 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             "words_total": len(words),
             # Prose word tokens, the denominator of the density the UI shows.
             "prose_words": prose_words,
+            # What the reasoning setting RESOLVED to, not what was asked for. The
+            # log line above already computes this; returning it is what lets the
+            # story row say `low` for a run that asked for `off` and got it,
+            # instead of claiming the request was honoured. `ignored_cap` is
+            # included so a cap the model could not take is visible rather than
+            # silently absent.
+            "reasoning_effective": _reason_cfg_label(reasoning_config, ignored_cap),
             "cost": round(cost, 6),
         }
     except Exception as e:

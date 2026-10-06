@@ -1188,8 +1188,21 @@ async def generate_story_job(story_id: int, words: List[str], model: str,
                     # shared settings now, so without this snapshot the row could
                     # not say what it ran with. Written once, never recomputed --
                     # same rule as warnings.
-                    json.dumps({k: (gen_kwargs or {}).get(k) for k in
-                                ("temperature", "max_tokens", "reasoning", "reasoning_max_tokens")}),
+                    #
+                    # `reasoning_effective` is what the reasoning setting
+                    # RESOLVED to, alongside the level that was asked for. Both
+                    # are needed: "off" is a request, not a guarantee, and a
+                    # mandatory-reasoning model has no off switch -- so a row
+                    # storing only the request would claim a story thought
+                    # nothing when it thought 26,000 tokens. Missing on rows
+                    # written before this change, which the reader falls back
+                    # from, exactly as it falls back for `reasoning`.
+                    json.dumps({
+                        **{k: (gen_kwargs or {}).get(k) for k in
+                           ("temperature", "max_tokens", "reasoning",
+                            "reasoning_max_tokens")},
+                        "reasoning_effective": result.get("reasoning_effective"),
+                    }),
                     final_status,
                     story_id,
                 ),
@@ -1707,6 +1720,56 @@ _STORY_SELECT_PREFIXED = ", ".join(f"s.{f}" for f in _STORY_FIELDS)
 _STORY_PROMPT_SELECT = "prompt_used, prompt_preset"
 
 
+def _reasoning_pill(raw):
+    """(label, verified) for a story's reasoning. Label is None to show nothing.
+
+    Built server-side from `request_config` for the same reason `freq_label` is:
+    one definition, so the list row, the modal and any future surface cannot
+    disagree about what a stored number means.
+
+    Prefers the EFFECTIVE value, which is the only honest answer when a preset
+    asks `off` against a mandatory-reasoning model that has no off switch.
+
+    `verified` says whether the label came from the effective value or is only
+    the level that was requested. Rows written before `reasoning_effective`
+    existed fall back to the request, and a request is NOT proof the model
+    complied -- so the pill may say `off` while the story thought 26,000
+    tokens. The UI qualifies those in the tooltip instead of pretending.
+    """
+    if not raw:
+        return None, False
+    try:
+        config = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (ValueError, TypeError):
+        return None, False
+    if not config:
+        return None, False
+
+    cap = config.get("reasoning_max_tokens") or 0
+    if cap:
+        # A cap REPLACES the level: OpenRouter rejects both together, so a label
+        # like "cap 2000/low" would name something that was never sent. Formatted
+        # without a thousands separator to match the health log's `cap 2000`.
+        return f"cap {int(cap)}", True
+
+    effective = config.get("reasoning_effective")
+    if effective:
+        return str(effective), True
+
+    requested = config.get("reasoning")
+    if not requested or requested == "not-set":
+        # No reasoning was sent at all -- a non-reasoning model, or no setting.
+        # Nothing was requested either, so "none" is not a claim about the model.
+        return "none", True
+    return str(requested), False
+
+
+def _reasoning_label(raw):
+    """Just the pill text. Kept as its own name for callers that don't care
+    whether the value was verified."""
+    return _reasoning_pill(raw)[0]
+
+
 @app.get("/api/stories")
 def api_list_stories(word_id: Optional[int] = Query(None)):
     conn = sqlite3.connect(DATABASE_URL)
@@ -1728,6 +1791,7 @@ def api_list_stories(word_id: Optional[int] = Query(None)):
     stories = [dict(row) for row in cursor.fetchall()]
 
     for s in stories:
+        s["reasoning_label"], s["reasoning_verified"] = _reasoning_pill(s.get("request_config"))
         cursor.execute(
             "SELECT d.id, d.word FROM story_words sw "
             "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ?",
@@ -1753,6 +1817,10 @@ def api_get_story(story_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Story not found")
     story = dict(row)
+    # Same derived label as the list endpoint, so a story opened directly by URL
+    # shows the same pill as one clicked in the list.
+    story["reasoning_label"], story["reasoning_verified"] = _reasoning_pill(
+        story.get("request_config"))
     cursor.execute(
         "SELECT d.id, d.word FROM story_words sw "
         "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ?",
