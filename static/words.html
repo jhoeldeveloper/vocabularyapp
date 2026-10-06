@@ -1631,8 +1631,14 @@
            decide HOW MANY words there are, and the sort decides which of them you
            see first, so the size controls read together on the left. -->
       <select id="filterField" title="Sort by">
+        <!-- Encounters first, and the default. A story is built from words you
+             are likely to know, so the most-met words leading the list is the
+             useful default; ID order puts a random 354 of 1,994 at the top.
+             Combined with the default descending arrow, that means "most met
+             first". `selected` rather than relying on first-option, so the
+             default survives any future reordering of this list. -->
+        <option value="encounters" selected>Encounters</option>
         <option value="id">ID</option>
-        <option value="encounters">Encounters</option>
         <option value="createdAt">Created</option>
         <option value="updatedAt">Updated</option>
       </select>
