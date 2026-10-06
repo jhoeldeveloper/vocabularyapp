@@ -810,11 +810,15 @@ def _ensure_request_log_dir():
 _ensure_request_log_dir()
 
 
-def _log_full_request(story_id, method, url, headers, payload):
+def _log_full_request(story_id, method, url, headers, payload, path=None):
     """Write one outgoing request to a log file and return its path.
 
-    The caller appends the response status once the socket answers, so the
-    request and its result end up in the same file.
+    The caller appends the response once the socket answers, so the request and
+    its result end up in the same file.
+
+    ``path`` is supplied on a retry (the free-model fallback re-posts the same
+    payload): the second attempt appends to the first file instead of creating a
+    second one, so a run that fell back reads top to bottom as a single story.
 
     Best-effort by design: a debug facility must never be able to fail a real
     story generation, so every error here is swallowed and reported once.
@@ -824,11 +828,12 @@ def _log_full_request(story_id, method, url, headers, payload):
         for k, v in (headers or {}).items()
     }
     body = json.dumps(payload, indent=2, ensure_ascii=False)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    name = f"story-request-{story_id if story_id is not None else 'adhoc'}-{stamp}.log"
+    stamp = time.strftime("%H:%M:%S")
+    is_new = path is None
+    name = f"story-request-{story_id if story_id is not None else 'adhoc'}-{time.strftime('%Y%m%d-%H%M%S')}.log"
     try:
         _ensure_request_log_dir()
-        path = os.path.join(_REQUEST_LOG_DIR, name)
+        path = path or os.path.join(_REQUEST_LOG_DIR, name)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("=" * 78 + "\n")
             fh.write(f"{stamp} story_id={story_id}\n")
@@ -838,7 +843,10 @@ def _log_full_request(story_id, method, url, headers, payload):
             fh.write("--- body ---\n")
             fh.write(body + "\n")
             fh.write(f"--- request sent {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-        print(f"[story] full request logged to {path}", flush=True)
+        # Only announce a NEW file: a fallback retry appends to the same one,
+        # and saying it again reads like a second log was created.
+        if is_new:
+            print(f"[story] full request logged to {path}", flush=True)
         return path
     except Exception as e:  # pragma: no cover - debug path only
         print(f"[story] could not write request log: {e}", file=sys.stderr, flush=True)
@@ -1464,7 +1472,7 @@ def _detect_degeneracy(content, words):
     return reasons
 
 
-def _read_story_stream(response, started, model, story_id, on_delta):
+def _read_story_stream(response, started, model, story_id, on_delta, raw_sink=None):
     """Consume an OpenRouter SSE body and reassemble the final payload.
 
     Returns ``(data, None)`` on success or ``(None, error_message)`` when the
@@ -1473,6 +1481,12 @@ def _read_story_stream(response, started, model, story_id, on_delta):
 
     Providers that ignore ``"stream": true`` and answer with a single plain
     JSON body are handled too: the raw body is parsed and emitted as one delta.
+
+    ``raw_sink``, when given, is called with every raw line of the body exactly
+    as received, before any parsing. It exists for the STORY_DEBUG_REQUEST log:
+    the assembled payload below is a *reconstruction*, so it cannot show a
+    field the reassembly drops, a provider's odd casing, or a malformed record
+    that was resynced past. Only the raw stream is the provider's actual answer.
     """
     content_parts = []
     reasoning_parts = []
@@ -1493,6 +1507,8 @@ def _read_story_stream(response, started, model, story_id, on_delta):
         # em dash and curly quote in the story.
         if isinstance(raw_line, bytes):
             raw_line = raw_line.decode("utf-8", "replace")
+        if raw_sink:
+            raw_sink(raw_line)
         if not raw_line or not raw_line.strip():
             continue
 
@@ -1656,6 +1672,24 @@ def _routing_failure(status_code, detail, model, provider_tag):
             f"again in a moment.")
 
 
+def _log_error_response(log_path, response, detail):
+    """Append a failed response (status + body) to the request log, if logging.
+
+    A non-200 is exactly when the full body matters most -- the routing_funnel
+    JSON is what explains a 404 -- so the request log must not stop at the
+    status line on the one run that went wrong.
+    """
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write("--- response (error) ---\n")
+            fh.write(f"HTTP {getattr(response, 'status_code', '?')}\n")
+            fh.write((detail or "") + "\n")
+    except OSError:
+        pass
+
+
 def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
                         on_delta=None, template=None, style=None, system=None,
                         temperature=None, max_tokens=None, reasoning=None,
@@ -1769,12 +1803,19 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         print(f"[story] reasoning cap {ignored_cap} NOT sent for story {story_id}: {cap_reason}; "
               f"the reasoning level was sent instead", file=sys.stderr, flush=True)
 
+    # Set by post() so the response side can reach it. Declared HERE, not inside
+    # post(): a local there is invisible to the caller, and every response write
+    # would raise NameError on a log path that demonstrably exists.
+    log_path = None
+
     def post():
+        nonlocal log_path
         # Logged here, not at the payload's construction: reasoning is resolved
         # and the cap possibly clamped after the dict is built, so only the body
         # captured at send time is the request that actually goes out.
-        log_path = _log_full_request(story_id, "POST", OPENROUTER_BASE_URL,
-                                     headers, payload) if _LOG_REQUESTS else None
+        log_path = (_log_full_request(story_id, "POST", OPENROUTER_BASE_URL,
+                                      headers, payload, path=log_path)
+                    if _LOG_REQUESTS else None)
         resp = requests.post(
             OPENROUTER_BASE_URL,
             headers=headers,
@@ -1784,9 +1825,8 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
         )
         if log_path:
             with open(log_path, "a", encoding="utf-8") as fh:
-                fh.write("--- response ---\n")
-                fh.write(f"HTTP {resp.status_code}\n")
-                fh.write(f"gen={resp.headers.get('x-openrouter-generation-id', '')}\n")
+                fh.write("--- response headers ---\n")
+                fh.write(json.dumps(dict(resp.headers), indent=2, ensure_ascii=False) + "\n")
         return resp
 
     started = time.monotonic()
@@ -1816,6 +1856,7 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
 
         if response.status_code != 200:
             detail = response.text[:400].replace("\n", " ")
+            _log_error_response(log_path, response, detail)
             _safe_close(response)
             print(f"[story] OpenRouter {response.status_code} for model='{model}' for {len(words)} words: {detail}", file=sys.stderr, flush=True)
             # Checked before should_retry: a routing miss is not a transient
@@ -1843,15 +1884,35 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
                     return {"ok": False, "error": f"Error generating story: {e}"}
                 if response.status_code != 200:
                     detail = response.text[:400].replace("\n", " ")
+                    _log_error_response(log_path, response, detail)
                     _safe_close(response)
                     return {"ok": False, "error": f"Error generating story ({response.status_code}): {detail}"}
                 model = FALLBACK_MODEL
             else:
                 return {"ok": False, "error": f"Error generating story ({response.status_code}): {detail}"}
 
+        # Tee the raw SSE body into the request log as it arrives. The file
+        # handle stays open for the life of the stream (one append per line is
+        # debug-only cost) and is closed in the finally below.
+        raw_sink = None
+        stream_fh = None
+        if log_path:
+            try:
+                stream_fh = open(log_path, "a", encoding="utf-8")
+                stream_fh.write("--- response stream (raw, verbatim) ---\n")
+                stream_fh.flush()
+
+                def raw_sink(line, _fh=stream_fh):
+                    _fh.write(line + "\n")
+                    _fh.flush()
+            except OSError as e:
+                print(f"[story] could not open request log for streaming: {e}",
+                      file=sys.stderr, flush=True)
+                stream_fh = None
+
         # The deadline is enforced inside this loop, chunk by chunk.
         try:
-            data, stream_error = _read_story_stream(response, started, model, story_id, on_delta)
+            data, stream_error = _read_story_stream(response, started, model, story_id, on_delta, raw_sink)
         except requests.exceptions.Timeout:
             if _story_cancelled(story_id):
                 return {"ok": False, "error": _STORY_ERR_CANCELLED}
@@ -1862,8 +1923,23 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
             return {"ok": False, "error": _STORY_ERR_DISCONNECTED}
         finally:
             _safe_close(response)
+            if stream_fh:
+                stream_fh.close()
         if stream_error:
             return {"ok": False, "error": stream_error}
+
+        if log_path:
+            # The reassembled payload, for convenience: the raw stream above is
+            # the source of truth, this is the same body after _read_story_stream
+            # has pulled it apart. `id` is the generation id, and it is the only
+            # place it appears -- the x-openrouter-generation-id header is absent
+            # on free models, which is why the log showed an empty gen= before.
+            try:
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write("--- response (reassembled) ---\n")
+                    fh.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
 
         elapsed = time.monotonic() - started
         msg = (data.get("choices") or [{}])[0].get("message") or {}
