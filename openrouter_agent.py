@@ -1366,6 +1366,39 @@ def _allowed_bold_terms(words):
         allowed |= _token_forms(word)
     return allowed
 
+_MAX_SENSES = 10
+_SENSE_HEADING_RE = re.compile(r"^\s*(\d+)\s*[.)]\s")
+
+
+def _limit_senses(meaning, limit=_MAX_SENSES):
+    """Cut a numbered meaning down to `limit` senses.
+
+    The prompt asks for at most 10, but "at most" is advice and models treat it
+    as a suggestion: asked for up to 10 they will happily return 12. Since the
+    cap exists to stop an unbounded list filling the panel, it is enforced here
+    rather than trusted -- the same arrangement as the bold rule.
+
+    A sense is a heading line (`2. ...`) plus everything indented under it, so
+    the cut keeps whole senses and never leaves an orphaned example behind.
+    """
+    text = (meaning or "").strip()
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    starts = [i for i, line in enumerate(lines) if _SENSE_HEADING_RE.match(line)]
+    if len(starts) <= limit:
+        return text
+
+    cutoff = starts[limit]
+    kept = lines[:cutoff]
+    # Drop the trailing blank lines the cut leaves behind, so the last kept
+    # sense does not render with padding under it.
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept)
+
+
 def _enforce_word_bold(meaning, word):
     """Bold marks the word and nothing else.
 
@@ -2265,8 +2298,10 @@ def _build_meanings_prompt(word: str) -> str:
     return (
         f"For the English word or short phrase '{word}', produce a JSON object "
         f"with exactly these three keys:\n"
-        f'  - "meaning": the 2 most common senses, as a numbered list in '
-        f"Markdown. One sense per numbered item, written as "
+        f'  - "meaning": the most common senses, as a numbered list in '
+        f"Markdown, up to 10 senses and never more than 10. Give fewer when the "
+        f"word genuinely has fewer common senses -- do not pad the list out to "
+        f"reach 10. One sense per numbered item, written as "
         f"`1. <concise gloss>` and, on the next line indented by three spaces, "
         f"one short example sentence using that sense with the word or phrase in "
         f"**bold**. Start a new sense as `2.`, `3.`. The senses must be genuinely "
@@ -2310,9 +2345,10 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     data = json.loads(text, strict=False)
     if not isinstance(data, dict):
         raise ValueError("model did not return a JSON object")
-    # Bold is normalised to "the word, and nothing else" BEFORE anything else
-    # reads the field, so no caller can see the model's raw emphasis.
-    meaning = _enforce_word_bold(str(data.get("meaning") or "").strip(), word)
+    meaning = _limit_senses(str(data.get("meaning") or "").strip())
+    # Bold is normalised to "the word, and nothing else" AFTER the cap, so the
+    # senses that survive are the ones that get checked.
+    meaning = _enforce_word_bold(meaning, word)
     # Synonyms are the model's own judgement, unlike the measured fields: asked
     # for once when the word is added and then stored. A comma-separated list is
     # kept verbatim (Markdown stripped) rather than split and re-joined, so the

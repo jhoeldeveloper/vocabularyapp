@@ -289,7 +289,7 @@
     }
     .word-header:hover { background-color: var(--bg-hover); }
     .word-header .word-title { flex-grow: 0; user-select: text; cursor: text; margin-right: 4px; padding-right: 4px; margin-left: 2px; }
-    .word-header .indicator { font-size: 1.2em; line-height: 1; color: var(--color-primary); width: 1em; text-align: center; flex-shrink: 0; margin-left: auto; }
+    .word-header .indicator { font-size: 1.2em; line-height: 1; color: var(--color-primary); width: 1em; text-align: center; flex-shrink: 0; }
     .freq-badge {
         display: inline-flex;
         align-items: center;
@@ -304,12 +304,12 @@
         font-size: 0.72em;
         font-weight: 700;
         padding: 0 5px;
-        /* No margin-left:auto here. The header is flex-start (speaker + word
-           + badge travel together), and the auto margin used to push the badge
-           to the far right under space-between. With it still in place the
-           badge floated away from its word. The `+`/`-` indicator carries the
-           auto margin now. */
+        /* Right-aligned again. The badge keeps the auto margin and the +/- no
+           longer has one, so exactly one element claims the free space: the
+           earlier version had BOTH auto-margined and the space split between
+           them, which is what pushed the badge away from its word. */
         margin-right: 8px;
+        margin-left: auto;
         flex-shrink: 0;
     }
     [data-theme="dark"] .freq-badge {
@@ -322,17 +322,25 @@
         padding: 0 15px 15px 15px;
         border-top: 1px solid var(--border-details);
     }
-    .detail-section { margin-bottom: 12px; }
+    .detail-section { margin-bottom: 8px; }
     /* The meanings card is the ONLY bordered block in the panel, because it is
        the only prose here. Everything below it (dialect, the two measurements,
        synonyms) is a one-line fact, and giving each one a header and a border
-       made the panel read as a form rather than a dictionary entry. */
-    .meaning-card {
+       made the panel read as a form rather than a dictionary entry. Metadata is
+       card-styled too, but at metadata weight and with no label case change. */
+    .meaning-card, .meta-card {
         border: 1px solid var(--border-input);
         border-radius: 8px;
-        padding: 10px 14px;
         background: var(--bg-editable);
     }
+    .meaning-card { padding: 9px 13px; }
+    .meta-card {
+        padding: 7px 13px;
+        font-size: 0.75em;
+        color: var(--text-meta);
+        display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center;
+    }
+    .meta-card strong { color: var(--text-main); font-weight: 600; }
     .meaning-card ol { margin: 0; padding-left: 1.5em; }
     .meaning-card li { margin-bottom: 9px; line-height: 1.45; }
     .meaning-card li:last-child { margin-bottom: 0; }
@@ -347,10 +355,15 @@
     .meaning-card .lex-example { color: var(--text-meta); font-style: italic; }
     .meaning-card .lex-example strong { color: var(--text-main); font-style: normal; }
     /* One compact row per fact: dim uppercase label, value beside it. */
-    .lex-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
+    .lex-row { display: flex; align-items: baseline; gap: 10px; padding: 2px 0; }
+    /* Sentence case, not uppercase: the labels are words, and shouting USE /
+     FREQUENCY / FAMILY at a dictionary entry makes it read like a form. Size
+     and colour carry the hierarchy instead. */
     .lex-label {
-        font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.05em;
-        color: var(--text-meta); min-width: 74px; flex-shrink: 0;
+        font-size: 0.8em;
+        color: var(--text-meta);
+        min-width: 74px;
+        flex-shrink: 0;
     }
     /* One size for every value, editable or not. `.editable-content` sets 0.8em
        and `.lex-val` 0.92em; without this the editable rows (Use, Synonyms)
@@ -386,17 +399,6 @@
         padding: 0;
         min-height: 0;
         background: none;
-    }
-    .detail-section .metadata {
-        font-size: 0.75em;
-        color: var(--text-meta);
-        padding: 8px;
-        background: var(--bg-meta);
-        border-radius: 4px;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        align-items: flex-start;
     }
 
     /* Editable and Rendered Content */
@@ -458,7 +460,9 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        margin: 15px 0 5px 0;
+        /* Was 15px top / 5px bottom, which stacked up across four sections into
+           a panel that felt twice as tall as its content. */
+        margin: 9px 0 4px 0;
     }
     .section-header h4 {
         margin: 0;
@@ -2094,8 +2098,10 @@ function renderGrid(data) {
                     <span class="editable-content lex-val synonyms-content" data-raw="${escAttr(synonyms)}" ondblclick="makeEditable(this)">${synonyms ? escHtml(synonyms) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
                 <div class="detail-section">
-                    <h4>Metadata</h4>
-                    <div class="metadata">
+                    <div class="section-header">
+                        <h4>Metadata</h4>
+                    </div>
+                    <div class="meta-card">
                         <span><strong>ID:</strong> ${wordItem.dataset.id}</span>
                         <span><strong>Created:</strong> ${createdDate}</span>
                         <span><strong>Updated:</strong> ${updatedDate}</span>
