@@ -3598,8 +3598,18 @@ function setSetupStepHint(text) {
   if (el) el.textContent = text;
 }
 
+// Generate is enabled on step 3 and nowhere else. Steps 1 and 2 exist to choose
+// what will be sent, and the whole point of step 3 is that you can read the
+// prompt before committing to it -- a Generate button on steps 1 and 2 would
+// offer exactly the action that screen exists to precede.
+function setSetupGenerateEnabled(on) {
+  const btn = document.getElementById('setupGenerateBtn');
+  if (btn) btn.disabled = !on;
+}
+
 function showSetupModelStep() {
   setSetupStepHint('Pick a model, then a provider.');
+  setSetupGenerateEnabled(false);
   document.getElementById('setupModelStep').style.display = '';
   document.getElementById('setupProviderStep').style.display = 'none';
   document.getElementById('setupPreviewStep').style.display = 'none';
@@ -3607,6 +3617,7 @@ function showSetupModelStep() {
 
 function showSetupProviderStep() {
   setSetupStepHint('Pick a provider to see the exact prompt.');
+  setSetupGenerateEnabled(false);
   document.getElementById('setupModelStep').style.display = 'none';
   document.getElementById('setupPreviewStep').style.display = 'none';
   document.getElementById('setupProviderStep').style.display = '';
@@ -3616,6 +3627,7 @@ function showSetupProviderStep() {
 // prompt for the model+provider actually chosen -- not a preview of defaults.
 function showSetupPreviewStep() {
   setSetupStepHint('This is exactly what will be sent.');
+  setSetupGenerateEnabled(true);
   document.getElementById('setupModelStep').style.display = 'none';
   document.getElementById('setupProviderStep').style.display = 'none';
   document.getElementById('setupPreviewStep').style.display = '';
@@ -3843,10 +3855,12 @@ function scheduleSetupConfigSave() {
   setupConfigTimer = setTimeout(saveSetupConfig, 600);
 }
 
-// Writes the edited controls to shared settings, beside the model and provider
-// they depend on. Deliberately not a per-story override: a preset is the
-// prompt, this is the request, and the row's request_config snapshot has to
-// keep describing the request that was actually sent.
+// Writes temperature, output budget and reasoning cap to shared settings,
+// beside the model and provider they depend on. The reasoning LEVEL is
+// deliberately NOT among them: it defaults to the cheapest the model offers and
+// is only ever a choice for one story, so a remembered value could only be one
+// the user did not make now. It travels with the generate request instead (see
+// setupGenerateStory) and lands on the row via request_config.
 async function saveSetupConfig() {
   const cap = document.getElementById('setupCfgReasonCap');
   const lvl = document.getElementById('setupCfgReasoning');
@@ -3858,7 +3872,6 @@ async function saveSetupConfig() {
     // settings that are not on screen are still part of the request.
     if (tmp) body.temperature = parseFloat(tmp.value) || 0;
     if (bud) body.max_tokens = parseInt(bud.value, 10) || 20000;
-    if (lvl) body.reasoning = lvl.value;
     if (cap) {
       // 0 is MEANINGFUL here ("no cap"), so it must not go through an `|| nnnn`
       // idiom -- that would read a cap of 0 as "field left blank".
@@ -4049,10 +4062,14 @@ function setupGenerateStory() {
   const model = resolveStoryModel();
   const provider = storyProviderSelection || null;
   closeStorySetupModal();
-  _doGenerateStory(words, model, provider);
+  // The reasoning level for THIS story. Not stored anywhere: it rides on the
+  // request, and the server drops it if this model does not offer it.
+  const lvl = document.getElementById('setupCfgReasoning');
+  const reasoning = (lvl && !lvl.disabled && lvl.value) || null;
+  _doGenerateStory(words, model, provider, reasoning);
 }
 
-async function _doGenerateStory(words, model, provider) {
+async function _doGenerateStory(words, model, provider, reasoning) {
   const btn = document.getElementById('generateStoryBtn');
   const status = document.getElementById('genStatus');
   btn.disabled = true;
@@ -4062,7 +4079,7 @@ async function _doGenerateStory(words, model, provider) {
     const res = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ words, model, provider, style: storyStyleShown || null })
+      body: JSON.stringify({ words, model, provider, style: storyStyleShown || null, reasoning })
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));

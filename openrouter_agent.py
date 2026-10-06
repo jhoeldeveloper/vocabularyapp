@@ -253,11 +253,13 @@ def _get_reasoning_config(model_id: str, mode: str = "auto", max_tokens: int = N
     preview can say so rather than quietly lying.
     """
     model = _reasoning_model(model_id)
-    # A mode is either a named mode or an effort level the catalogue knows --
-    # including levels outside the canonical order, like deepseek's "max".
-    # Anything else (an old preset value, a typo) falls back to "auto" rather
-    # than being sent as-is, because a misread level would be clamped to the
-    # most expensive thing the model offers.
+    # No level chosen means the CHEAPEST thing the model offers, which is exactly
+    # what both arms of "auto" resolve to: "none" where reasoning is optional, the
+    # lowest listed effort where it is mandatory. So an unset mode and "auto"
+    # agree by construction rather than by luck. Anything unrecognised (an old
+    # preset value, a typo) also falls back to "auto" rather than being sent
+    # as-is, because a misread level would be clamped to the most expensive
+    # thing the model offers.
     if mode not in REASONING_MODES and mode not in all_reasoning_efforts():
         mode = "auto"
 

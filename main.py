@@ -843,6 +843,12 @@ class StoryCreate(BaseModel):
     # what you read in Story Setup is what gets sent. None means "follow the
     # preset", which is how a client that predates this field keeps working.
     style: Optional[str] = None
+    # The reasoning level for THIS story only. Deliberately NOT stored: the rule
+    # is that the default is always the cheapest thing the chosen model offers,
+    # so a remembered value could only ever be a value the user did not choose
+    # now. Carried on the request instead, validated against the model, and
+    # recorded on the row by request_config.
+    reasoning: Optional[str] = None
     # No `title`: the story title is always invented by the model (the prompt
     # carries an explicit instruction, not a placeholder to substitute into), so
     # a title field here could only ever be ignored. Pydantic drops it silently
@@ -896,7 +902,7 @@ def api_preview_story(data: StoryPreview):
     # SENT, not what is stored: a non-reasoning model gets no cap at all, and
     # saying "2000" there would imply a bound that does not exist.
     reasoning = openrouter_agent.use_reasoning_status(
-        model, config["reasoning"], config["reasoning_max_tokens"])
+        model, None, config["reasoning_max_tokens"])
 
     # Resolve the style ONCE here and pass it down. build_prompt would draw its
     # own random entry internally, which is fine for the prompt but means the
@@ -960,6 +966,12 @@ async def create_story(data: StoryCreate):
     # Freeze the active prompt preset now, so the row records the prompt that
     # produced it and a later preset edit cannot alter this run.
     recipe = _resolve_prompt_recipe(words, data.style)
+    # A reasoning level picked for THIS story, validated against the model that
+    # will actually serve it. Applied to the frozen recipe rather than to the
+    # settings, so request_config records the level the story really used.
+    override = _sanitize_reasoning(data.reasoning, actual_model)
+    if override:
+        recipe["gen_kwargs"]["reasoning"] = override
 
     def db_operation():
         conn = sqlite3.connect(DATABASE_URL)
@@ -1163,6 +1175,30 @@ def api_openrouter_providers(model: str = Query(...)):
     return {"providers": result["providers"]}
 
 
+def _sanitize_reasoning(raw, model_id):
+    """A per-story reasoning override, accepted only if THIS model offers it.
+
+    Same reasoning as the style override: the string arrives from the browser, so
+    it is checked against the model rather than trusted. A level the model does
+    not list would either be rejected by the API or silently clamped to something
+    the user never picked, and "off" on a model that always reasons is a switch
+    that does nothing. Returns None for empty/unknown, which means "no override"
+    -- and then the cheapest level is used.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return None
+    supported, _reason = openrouter_agent._reasoning_cap_support(model_id)  # noqa: F841
+    meta = (openrouter_agent._reasoning_model(model_id) or {}).get("reasoning") or {}
+    offered = list(meta.get("supported_efforts") or [])
+    if value == "off" and not meta.get("mandatory", False):
+        return value
+    if value in offered:
+        return value
+    print(f"[STORY] ignoring reasoning override {value!r}: {model_id} does not offer it")
+    return None
+
+
 @app.get("/api/config")
 def api_config():
     """Small public config the frontend needs to render provider-specific UI."""
@@ -1188,7 +1224,6 @@ def update_config(
     story_provider: Optional[str] = Body(None),
     temperature: Optional[float] = Body(None),
     max_tokens: Optional[int] = Body(None),
-    reasoning: Optional[str] = Body(None),
     reasoning_max_tokens: Optional[int] = Body(None),
 ):
     """Save model selections and the story request config to the DB.
@@ -1215,9 +1250,6 @@ def update_config(
     # 1000 floor the output budget uses.
     if reasoning_max_tokens is not None:
         set_setting("story_reasoning_cap", str(max(0, min(100000, int(reasoning_max_tokens)))))
-    if reasoning is not None:
-        if reasoning in openrouter_agent.REASONING_MODES or reasoning in openrouter_agent.EFFORT_ORDER:
-            set_setting("story_reasoning", reasoning)
     return {"ok": True}
 
 
@@ -1315,7 +1347,8 @@ def _save_prompt_presets(state):
 _STORY_CONFIG_SETTINGS = {
     "temperature": "story_temperature",
     "max_tokens": "story_max_tokens",
-    "reasoning": "story_reasoning",
+    # "reasoning" is deliberately NOT here: the level is chosen per story and
+    # never stored, so a saved one would only ever be stale.
     "reasoning_max_tokens": "story_reasoning_cap",
 }
 
@@ -1339,13 +1372,9 @@ def _story_request_config():
         except (TypeError, ValueError):
             return default
 
-    reasoning = get_setting("story_reasoning") or "low"
-    if reasoning not in openrouter_agent.REASONING_MODES and reasoning not in openrouter_agent.EFFORT_ORDER:
-        reasoning = "auto"
     return {
         "temperature": _float("story_temperature", openrouter_agent._STORY_TEMPERATURE),
         "max_tokens": _num("story_max_tokens", openrouter_agent._STORY_MAX_TOKENS, 1000, 32000),
-        "reasoning": reasoning,
         "reasoning_max_tokens": _num("story_reasoning_cap", 0, 0, 100000),
     }
 
@@ -1423,9 +1452,9 @@ def _resolve_prompt_recipe(words, style_override=None):
             # is read here so the snapshot cannot shift under a run in flight.
             "temperature": config["temperature"],
             "max_tokens": config["max_tokens"],
-            "reasoning": config["reasoning"],
-            # Reasoning-token cap. 0 = no cap, and .get with a default so a store
-            # saved before this existed keeps working unchanged.
+            # No "reasoning" key at all: there is no stored level, so the
+            # generation resolves the cheapest the model offers unless the
+            # request carried a per-story override (see create_story).
             "reasoning_max_tokens": config["reasoning_max_tokens"],
             "system": preset.get("system"),
         },
