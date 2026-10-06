@@ -993,12 +993,21 @@
        a button too narrow to read its own label is worse than a second line. */
     .prompt-lab-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
     .prompt-lab-actions .sort-btn { font-size: 0.78em; }
-    .prompt-lab-active-tag { font-size: 0.72em; color: var(--ok-text); background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
     #promptLabPreset { width: 100%; box-sizing: border-box; min-width: 0; font: inherit; font-size: 0.82em; padding: 5px 7px; border: 1px solid var(--border-input); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); }
-    .prompt-lab-active-tag { font-size: 0.72em; color: var(--ok-text); background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
 
     .prompt-lab-body { flex: 1 1 auto; display: flex; min-height: 0; }
-    .prompt-lab-props { width: 232px; flex-shrink: 0; border-right: 1px solid var(--border-details); padding: 14px 16px; overflow-y: auto; }
+    .prompt-lab-props {
+        width: 232px; flex-shrink: 0; border-right: 1px solid var(--border-details);
+        padding: 14px 16px; overflow-y: auto;
+        /* A column, so the actions row can take the slack below the fields and
+           sit on the panel's baseline rather than riding up beside them. */
+        display: flex; flex-direction: column;
+    }
+    /* New / Delete live at the bottom right of the panel: they act on the preset
+       as a whole, while the fields above edit its current state. Right-aligned
+       so the destructive trash is not the first thing under the cursor. */
+    .prompt-lab-props-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: auto; padding-top: 16px; }
+    .prompt-lab-props-actions .sort-btn { font-size: 0.78em; }
     .prompt-lab-field { margin-bottom: 14px; }
     .prompt-lab-field > label { display: block; font-size: 0.78em; color: var(--text-meta); margin-bottom: 4px; }
     .prompt-lab-field input[type="text"], .prompt-lab-field input[type="number"], .prompt-lab-field select, .prompt-lab-field textarea {
@@ -1478,10 +1487,7 @@
                     <label for="promptLabPreset">Preset</label>
                     <select id="promptLabPreset" title="Prompt presets"></select>
                     <div class="prompt-lab-actions">
-                        <span class="prompt-lab-active-tag" id="promptLabActiveTag" style="display:none;">in use</span>
                         <button id="promptLabUseBtn" class="sort-btn" title="Use this preset for new stories">Use</button>
-                        <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
-                        <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
                 <div class="prompt-lab-field">
@@ -1492,6 +1498,10 @@
                     <label for="promptLabStyle">Style</label>
                     <select id="promptLabStyle"></select>
                     <div class="prompt-lab-hint" id="promptLabStyleHint">One is drawn at random for every story.</div>                </div>
+                <div class="prompt-lab-props-actions">
+                    <button id="promptLabCopyBtn" class="sort-btn" title="Duplicate this preset">New</button>
+                    <button id="promptLabDeleteBtn" class="sort-btn" title="Delete this preset"><i class="fa-solid fa-trash"></i></button>
+                </div>
             </div>
             <div class="prompt-lab-main">
                 <!-- One tab per message. They are separate messages to the API
@@ -4852,10 +4862,14 @@ function labPayload() {
 }
 
 // "in use" tag, so it is always obvious which preset Generate will pick up.
-function renderLabActiveTag() {
-  const tag = document.getElementById('promptLabActiveTag');
+// Whether the preset on screen is the one Generate will use. There is no "in
+// use" badge any more: it sat next to the picker repeating what the footer
+// already says in words, and a badge that has to be re-checked against a
+// dropdown is worse than the sentence. What state is actually useful is left
+// where it is read: the Use button disappears when there is nothing to switch
+// to, and the footer says which preset is live.
+function renderLabActiveState() {
   const isActive = promptLab.currentId === promptLab.activeId;
-  tag.style.display = isActive ? '' : 'none';
   document.getElementById('promptLabUseBtn').style.display = isActive ? 'none' : '';
   document.getElementById('promptLabFooterNote').textContent = isActive
     ? 'New stories use this preset.'
@@ -5004,7 +5018,7 @@ function fillLabForm(preset) {
   renderLabStyleOptions();
   document.getElementById('promptLabStyle').value = preset.style || '';
   updateLabStyleHint();
-  renderLabActiveTag();
+  renderLabActiveState();
   renderLabFindings([]);
   scheduleLabRefresh();
 }
@@ -5104,7 +5118,7 @@ async function savePromptLab() {
     if (i >= 0) promptLab.presets[i] = saved; else promptLab.presets.push(saved);
     promptLab.currentId = saved.id;
     renderLabPresetList();
-    renderLabActiveTag();
+    renderLabActiveState();
     showToast(`Saved “${saved.name}”`);
   } catch (e) { showToast('Could not save the prompt'); }
 }
@@ -5116,7 +5130,7 @@ async function usePromptLabPreset() {
     _serverConfig.story_prompt_preset = (labCurrentPreset() || {}).name || '';
     updatePromptLabToolbarLabel();
     renderLabPresetList();
-    renderLabActiveTag();
+    renderLabActiveState();
     showToast('New stories will use this prompt');
   } catch (e) { showToast('Could not switch preset'); }
 }
