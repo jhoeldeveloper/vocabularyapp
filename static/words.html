@@ -3444,7 +3444,9 @@ function makeModel(id, name, pIn, pOut, rec) {
   let label = name;
   if (tags.length) label += ` (${tags.join(', ')})`;
   if (!free) label += ` · $${pIn.toFixed(3)}/$${pOut.toFixed(3)} per 1M`;
-  return { id, label, price: pIn + pOut, pIn, pOut };
+  // `name` is kept undecorated so a surface that shows its own price does not
+  // have to strip this one out of `label` to avoid printing two of them.
+  return { id, name, label, price: pIn + pOut, pIn, pOut };
 }
 
 // Render the autocomplete dropdown filtered by query.
@@ -3631,8 +3633,12 @@ function showSetupPreviewStep() {
   document.getElementById('setupModelStep').style.display = 'none';
   document.getElementById('setupProviderStep').style.display = 'none';
   document.getElementById('setupPreviewStep').style.display = '';
+  // The BARE model name, not `label`: the label carries the catalogue price,
+  // and the provider line beside it carries the price that will actually be
+  // paid. Printing both meant the header showed two numbers that agree only
+  // when the pinned provider happens to match the catalogue.
   document.getElementById('setupPreviewModelLabel').textContent =
-    (ALL_MODELS.find(x => x.id === storyModelSelection) || {}).label
+    (ALL_MODELS.find(x => x.id === storyModelSelection) || {}).name
       || storyModelSelection || '(default)';
   renderSetupPreview();
 }
@@ -3695,14 +3701,24 @@ function setSetupHeaderMeta(text) {
   if (el) el.textContent = text || '';
 }
 
-// The price of the PROVIDER that will serve this request, not the model's
-// catalogue price: the two can differ, and a pinned provider is exactly what
-// makes the request reproducible, so its price is the one that will be paid.
-// Shown only when a provider is pinned -- with Default (auto-route) OpenRouter
-// picks the endpoint, so there is no single price to state, and half these
-// models are free anyway. Rendered from the SAME cached provider list the
-// picker drew its rows from, so the header cannot quote a different price than
-// the row the user clicked.
+// Which provider will serve this request, and what it costs.
+//
+// The price is the PROVIDER's, not the model's catalogue price: they differ
+// (on gpt-6.1-sol-pro, openai/flex is $1/$5 and openai/fast is $4/$20), and a
+// pinned provider is exactly what makes the request reproducible, so its price
+// is the one that will be paid.
+//
+// The NAME comes first and is the pinned TAG rather than the display name,
+// because the display name is ambiguous exactly where it matters: three rows
+// are all called "OpenAI" and differ 4x in price. Naming the tag also answers
+// the question a bare price raises -- "which provider is this?" -- and the
+// model label already carries the catalogue price, which is why the tag is
+// doing double duty here.
+//
+// Shown only when a provider is pinned: with Default (auto-route) OpenRouter
+// picks the endpoint, so there is no single provider or price to state.
+// Rendered from the SAME cached provider list the picker drew its rows from, so
+// the header cannot quote a different provider or price than the row clicked.
 function setSetupProviderPrice() {
   const el = document.getElementById('setupPreviewPrice');
   if (!el) return;
@@ -3714,9 +3730,10 @@ function setSetupProviderPrice() {
   const promptPrice = p.pricing.prompt != null ? per(p.pricing.prompt) : '—';
   const compPrice = p.pricing.completion != null ? per(p.pricing.completion) : '—';
   const discount = p.discount > 0 ? ` (-${Math.round(p.discount * 100)}%)` : '';
-  const full = `Prompt ${promptPrice}/M in, ${compPrice}/M out${discount} -- ${p.provider_name}`;
-  el.textContent = `${promptPrice} / ${compPrice} per M`;
-  el.title = full;
+  el.textContent = `${p.tag} · ${promptPrice} / ${compPrice} per M`;
+  el.title = `${p.provider_name} (${p.tag}): ${promptPrice}/M in, ${compPrice}/M out${discount}` +
+             `\n\nPrices are per provider and can differ several-fold. The model label above ` +
+             `shows the catalogue price, which is not necessarily what you pay.`;
 }
 
 function setupCtl(label, node, hint) {
