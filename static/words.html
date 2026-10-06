@@ -31,6 +31,14 @@
         --color-success-disabled: #94d3a2;
         --color-danger:   #dc3545;
 
+        /* "Learnt" mark. ONE colour for every surface that shows the mark --
+           card edge, card badge, prose underline, chip tint, filter row -- so
+           the colour means the same thing everywhere. Green, and deliberately
+           distinct from the ok/warn/poor strip colours: those report a computed
+           measurement, this reports something the user asserted. */
+        --learnt:        #1e7e34;
+        --learnt-bg:     #e8f5ec;
+
         /* Cut-off ("truncated") story notice: amber, deliberately not the red
            used for failures -- a truncated story is readable, just incomplete. */
         --warn-bg:        #fdf3d7;
@@ -87,6 +95,12 @@
         --poor-bg:        #2c1a1e;
         --poor-border:    #5c3238;
         --poor-text:      #f0a0a8;
+
+        /* Dark-mode counterpart of the learnt mark: lighter than the light-mode
+           green so it holds contrast against a dark card, same muted tint for
+           backgrounds. */
+        --learnt:           #5ec27a;
+        --learnt-bg:        #1b2a1e;
 
         --shadow-card:    rgba(0,0,0,0.3);
         --shadow-btn:     rgba(0,0,0,0.3);
@@ -272,6 +286,72 @@
         box-shadow: 0 2px 5px var(--shadow-card);
         overflow: hidden;
     }
+    /* Learnt: an accent bar on the LEFT edge, so a learnt word is recognisable
+       while the card is still collapsed -- the badge lives in the header and the
+       toggle in the expanded details, neither of which is on screen until you
+       open the card. Drawn as an inset shadow rather than a border so the card
+       keeps exactly ONE border: adding a thick left border would change the box
+       size and knock the grid out of alignment, and `overflow: hidden` plus a
+       border-radius would leave the bar's corners unrounded. */
+    .word-item.is-learnt {
+        box-shadow: inset 4px 0 0 var(--learnt), 0 2px 5px var(--shadow-card);
+    }
+    /* The mark button. One control, three sizes: on the card beside Delete Word,
+       beside each "Built from" chip, and inside the story prose on hover. */
+    .learnt-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border: 1px solid var(--border-card);
+        background: var(--bg-card);
+        color: var(--text-secondary);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.8em;
+        line-height: 1;
+        padding: 6px 9px;
+    }
+    .learnt-btn:hover { border-color: var(--learnt); color: var(--learnt); }
+    /* Marked: filled, so the state is carried by the control itself and not only
+       by the tooltip. `aria-pressed` is set alongside it -- this is a toggle
+       button, and a screen reader announces state from the attribute, not from
+       the colour. */
+    .learnt-btn.is-learnt {
+        background: var(--learnt-bg);
+        border-color: var(--learnt);
+        color: var(--learnt);
+    }
+    .learnt-btn.small { padding: 2px 5px; font-size: 0.72em; border-radius: 5px; }
+    /* Header badge: the collapsed-card signal that pairs with the left edge. */
+    .learnt-badge {
+        color: var(--learnt);
+        font-size: 0.85em;
+        margin-left: 6px;
+    }
+
+    /* A target word inside the story prose. The mark button is absolutely
+       positioned and INVISIBLE until hover, so it never disturbs the reading
+       column: an inline button would inherit the prose's line-height and could
+       push a line apart. `position: relative` on the wrapper is what anchors it,
+       and opacity rather than display keeps the button clickable the instant it
+       fades in (display:none would need a second hover to appear).
+       Touch devices have no hover, so this control is unreachable there -- which
+       is why the "Built from" tab keeps always-visible buttons. */
+    .tw { position: relative; }
+    .tw-mark {
+        position: absolute;
+        left: 100%;
+        top: -0.55em;
+        margin-left: 2px;
+        opacity: 0;
+        transition: opacity 0.1s;
+        pointer-events: none;
+    }
+    .tw:hover .tw-mark,
+    .tw:focus-within .tw-mark { opacity: 1; pointer-events: auto; }
+    /* Learnt in the prose: an underline on the bold word, so a learnt word is
+       recognisable while reading without hovering anything. */
+    #storyModalBody .tw.is-learnt strong { border-bottom: 2px solid var(--learnt); }
     .word-header {
         padding: 15px;
         cursor: pointer;
@@ -708,6 +788,18 @@
     .modal-tab.active { color: var(--text-heading); border-bottom-color: var(--color-primary); }
     .modal-tab-panel { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
     .story-word-chip { cursor: pointer; }
+    /* Chip + its mark button, paired. `align-items: center` so the small button
+       sits on the chip's baseline rather than stretching the row, and the
+       wrapper is inline-flex so a long word list still wraps as chips. */
+    .story-word-entry {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+    }
+    .story-word-entry.is-learnt .story-word-chip {
+        background-color: var(--learnt-bg);
+        border-color: var(--learnt);
+    }
     .story-word-chip:hover { border-color: var(--color-primary); }
     /* A target word the model never used. No click handler is attached, so this
        drops the gradient border and the pointer entirely rather than only
@@ -839,6 +931,23 @@
         outline: none;
     }
     .gen-filter input { min-width: 90px; }
+    /* The learnt pair are checkboxes, and .gen-filter input above gives every
+       input min-width:90px -- which would stretch them to text-field width and
+       stretch this row with them. Reset here, and the group carries the box
+       instead. */
+    .filter-learnt-group {
+        display: inline-flex; align-items: center; gap: 10px;
+        height: 30px; padding: 0 10px;
+        border: 1px solid var(--border-card); border-radius: 4px;
+        background-color: var(--bg-card);
+    }
+    .filter-learnt-opt {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 0.8em; color: var(--text-secondary);
+        cursor: pointer; white-space: nowrap;
+    }
+    .gen-filter .filter-learnt-opt input { min-width: 0; width: auto; padding: 0; margin: 0; cursor: pointer; }
+    .filter-learnt-opt:hover { color: var(--learnt); }
     .gen-filter select:focus, .gen-filter input:focus { border-color: var(--color-primary); }
     .filter-results {
         max-height: 220px; overflow-y: auto; border: 1px solid var(--border-card);
@@ -1471,6 +1580,18 @@
       <button id="selectAllBtn" class="sort-btn" title="Select all shown">Select all</button>
       <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" style="display:none;">Unselect all</button>
       <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results">Clear results</button>
+      <!-- Two checkboxes rather than a three-way select: "learnt only" and
+           "unlearnt only" are each one click away instead of a dropdown cycle,
+           and both-on is reachable in a single click back.
+
+           ONE compact group with a fixed height, so the label cannot wrap and
+           change this row's height -- the rule the config grid and the stat bar
+           already follow. A bare label plus checkbox would let a longer word
+           push the row over its neighbours and break the baseline. -->
+      <span class="filter-learnt-group" title="Which words to offer for the next story">
+        <label class="filter-learnt-opt"><input type="checkbox" id="filterLearnt" checked> Learnt</label>
+        <label class="filter-learnt-opt"><input type="checkbox" id="filterUnlearnt" checked> Unlearnt</label>
+      </span>
       <span id="selCount" class="sel-count" style="margin-left: 8px; font-size: 0.8em; color: var(--text-meta);"></span>
     </div>
     <div id="filterResults" class="filter-results"></div>
@@ -2001,6 +2122,75 @@ function speakSection(btn, event) {
     playTTS(text, btn);
 }
 
+// --- The "learnt" mark ---------------------------------------------------
+//
+// One writer for all three surfaces (the card button, the "Built from" chip
+// button and the story-prose hover control), so the mark can never mean two
+// things. It PATCHes one field rather than PUTting the whole word: PUT
+// /api/words rewrites every column, and a one-bit toggle carrying a full row
+// back is how the read-only fields were once zeroed.
+//
+// The grid is updated locally as well as by the server's broadcast, because
+// renderGrid() deliberately skips while a cell is being edited -- without the
+// local update, marking a word mid-edit would appear to do nothing.
+
+function setLearnt(id, learned, btn) {
+  return fetch(`/api/words/${id}/learned?learned=${learned ? 'true' : 'false'}`, { method: 'PATCH' })
+    .then(response => {
+      if (!response.ok) throw new Error(`Failed to update word: ${response.status}`);
+      return response.json();
+    })
+    .then(() => {
+      const card = document.querySelector(`.word-item[data-id="${id}"]`);
+      if (card) {
+        card.dataset.learned = learned ? '1' : '0';
+        card.classList.toggle('is-learnt', !!learned);
+        const title = card.querySelector('.word-title');
+        if (title) {
+          const has = !!card.querySelector('.learnt-badge');
+          if (learned && !has) {
+            title.insertAdjacentHTML('afterend',
+              '<span class="learnt-badge" title="Marked as learnt"><i class="fa-solid fa-graduation-cap"></i></span>');
+          } else if (!learned && has) {
+            card.querySelector('.learnt-badge').remove();
+          }
+        }
+        // The expanded details carry their own button, which is a different
+        // element from the one that was clicked (a chip button in the modal).
+        card.querySelectorAll('.word-details .learnt-btn').forEach(b => paintLearntBtn(b, learned));
+      }
+      document.querySelectorAll(`.tw[data-word-id="${id}"]`).forEach(tw => {
+        tw.classList.toggle('is-learnt', !!learned);
+        tw.querySelectorAll('.learnt-btn').forEach(b => paintLearntBtn(b, learned));
+      });
+      document.querySelectorAll(`[data-learned-word="${id}"]`).forEach(el => {
+        el.classList.toggle('is-learnt', !!learned);
+        el.querySelectorAll('.learnt-btn').forEach(b => paintLearntBtn(b, learned));
+      });
+      if (btn) paintLearntBtn(btn, learned);
+    })
+    .catch(err => alert(err.message));
+}
+
+// One painter for every mark button, so the filled/outlined state and the
+// accessible pressed state are set in the same place and cannot drift.
+function paintLearntBtn(btn, learned) {
+  btn.classList.toggle('is-learnt', !!learned);
+  btn.setAttribute('aria-pressed', learned ? 'true' : 'false');
+  const span = btn.querySelector('span');
+  if (span) span.textContent = learned ? 'Learnt' : 'Mark learnt';
+  btn.title = learned ? 'Marked as learnt — click to unmark' : 'Mark this word as learnt';
+}
+
+// A chip button in the story modal carries no word id of its own; it reads it
+// off the chip wrapper it sits in.
+function toggleLearned(btn) {
+  const host = btn.closest('[data-learned-word]') || btn.closest('.word-item');
+  const id = host && (host.dataset.learnedWord || host.dataset.id);
+  if (!id) return;
+  setLearnt(id, btn.getAttribute('aria-pressed') !== 'true', btn);
+}
+
 function deleteItem(button) {
   const wordItem = button.closest('.word-item');
   const id = wordItem.dataset.id;
@@ -2046,9 +2236,10 @@ function renderGrid(data) {
   const columnHTMLs = Array(numColumns).fill('');
   data.forEach((item, index) => {
     const wordItemHTML = `
-      <div class="word-item"
+      <div class="word-item${item.learned ? ' is-learnt' : ''}"
            data-id="${item.id}"
            data-word="${item.word}"
+           data-learned="${item.learned ? 1 : 0}"
            data-encounters="${item.encounters}"
            data-meaning="${encodeURIComponent(item.meaning || '')}"
            data-labels="${encodeURIComponent(JSON.stringify(item.sense_labels || []))}"
@@ -2062,6 +2253,7 @@ function renderGrid(data) {
         <div class="word-header">
           <button class="speak-btn" data-icon='<i class="fa-solid fa-headphones"></i>' onclick="pronounceWord(this, event)" title="Pronounce"><i class="fa-solid fa-headphones"></i></button>
           <span class="word-title">${item.word}</span>
+          ${item.learned ? '<span class="learnt-badge" title="Marked as learnt"><i class="fa-solid fa-graduation-cap"></i></span>' : ''}
           <span class="freq-badge">${item.encounters}</span>
           <span class="indicator">+</span>
         </div>
@@ -2129,6 +2321,7 @@ function renderGrid(data) {
                     </div>
                 </div>
                 <button class="story-button" data-id="${wordItem.dataset.id}" title="View stories for this word"><i class="fa-solid fa-book"></i> Stories${wordStoryCounts[wordItem.dataset.id] ? ` (${wordStoryCounts[wordItem.dataset.id]})` : ''}</button>
+                <button class="learnt-btn" onclick="toggleLearned(this)" aria-pressed="${wordItem.dataset.learned === '1'}"><i class="fa-solid fa-graduation-cap"></i> <span>${wordItem.dataset.learned === '1' ? 'Learnt' : 'Mark learnt'}</span></button>
                 <button class="delete-button" onclick="deleteItem(this)"><i class="fa-solid fa-trash-can"></i> Delete Word</button>
               `;
               details.dataset.rendered = 'true';
@@ -3326,6 +3519,7 @@ async function openStoryModal(id) {
     currentStoryProse = s.content || '';
     document.getElementById('storyModalTitle').textContent = s.title || 'Untitled';
     document.getElementById('storyModalBody').innerHTML = `<div class="rendered">${marked.parse(stripStoryLabels(s.content || ''))}</div>`;
+    decorateStoryTargets(s.words || []);
     const metaEl = document.getElementById('storyModalMeta');
     metaEl.className = 'story-list-meta';
     metaEl.innerHTML = '';
@@ -3372,6 +3566,63 @@ async function openStoryModal(id) {
   } catch (e) { /* ignore */ }
 }
 
+// --- Marking from the prose ----------------------------------------------
+//
+// The model bolds each listed word exactly once, so the target words are
+// already visible in the text without any UI of our own. Wrapping each one adds
+// a mark control that appears on hover.
+//
+// Hover rather than click-on-the-word, for two reasons. A click handler on the
+// word itself would fire while the reader is dragging out a sentence to copy
+// it -- the "is anything selected?" guard needed to prevent that is exactly the
+// kind of cleverness that fails quietly. And hover cannot fire during a
+// selection drag at all, so the hazard does not exist. The control itself is
+// still clicked, but it is an explicit small target that appears only on
+// purpose.
+//
+// Only BOLD words are decorated. A word the model never used is not bold, so
+// there is nothing in the prose to attach to, and floating a control over
+// ordinary text would be noise. Those stay markable in the "Built from" tab.
+
+function decorateStoryTargets(entries) {
+  const body = document.getElementById('storyModalBody');
+  if (!body || !entries || !entries.length) return;
+  // Compare on a normalized form: the prose may carry punctuation or a
+  // different case, and the model is allowed to bold an INFLECTION of a listed
+  // word ("doorstep" listed, "doorsteps" bolded), so equality alone would miss
+  // most of them. Longest key first, so a listed phrase beats its own first
+  // word.
+  const norm = t => (t || '').toLowerCase().replace(/[^\p{L}\p{N}']/gu, '').trim();
+  const list = entries
+    .map(e => ({ id: e.id, key: norm(e.word), learned: !!e.learned, word: e.word }))
+    .filter(x => x.key)
+    .sort((a, b) => b.key.length - a.key.length);
+  if (!list.length) return;
+
+  // querySelectorAll returns a STATIC list, so replacing nodes while walking it
+  // is safe here.
+  body.querySelectorAll('strong, b').forEach(el => {
+    const t = norm(el.textContent);
+    if (!t) return;
+    const hit = list.find(x => t === x.key || t.startsWith(x.key) || x.key.startsWith(t));
+    if (!hit) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'tw' + (hit.learned ? ' is-learnt' : '');
+    wrap.dataset.wordId = hit.id;
+    el.parentNode.insertBefore(wrap, el);
+    wrap.appendChild(el);
+    const btn = document.createElement('button');
+    btn.className = 'learnt-btn small' + (hit.learned ? ' is-learnt' : '');
+    btn.innerHTML = '<i class="fa-solid fa-graduation-cap"></i>';
+    paintLearntBtn(btn, hit.learned);
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      setLearnt(hit.id, btn.getAttribute('aria-pressed') !== 'true', btn);
+    };
+    wrap.appendChild(btn);
+  });
+}
+
 function closeStoryModal() {
   document.getElementById('storyModalOverlay').classList.remove('open');
   if (currentModalStoryId != null) {
@@ -3397,6 +3648,13 @@ function renderWordUsageChips(box, usage) {
   box.innerHTML = '';
   let missing = 0;
   usage.forEach(u => {
+    // A wrapper per word, because the chip keeps its ONE job -- click to
+    // highlight in the prose -- and the mark is a separate control beside it.
+    // Making the chip itself the toggle would leave the missing-word chips
+    // (which deliberately carry no handler at all) silently doing nothing.
+    const wrap = document.createElement('span');
+    wrap.className = 'story-word-entry' + (u.learned ? ' is-learnt' : '');
+    wrap.dataset.learnedWord = u.id;
     const span = document.createElement('span');
     span.className = 'chip story-word-chip' + (u.used ? '' : ' is-missing');
     span.textContent = u.word;
@@ -3412,7 +3670,18 @@ function renderWordUsageChips(box, usage) {
         + 'because no form of it appears in the text.';
       missing += 1;
     }
-    box.appendChild(span);
+    // Always visible rather than hover-only: touch devices have no hover, and
+    // this tab is the fallback for marking when the prose control cannot be
+    // reached. A word absent from the story can still be one you know.
+    const mark = document.createElement('button');
+    mark.className = 'learnt-btn small' + (u.learned ? ' is-learnt' : '');
+    mark.setAttribute('aria-pressed', u.learned ? 'true' : 'false');
+    mark.innerHTML = '<i class="fa-solid fa-graduation-cap"></i>';
+    paintLearntBtn(mark, u.learned);
+    mark.onclick = () => setLearnt(u.id, mark.getAttribute('aria-pressed') !== 'true', mark);
+    wrap.appendChild(span);
+    wrap.appendChild(mark);
+    box.appendChild(wrap);
   });
   const used = usage.length - missing;
   document.getElementById('storyModalWordsSummary').textContent =
@@ -3562,6 +3831,20 @@ async function applyFilter() {
   const qs = new URLSearchParams({ field, direction });
   if (min) qs.set('min', min);
   if (max) qs.set('max', max);
+  // Two independent flags rather than one three-way value: each state is one
+  // click away. Both boxes ticked means "no filter" -- and sends nothing, so an
+  // old client and a default panel behave identically. Both UNticked sends both
+  // flags as false, which is different from sending nothing: the user asked for
+  // neither group, and the empty state they see is the answer, not a failure.
+  const learnt = document.getElementById('filterLearnt').checked;
+  const unlearnt = document.getElementById('filterUnlearnt').checked;
+  if (learnt || unlearnt) {
+    if (learnt) qs.set('include_learnt', 'true');
+    if (unlearnt) qs.set('include_unlearnt', 'true');
+  } else {
+    qs.set('include_learnt', 'false');
+    qs.set('include_unlearnt', 'false');
+  }
   const res = await fetch(`/api/words/filter?${qs}`);
   const data = await res.json();
   renderFilterResults(data);
@@ -3584,7 +3867,11 @@ function renderFilterResults(data) {
     label.dataset.word = w.word;
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.checked = selectedWords.has(w.word);
+    // Auto-select the unlearnt words: practising what you don't know is the
+    // reason to mark anything at all. An INITIAL state, not a lock -- the
+    // checkbox below stays live, and a word already selected stays selected
+    // whichever group it is in.
+    cb.checked = selectedWords.has(w.word) || !w.learned;
     cb.addEventListener('change', () => {
       if (cb.checked) selectedWords.add(w.word); else selectedWords.delete(w.word);
       renderChips();
@@ -3593,7 +3880,8 @@ function renderFilterResults(data) {
     const meta = document.createElement('span');
     meta.className = 'filter-meta';
     const updated = (w.updatedAt || w.createdAt || '').split(' ')[0];
-    meta.innerHTML = `<strong>${pos}.</strong> ${w.word} <span class="filter-sub">enc: ${w.encounters} · ${updated}</span>`;
+    meta.innerHTML = `<strong>${pos}.</strong> ${w.word} <span class="filter-sub">enc: ${w.encounters} · ${updated}</span>`
+      + (w.learned ? ' <span class="learnt-badge" title="Marked as learnt"><i class="fa-solid fa-graduation-cap"></i></span>' : '');
     label.appendChild(cb);
     label.appendChild(meta);
     box.appendChild(label);
@@ -5787,6 +6075,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('applyFilterBtn').addEventListener('click', applyFilter);
+    // The two boxes re-run the filter immediately: with only two states, making
+    // you also press Show to see the consequence of a click is the kind of extra
+    // step that gets people to believe the control did nothing.
+    ['filterLearnt', 'filterUnlearnt'].forEach(id =>
+        document.getElementById(id).addEventListener('change', applyFilter));
     document.getElementById('clearFilterBtn').addEventListener('click', () => {
         document.getElementById('filterMin').value = '';
         document.getElementById('filterMax').value = '';

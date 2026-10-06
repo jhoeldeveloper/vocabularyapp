@@ -266,7 +266,14 @@ def init_db():
         for name, decl in (("use_region", "TEXT"),
                            ("freq_zipf", "REAL"),
                            ("family", "TEXT"),
-                           ("synonyms", "TEXT")):
+                           ("synonyms", "TEXT"),
+                           # A mark the USER sets, never something measured or
+                           # inferred, so a plain flag with a default rather than
+                           # a nullable column. NOT NULL 0 means "not marked",
+                           # which is true of every pre-existing word -- it is
+                           # the absence of a mark, not a claim about anyone's
+                           # vocabulary. Never backfilled, as above.
+                           ("learned", "INTEGER NOT NULL DEFAULT 0")):
             if name not in _columns:
                 _cur.execute(f"ALTER TABLE dictionary ADD COLUMN {name} {decl}")
                 print(f"MIGRATION: added dictionary.{name}")
@@ -718,7 +725,7 @@ def api_get_words(
     else:
         order_clause = f"ORDER BY id {sql_dir}"
 
-    query = f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, encounters, createdAt, updatedAt FROM dictionary {order_clause}"
+    query = f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, learned, encounters, createdAt, updatedAt FROM dictionary {order_clause}"
     conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -879,6 +886,8 @@ def api_filter_words(
     direction: str = Query("desc"),
     min_val: str = Query(None, alias="min"),
     max_val: str = Query(None, alias="max"),
+    include_learnt: Optional[bool] = Query(None),
+    include_unlearnt: Optional[bool] = Query(None),
 ):
     if field not in VALID_FILTER_FIELDS:
         raise HTTPException(status_code=400, detail="Invalid filter field.")
@@ -902,9 +911,31 @@ def api_filter_words(
     except ValueError:
         raise HTTPException(status_code=400, detail="min/max must be integers (result positions).")
 
+    # Which words the user wants offered for the next story: learnt, unlearnt,
+    # both, or neither. Two independent booleans rather than one three-way
+    # enum, so each state is one checkbox away instead of a dropdown cycle.
+    #
+    # These default to None, NOT False, and the difference is load-bearing:
+    # absent means "no filter", which is what an old client sends, while both
+    # explicitly false means "neither" -- the user unticked everything and
+    # should see nothing. Collapsing the two would silently turn "I want none"
+    # into "give me all 200".
+    learned_clause = ""
+    if include_learnt is not None or include_unlearnt is not None:
+        parts = []
+        if include_learnt:
+            parts.append("learned = 1")
+        if include_unlearnt:
+            parts.append("learned = 0")
+        # Applied in SQL and BEFORE the LIMIT, which is load-bearing rather than
+        # tidiness: min/max are RESULT POSITIONS ("show me 1-100"), so filtering
+        # after the limit would return the wrong page -- you would tick through
+        # 100 rows, hit the end at 60, and quietly miss the rest.
+        learned_clause = ("WHERE " + " OR ".join(parts)) if parts else "WHERE 0"
+
     query = (
-        f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, encounters, createdAt, updatedAt "
-        f"FROM dictionary ORDER BY {field} {sql_direction}, id {sql_direction} LIMIT ? OFFSET ?"
+        f"SELECT id, word, meaning, synonyms, use_region, freq_zipf, family, learned, encounters, createdAt, updatedAt "
+        f"FROM dictionary {learned_clause} ORDER BY {field} {sql_direction}, id {sql_direction} LIMIT ? OFFSET ?"
     )
     conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
@@ -913,6 +944,50 @@ def api_filter_words(
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+@app.patch("/api/words/{word_id}/learned")
+async def set_word_learned(word_id: int, learned: bool = Query(...)):
+    """Mark or unmark one word as learnt.
+
+    A dedicated single-field endpoint rather than another field on PUT
+    /api/words. That PUT rewrites EVERY column from its payload, so folding a
+    one-bit toggle into it means the toggle has to carry the whole row back --
+    and that is exactly how the read-only fields were zeroed once already. One
+    field cannot damage meaning, synonyms or the measured values, because it
+    cannot name them.
+
+    Deliberately does NOT touch updatedAt: that column means "this word's data
+    changed", and a personal mark is not a change to the word -- letting it
+    count would reshuffle the default "recently updated" sort every time the
+    user reviews their vocabulary.
+    """
+    value = 1 if learned else 0
+
+    def db_operation():
+        conn = sqlite3.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE dictionary SET learned = ? WHERE id = ?", (value, word_id)
+            )
+            if cursor.rowcount == 0:
+                return False, "Word not found"
+            conn.commit()
+            return True, "Word marked learnt" if value else "Word marked not learnt"
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
+        finally:
+            conn.close()
+
+    success, message = await run_in_threadpool(db_operation)
+    if not success:
+        raise HTTPException(status_code=404 if message == "Word not found" else 500, detail=message)
+    # Same broadcast as PUT /api/words, so the grid and any open story modal
+    # repaint from one signal and a mark made in either place shows everywhere.
+    await manager.broadcast("update_words")
+    return {"message": message, "learned": bool(value)}
 
 
 # --- Stories (generated from words via OpenRouter) ---
@@ -1793,7 +1868,7 @@ def api_list_stories(word_id: Optional[int] = Query(None)):
     for s in stories:
         s["reasoning_label"], s["reasoning_verified"] = _reasoning_pill(s.get("request_config"))
         cursor.execute(
-            "SELECT d.id, d.word FROM story_words sw "
+            "SELECT d.id, d.word, d.learned FROM story_words sw "
             "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ?",
             (s["id"],),
         )
@@ -1822,7 +1897,7 @@ def api_get_story(story_id: int):
     story["reasoning_label"], story["reasoning_verified"] = _reasoning_pill(
         story.get("request_config"))
     cursor.execute(
-        "SELECT d.id, d.word FROM story_words sw "
+        "SELECT d.id, d.word, d.learned FROM story_words sw "
         "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ?",
         (story_id,),
     )
@@ -1875,19 +1950,29 @@ def api_story_word_usage(story_id: int):
         raise HTTPException(status_code=404, detail="Story not found")
     content = row[0]
     cursor.execute(
-        "SELECT d.word FROM story_words sw "
+        "SELECT d.id, d.word, d.learned FROM story_words sw "
         "JOIN dictionary d ON d.id = sw.word_id WHERE sw.story_id = ? ORDER BY d.id",
         (story_id,),
     )
-    words = [r[0] for r in cursor.fetchall()]
+    rows = cursor.fetchall()
     conn.close()
-    if not words:
+    if not rows:
         return []
+    # The id and the current mark ride along because the modal marks words from
+    # here. Keying that on the word TEXT would be fragile: a rename while the
+    # modal is open would let a stale click write to whichever word now holds
+    # that string.
+    words = [{"id": r[0], "word": r[1], "learned": bool(r[2])} for r in rows]
     body = openrouter_agent._story_body(content)
     used = []
-    for word in words:
-        pattern = openrouter_agent._word_pattern(word)
-        used.append({"word": word, "used": bool(pattern and pattern.search(body))})
+    for entry in words:
+        pattern = openrouter_agent._word_pattern(entry["word"])
+        used.append({
+            "id": entry["id"],
+            "word": entry["word"],
+            "learned": entry["learned"],
+            "used": bool(pattern and pattern.search(body)),
+        })
     return used
 
 
