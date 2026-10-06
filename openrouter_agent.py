@@ -778,6 +778,72 @@ _STORY_MAX_TOKENS = 20000
 # it on while editing the template so what is sent can be read in the log.
 _DEBUG_PROMPT = os.environ.get("STORY_DEBUG_PROMPT", "").strip() not in ("", "0", "false")
 
+# Dump the FULL outgoing story request (method, URL, headers, exact JSON body)
+# to logs/story-request-<id>-<timestamp>.log. Off by default.
+#
+# This is a strictly bigger switch than STORY_DEBUG_PROMPT, and deliberately
+# so: that one prints only `prompt` -- the user half of the message list --
+# so it cannot show the model, the provider routing, the reasoning config, the
+# streaming flags or anything else the request carries. When the question is
+# "what did we actually send", the prompt is not the answer; the payload is.
+# The API key is redacted, because a request log is exactly the kind of file
+# that gets attached to a bug report.
+_LOG_REQUESTS = os.environ.get("STORY_DEBUG_REQUEST", "").strip() not in ("", "0", "false")
+_REQUEST_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
+
+def _ensure_request_log_dir():
+    """Create logs/ if it does not exist. Idempotent; never raises.
+
+    Called at import AND before every write, because the two failures are
+    different: doing it at import means the directory is there before the first
+    story request (no surprise mid-generation), and doing it per-write means a
+    deleted folder self-heals instead of silently dropping every log.
+    """
+    try:
+        os.makedirs(_REQUEST_LOG_DIR, exist_ok=True)
+    except OSError:
+        pass  # unwritable path is reported by the writer, not here
+    return _REQUEST_LOG_DIR
+
+
+_ensure_request_log_dir()
+
+
+def _log_full_request(story_id, method, url, headers, payload):
+    """Write one outgoing request to a log file and return its path.
+
+    The caller appends the response status once the socket answers, so the
+    request and its result end up in the same file.
+
+    Best-effort by design: a debug facility must never be able to fail a real
+    story generation, so every error here is swallowed and reported once.
+    """
+    safe_headers = {
+        k: ("<redacted>" if k.lower() == "authorization" else v)
+        for k, v in (headers or {}).items()
+    }
+    body = json.dumps(payload, indent=2, ensure_ascii=False)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    name = f"story-request-{story_id if story_id is not None else 'adhoc'}-{stamp}.log"
+    try:
+        _ensure_request_log_dir()
+        path = os.path.join(_REQUEST_LOG_DIR, name)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("=" * 78 + "\n")
+            fh.write(f"{stamp} story_id={story_id}\n")
+            fh.write(f"{method} {url}\n")
+            fh.write("--- headers ---\n")
+            fh.write(json.dumps(safe_headers, indent=2, ensure_ascii=False) + "\n")
+            fh.write("--- body ---\n")
+            fh.write(body + "\n")
+            fh.write(f"--- request sent {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        print(f"[story] full request logged to {path}", flush=True)
+        return path
+    except Exception as e:  # pragma: no cover - debug path only
+        print(f"[story] could not write request log: {e}", file=sys.stderr, flush=True)
+        return None
+
 _SYSTEM_ROLE = (
     "You are a creative writing assistant that weaves words into engaging, "
     "coherent stories."
@@ -1704,13 +1770,24 @@ def sync_generate_story(words, model=None, provider_tag=None, story_id=None,
               f"the reasoning level was sent instead", file=sys.stderr, flush=True)
 
     def post():
-        return requests.post(
+        # Logged here, not at the payload's construction: reasoning is resolved
+        # and the cap possibly clamped after the dict is built, so only the body
+        # captured at send time is the request that actually goes out.
+        log_path = _log_full_request(story_id, "POST", OPENROUTER_BASE_URL,
+                                     headers, payload) if _LOG_REQUESTS else None
+        resp = requests.post(
             OPENROUTER_BASE_URL,
             headers=headers,
             json=payload,
             stream=True,
             timeout=(_STORY_CONNECT_TIMEOUT, _STORY_READ_TIMEOUT),
         )
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write("--- response ---\n")
+                fh.write(f"HTTP {resp.status_code}\n")
+                fh.write(f"gen={resp.headers.get('x-openrouter-generation-id', '')}\n")
+        return resp
 
     started = time.monotonic()
     # Register before the request so a cancel arriving during the connect phase

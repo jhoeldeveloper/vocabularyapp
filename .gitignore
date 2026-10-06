@@ -18,6 +18,12 @@ models/
 # Generated story audio
 audio/
 
+# Full request dumps (STORY_DEBUG_REQUEST=1) — contain prompts, never commit.
+# `logs/*` not `logs/`: excluding the directory itself stops git descending into
+# it, so a future negation could never match. The directory itself is created
+# at import by _ensure_request_log_dir(), so no .gitkeep is needed.
+logs/*
+
 # Zone identifiers (Windows artifacts)
 *:Zone.Identifier
 
