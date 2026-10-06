@@ -393,26 +393,6 @@
     .lex-row .lex-val { font-size: 0.92em; min-width: 0; }
     .lex-unknown { color: var(--text-meta); }
 
-    /* Use and Synonyms are editable, but they must not read as boxes.
-       `.editable-content` is a bordered, padded block sized for a multi-line
-       cell with a min-height; a one-line label/value row wants none of that. The
-       border, padding, min-height and background are all reset, and the dotted
-       underline on hover keeps double-click-to-edit discoverable. */
-    .lex-row .editable-content {
-        border: none;
-        border-radius: 0;
-        padding: 0;
-        min-height: 0;
-        background: none;
-        cursor: text;
-        border-bottom: 1px dashed transparent;
-    }
-    .lex-row .editable-content:hover { border-bottom-color: var(--border-input); }
-    .lex-row .editable-content[contenteditable] {
-        outline: 1px solid var(--color-primary);
-        border-bottom-color: var(--color-primary);
-    }
-
     /* The meanings cell: the CARD is the border. The editable wrapper around it
        would otherwise draw a second one. */
     .editable-content.meaning-content {
@@ -1275,6 +1255,7 @@
                 aria-label="Select read-aloud voice">
             <i class="fa-solid fa-microphone-lines"></i>
         </button>
+        <button id="stopAudioBtn" class="sort-btn" title="Stop reading aloud" onclick="stopAudio()" style="display:none;"><i class="fa-solid fa-circle-stop"></i></button>
         <div class="volume-control">
             <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
             <div id="volumePopup">
@@ -1850,24 +1831,22 @@ async function saveCellChanges(cell) {
   const word = wordItem.dataset.word;
   const encounters = parseInt(wordItem.dataset.encounters);
   const meaningDiv = wordItem.querySelector('.meaning-content');
-  const useDiv = wordItem.querySelector('.use-content');
-  const synonymsDiv = wordItem.querySelector('.synonyms-content');
   const editedMarkdownValue = cell.innerText.trim();
   const meaningMarkdown = (cell === meaningDiv) ? editedMarkdownValue : (meaningDiv.dataset.raw || '');
-  const useRegion = (cell === useDiv) ? editedMarkdownValue : (useDiv.dataset.raw || '');
-  // Synonyms are the model's own judgement, stored once at add time like the
-  // meaning -- so unlike the measured fields they are editable and round-trip.
-  const synonymsMarkdown = (cell === synonymsDiv) ? editedMarkdownValue : (synonymsDiv.dataset.raw || '');
-  // `use` is an editable LINE, not Markdown, so its text is sent as-is rather
-  // than stripped of emphasis. The two measured fields (freq_zipf, family) are
-  // absent from this payload on purpose: they are measurements, not prose, and a
-  // hand-edited number would silently disagree with the corpus on the next
-  // regeneration with nothing to say which one was right.
+  // Use and Synonyms are read-only now, but PUT /api/words writes EVERY column
+  // it receives, so they are passed through from the stored values rather than
+  // omitted. Leaving them out of the payload would silently NULL both the first
+  // time anybody edited a meaning -- a data loss with no error anywhere.
+  const useRegion = decodeURIComponent(wordItem.dataset.use || '');
+  const synonyms = decodeURIComponent(wordItem.dataset.synonyms || '');
+  // The two measured fields (freq_zipf, family) ride along for the same reason,
+  // and they are read-only because a hand-edited number would disagree with the
+  // corpus on the next refresh with nothing to say which one was right.
   try {
     const response = await fetch('/api/words', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, word, meaning: meaningMarkdown, synonyms: synonymsMarkdown, use_region: useRegion, freq_zipf: wordItem.dataset.freqzipf === '' ? null : parseFloat(wordItem.dataset.freqzipf), family: wordItem.dataset.family === '' ? null : wordItem.dataset.family, encounters })
+      body: JSON.stringify({ id, word, meaning: meaningMarkdown, synonyms: synonyms, use_region: useRegion, freq_zipf: wordItem.dataset.freqzipf === '' ? null : parseFloat(wordItem.dataset.freqzipf), family: wordItem.dataset.family === '' ? null : wordItem.dataset.family, encounters })
     });
     if (!response.ok) throw new Error(`Update failed: ${response.status} ${await response.text()}`);
     cell.dataset.raw = editedMarkdownValue;
@@ -1940,12 +1919,24 @@ const TTS_CACHE_MAX = 100;
 function stopAudio() {
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
     if (currentBtn) { currentBtn.innerHTML = currentBtn.dataset.icon; currentBtn = null; }
+    // The global stop control exists because not every playback has a button to
+    // toggle: autoPlayMeaning after adding a word calls playTTS(text, null), and
+    // with no button the familiar toggle had nothing to appear on and nothing to
+    // click. This is the one control that can always stop whatever is sounding.
+    const stop = document.getElementById('stopAudioBtn');
+    if (stop) stop.style.display = 'none';
+}
+
+function showStopControl() {
+    const stop = document.getElementById('stopAudioBtn');
+    if (stop) stop.style.display = '';
 }
 
 async function playTTS(text, btn) {
     if (btn && currentBtn === btn) { stopAudio(); return; }
     stopAudio();
     if (btn) { btn.innerHTML = '<i class="fa-solid fa-circle-stop"></i>'; currentBtn = btn; }
+    showStopControl();
     const volume = parseFloat(document.getElementById('volumeSlider').value);
     try {
         let url;
@@ -1971,7 +1962,7 @@ async function playTTS(text, btn) {
         audio.volume = volume;
         currentAudio = audio;
         audio.play();
-        audio.onended = () => { if (btn && currentBtn === btn) stopAudio(); };
+        audio.onended = () => { if (!btn || currentBtn === btn) stopAudio(); };
     } catch (e) {
         console.error('TTS error:', e);
         if (btn && currentBtn === btn) stopAudio();
@@ -2113,7 +2104,7 @@ function renderGrid(data) {
                 </div>
                 <div class="lex-row">
                     <span class="lex-label">Use</span>
-                    <span class="editable-content lex-val use-content" data-raw="${escAttr(useRegion)}" ondblclick="makeEditable(this)">${useRegion ? escHtml(useRegion) : '<span class="lex-unknown">—</span>'}</span>
+                    <span class="lex-val">${useRegion ? escHtml(useRegion) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
                 <div class="lex-row">
                     <span class="lex-label">Frequency</span>
@@ -2125,7 +2116,7 @@ function renderGrid(data) {
                 </div>
                 <div class="lex-row">
                     <span class="lex-label">Synonyms</span>
-                    <span class="editable-content lex-val synonyms-content" data-raw="${escAttr(synonyms)}" ondblclick="makeEditable(this)">${synonyms ? escHtml(synonyms) : '<span class="lex-unknown">—</span>'}</span>
+                    <span class="lex-val">${synonyms ? escHtml(synonyms) : '<span class="lex-unknown">—</span>'}</span>
                 </div>
                 <div class="detail-section">
                     <div class="section-header">
