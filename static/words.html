@@ -1654,7 +1654,13 @@
            button keeps the row on one baseline. -->
       <button id="selectAllBtn" class="sort-btn" title="Select all shown" aria-label="Select all shown"><i class="fa-solid fa-check-double"></i></button>
       <button id="unselectAllBtn" class="sort-btn" title="Unselect all shown" aria-label="Unselect all shown" style="display:none;"><i class="fa-solid fa-check"></i></button>
-      <button id="clearFilterBtn" class="sort-btn" title="Reset filter and clear results" aria-label="Reset filter and clear results"><i class="fa-solid fa-rotate-left"></i></button>
+      <!-- No Clear/reset button, and its absence is deliberate. It used to empty
+           the results box, which is indistinguishable from the filter being
+           broken -- and every state it could rescue is already one click from
+           being fixed: re-tick either box for an empty list, clear `enc` if the
+           threshold is too high, raise `enc` if the list is too long, click the
+           field or the arrow to change the sort. It was convenience dressed up
+           as a way out, charged for in confusion. -->
       <span id="selCount" class="sel-count" style="margin-left: 8px; font-size: 0.8em; color: var(--text-meta);"></span>
     </div>
     <div id="filterResults" class="filter-results"></div>
@@ -6292,18 +6298,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('filterMinEncounter').addEventListener('change', () => {
         readEncounterMin();
         applyFilter();
-    });
-    document.getElementById('clearFilterBtn').addEventListener('click', () => {
-        document.getElementById('filterMinEncounter').value = '2';
-        document.getElementById('filterField').value = 'id';
-        document.getElementById('filterDirection').value = 'desc';
-        // The direction button reads the select, so it has to be repainted or
-        // Clear leaves an ascending arrow sitting on top of a descending sort.
-        updateFilterSortOrderBtn();
-        document.getElementById('filterResults').innerHTML = '';
-        document.getElementById('selCount').textContent = '';
-        selectedWords.clear();
-        updateSelectToggleUI();
     });
     document.getElementById('storyModelCustom').addEventListener('blur', (e) => {
         const val = e.target.value.trim();
