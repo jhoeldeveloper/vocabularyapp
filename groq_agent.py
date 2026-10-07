@@ -24,7 +24,8 @@ def is_ready() -> bool:
 
 _MEANINGS_PROMPT = (
     "For the English word or phrase '{word}', write the 2 most common senses as a "
-    "numbered Markdown list. Each item is `1. <concise gloss>` and, on the next "
+    "numbered Markdown list. Each item is `1. <concise gloss.>` -- ending the "
+    "gloss with a full stop -- and, on the next "
     "line indented by three spaces, one short example sentence using that sense "
     "with the word highlighted in **bold**. The senses must be genuinely "
     "different. Do not give a frequency score, word class or inflected forms "

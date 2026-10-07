@@ -292,6 +292,27 @@ def init_db():
                     print(f"MIGRATION: dropped dictionary.{name}")
                 except sqlite3.Error as e:
                     print(f"MIGRATION: could not drop dictionary.{name}: {e}")
+
+        # Punctuation pass: every sense's gloss ends with a full stop, on the
+        # words already stored as well as on new ones. This one rewrites prose
+        # rather than adding a column, so it is idempotent by construction
+        # (openrouter_agent.ensure_gloss_periods), touches only the lines that
+        # are missing one, and deliberately does NOT bump `updatedAt`: adding a
+        # full stop is not an edit the user made, and re-sorting the grid
+        # because of it would be surprising. Hand-edited meanings are safe here
+        # too -- the only change is a full stop on a numbered sense line.
+        _cur.execute(
+            "SELECT id, meaning FROM dictionary "
+            "WHERE meaning IS NOT NULL AND TRIM(meaning) <> ''"
+        )
+        _punctuated = 0
+        for _wid, _meaning in _cur.fetchall():
+            _fixed = openrouter_agent.ensure_gloss_periods(_meaning)
+            if _fixed != _meaning:
+                _cur.execute("UPDATE dictionary SET meaning = ? WHERE id = ?", (_fixed, _wid))
+                _punctuated += 1
+        if _punctuated:
+            print(f"MIGRATION: added a missing full stop to {_punctuated} meaning(s).")
         _conn.commit()
     except Exception as e:
         print(f"MIGRATION: dictionary column pass failed: {e}")

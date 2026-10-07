@@ -1425,6 +1425,49 @@ def _normalize_sense_labels(meaning):
     return "\n".join(lines), unlabelled
 
 
+# Punctuation that already terminates a sentence, so one is never doubled.
+_GLOSS_END_PUNCT = (".", "!", "?", "…")
+
+
+def ensure_gloss_periods(meaning):
+    """Every sense's gloss ends with a full stop.
+
+    A dictionary entry that stops mid-thought -- "to scatter drops or blobs of a
+    liquid or substance" with no full stop -- reads like a note taken while
+    someone was interrupted, and the card renders the gloss as a sentence in its
+    own right. The prompt asks for the full stop; this enforces it, the same
+    arrangement as `_strip_stray_bold` for stories: a formatting rule left to the
+    model is a rule that holds on most cards and not on all of them.
+
+    Only the HEADING line is touched. The example underneath it is a separate
+    line and already a sentence, and a sense with no gloss at all (a bare
+    `1. Noun`) is left alone -- there is nothing there to punctuate.
+
+    A gloss ending inside bold markers gets the period INSIDE them
+    (`**splatter**` -> `**splatter.**`): a full stop after the closing `**`
+    would sit outside the bold and read as a typo. Idempotent, so the startup
+    pass over existing rows can run on every launch.
+    """
+    lines = (meaning or "").split("\n")
+    for i, line in enumerate(lines):
+        heading = _SENSE_HEADING_RE.match(line)
+        if not heading:
+            continue
+        # The heading is preserved verbatim -- it is what the card renders as the
+        # numbered sense, and the label chip is cut from the text just after it.
+        prefix = line[: heading.end()]
+        rest = line[heading.end():].rstrip()
+        if not rest:
+            continue
+        if rest.strip().strip("*:_-").lower() in SENSE_LABELS:
+            # A label with no gloss after it: nothing to end.
+            continue
+        tail = "**" if rest.endswith("**") else ""
+        body = rest[: len(rest) - len(tail)].rstrip() if tail else rest
+        lines[i] = prefix + (body + tail if body.endswith(_GLOSS_END_PUNCT) else f"{body}.{tail}")
+    return "\n".join(lines)
+
+
 def sense_labels(meaning):
     """The label of each sense, in order, for rendering. None where absent.
 
@@ -2385,7 +2428,8 @@ def _build_meanings_prompt(word: str) -> str:
         f"gloss, then -- on the next line indented by three spaces -- one short "
         f"example sentence using that sense with the word or phrase in **bold**. "
         f"Format each sense exactly as `1. noun  a farm building used for "
-        f"storage` followed by the indented example. The label must be one of: "
+        f"storage.` followed by the indented example. End EVERY gloss with a "
+        f"full stop, so it reads as a sentence. The label must be one of: "
         f"noun, verb, adjective, adverb, preposition, conjunction, "
         f"interjection, determiner, pronoun, numeral, slang, informal, vulgar. "
         f"Use slang/informal/vulgar for a sense that is non-standard or "
@@ -2435,6 +2479,11 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     # Labels are clamped BEFORE the bold pass, so the chip vocabulary and the
     # bold rule cannot disagree about what the first word of a sense is.
     meaning, unlabelled = _normalize_sense_labels(meaning)
+    # The full stop on every gloss is enforced here, not just requested in the
+    # prompt: it is the one bit of punctuation every card has to agree on, and a
+    # card missing it on 3 senses out of 15 is the case that makes the rest look
+    # unfinished.
+    meaning = ensure_gloss_periods(meaning)
     if unlabelled:
         # Reported, never silent: a model that ignores the label format looks
         # identical to one whose labels we dropped, and those need different fixes.
