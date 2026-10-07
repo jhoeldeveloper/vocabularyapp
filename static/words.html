@@ -1362,6 +1362,17 @@
 
     /* In Stories view, hide the word-mode controls but keep the view toggle. */
     body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
+    /* ...and the toggle keeps its slot instead of sliding to the far left when
+       it is left alone. Hiding its siblings takes the toggle from "last item in
+       the row" to "only item in the row", and a left-aligned flex row puts an
+       only item at the left: the one control that survives a view switch was the
+       one control that moved when you switched. `margin-left: auto` pushes it
+       right in BOTH states -- as the last of many, and as the only one -- so the
+       click target is in the same place before and after.
+       No width rule: `fa-book` and `fa-book-open` are one glyph in the same font,
+       so the two states are already the same width, and a hard width here would
+       make this button a different size from the icon-only ones beside it. */
+    #viewToggleBtn { margin-left: auto; }
   </style>
 </head>
 <body>
@@ -1419,7 +1430,8 @@
             </div>
         </div>
         <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
-        <button id="viewToggleBtn" class="sort-btn" title="Toggle Words / Stories view"><i class="fa-solid fa-book-open"></i> Stories</button>
+        <button id="viewToggleBtn" class="sort-btn" title="Switch to Stories view"
+                aria-label="Switch to Stories view"><i class="fa-solid fa-book-open"></i></button>
     </div>
 </div>
 
@@ -5481,11 +5493,30 @@ async function loadStories(wordId) {
   });
 }
 
+// The view toggle is icon-only: the label lives in the tooltip, like the
+// meanings-model and mic buttons in the same row. `toStories` describes where a
+// click GOES, not where you are, because that is what the icon and the tooltip
+// both mean -- and the two states are the same glyph width, so the button cannot
+// resize when the state changes.
+// One owner for all three (icon, title, aria-label): they were set separately in
+// four places, and a static title that never changed meant the only label the
+// button had left was the one that could be wrong.
+function setViewToggle(toStories) {
+  const btn = document.getElementById('viewToggleBtn');
+  if (!btn) return;
+  btn.innerHTML = toStories
+    ? '<i class="fa-solid fa-book-open"></i>'
+    : '<i class="fa-solid fa-book"></i>';
+  const label = toStories ? 'Switch to Stories view' : 'Switch to Words view';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+
 function switchToWordsView(word) {
   document.getElementById('storiesPanel').style.display = 'none';
   document.getElementById('wordGridContainer').style.display = '';
   document.body.classList.remove('stories-view');
-  document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book-open"></i> Stories';
+  setViewToggle(true);
   if (word) {
     document.getElementById('searchInput').value = word;
     applySearch();
@@ -5496,7 +5527,7 @@ function openStoriesForWord(wordId) {
   document.getElementById('wordGridContainer').style.display = 'none';
   document.getElementById('storiesPanel').style.display = 'block';
   document.body.classList.add('stories-view');
-  document.getElementById('viewToggleBtn').innerHTML = '<i class="fa-solid fa-book"></i> Words';
+  setViewToggle(false);
   loadStories(wordId);
   populateModelSelect();
   // With the Show button gone there is no control left to press to populate
@@ -6261,12 +6292,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('viewToggleBtn').addEventListener('click', () => {
         const panel = document.getElementById('storiesPanel');
         const grid = document.getElementById('wordGridContainer');
-        const btn = document.getElementById('viewToggleBtn');
         if (panel.style.display === 'none' || panel.style.display === '') {
             panel.style.display = 'block';
             grid.style.display = 'none';
             document.body.classList.add('stories-view');
-            btn.innerHTML = '<i class="fa-solid fa-book"></i> Words';
+            setViewToggle(false);
             loadStories();
             populateModelSelect();
             if (!storiesFilterLoaded) { storiesFilterLoaded = true; applyFilter(); }
@@ -6274,7 +6304,7 @@ document.addEventListener('DOMContentLoaded', () => {
             panel.style.display = 'none';
             grid.style.display = '';
             document.body.classList.remove('stories-view');
-            btn.innerHTML = '<i class="fa-solid fa-book-open"></i> Stories';
+            setViewToggle(true);
         }
     });
     // No Show button: every control in this row re-runs the filter itself, so
