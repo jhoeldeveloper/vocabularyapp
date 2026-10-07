@@ -1,6 +1,11 @@
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
+# Shared meaning post-processing (sense format, full stops, literal `\n`
+# repairs). Lives with the OpenRouter agent so all three agents normalise the
+# same way, but imported unconditionally: main.py already imports
+# openrouter_agent, and the OpenRouter keys are always present in .env.
+import openrouter_agent
 
 load_dotenv()
 
@@ -42,7 +47,7 @@ def sync_get_meanings_of(word: str) -> str:
         print("sending prompt for meanings...")
         response = model.generate_content(prompt)
         print("received response for meanings")
-        return response.text
+        return openrouter_agent.normalize_meaning(response.text)
     except Exception as e:
         return f"Error fetching meaning: {e}"
 

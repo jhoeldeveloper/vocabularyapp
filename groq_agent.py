@@ -1,6 +1,9 @@
 import os
 from groq import Groq
 from dotenv import load_dotenv
+# Shared meaning post-processing (sense format, full stops, literal `\n`
+# repairs) -- see gemini_agent.py for why this import is unconditional.
+import openrouter_agent
 
 load_dotenv()
 
@@ -46,7 +49,7 @@ def sync_get_meanings_of(word: str) -> str:
             model=GROQ_MODEL_NAME,
         )
         print("received response for meanings")
-        return response.choices[0].message.content
+        return openrouter_agent.normalize_meaning(response.choices[0].message.content)
     except Exception as e:
         return f"Error fetching meaning: {e}"
 

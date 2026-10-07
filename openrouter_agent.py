@@ -1428,6 +1428,47 @@ def _normalize_sense_labels(meaning):
 # Punctuation that already terminates a sentence, so one is never doubled.
 _GLOSS_END_PUNCT = (".", "!", "?", "…")
 
+# A literal backslash followed by `\` or one of n/r/t -- the shape a model leaves
+# when it double-escapes the newlines in a JSON string value.
+_LITERAL_ESCAPE_RE = re.compile(r"\\(\\|[nrt])")
+_LITERAL_ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
+
+
+def unescape_literal_whitespace(text):
+    r"""Turn literal ``\n`` / ``\t`` sequences back into real whitespace.
+
+    Asked for a JSON object, a model occasionally returns the meaning
+    double-escaped -- `"1. Verb ...\\n   example"` in the raw body, which
+    `json.loads` hands back as the two characters `\` and `n` instead of a
+    newline. Everything downstream then sees ONE line: the numbered senses stop
+    being senses, `sense_labels` returns one label, `marked` renders a single
+    list item with the escapes visible in the middle of it, and TTS reads the
+    whole block as one sentence with "one dot two" in it. `_limit_senses` cannot
+    even cap it, since a one-line "list" has one item.
+
+    Deliberately conservative: text that already contains a real newline is left
+    completely alone (its backslashes are the author's), and `\\` is preserved so
+    an escaped backslash is never halved into an escape.
+    """
+    if not text or "\n" in text:
+        return text
+
+    def fix(match):
+        body = match.group(1)
+        return body if body == "\\" else _LITERAL_ESCAPES.get(body, "\\" + body)
+
+    return _LITERAL_ESCAPE_RE.sub(fix, text)
+
+
+def normalize_meaning(meaning):
+    """Everything a stored meaning needs: real newlines, a full stop per gloss.
+
+    One entry point on purpose, so the parser and the startup repair pass cannot
+    drift -- a row fixed by the migration must be byte-identical to one fixed at
+    add time.
+    """
+    return ensure_gloss_periods(unescape_literal_whitespace(meaning))
+
 
 def ensure_gloss_periods(meaning):
     """Every sense's gloss ends with a full stop.
@@ -2475,7 +2516,19 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     data = json.loads(text, strict=False)
     if not isinstance(data, dict):
         raise ValueError("model did not return a JSON object")
-    meaning = _limit_senses(str(data.get("meaning") or "").strip())
+    # Literal `\n` sequences mean the model double-escaped its newlines. They are
+    # repaired BEFORE anything splits on a newline, because every step below
+    # (the sense cap, the label pass, the chip list, the card, TTS) assumes real
+    # line breaks, and a one-line "list" fails all of them at once. Reported, so a
+    # model that does this repeatedly is visible instead of quietly repaired.
+    meaning = str(data.get("meaning") or "")
+    if "\\" in meaning:
+        repaired = unescape_literal_whitespace(meaning)
+        if repaired != meaning:
+            print(f"[meanings] {word}: unescaped literal newlines in the meaning",
+                  file=sys.stderr, flush=True)
+            meaning = repaired
+    meaning = _limit_senses(meaning.strip())
     # Labels are clamped BEFORE the bold pass, so the chip vocabulary and the
     # bold rule cannot disagree about what the first word of a sense is.
     meaning, unlabelled = _normalize_sense_labels(meaning)
@@ -2501,7 +2554,7 @@ def _parse_meanings_json(content: str, word: str) -> dict:
     # American|British|Both, which could not say "informal, mainly North
     # American" without lying, and a model forced into that choice picks one to
     # look decisive. Collapsed to one line and capped so it cannot wrap its row.
-    use = " ".join(str(data.get("use") or "").split()).strip(" .")
+    use = " ".join(unescape_literal_whitespace(str(data.get("use") or "")).split()).strip(" .")
     if len(use) > _USE_MAX_CHARS:
         use = use[:_USE_MAX_CHARS - 1].rstrip() + "…"
     if not meaning:

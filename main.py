@@ -293,26 +293,29 @@ def init_db():
                 except sqlite3.Error as e:
                     print(f"MIGRATION: could not drop dictionary.{name}: {e}")
 
-        # Punctuation pass: every sense's gloss ends with a full stop, on the
-        # words already stored as well as on new ones. This one rewrites prose
-        # rather than adding a column, so it is idempotent by construction
-        # (openrouter_agent.ensure_gloss_periods), touches only the lines that
-        # are missing one, and deliberately does NOT bump `updatedAt`: adding a
-        # full stop is not an edit the user made, and re-sorting the grid
-        # because of it would be surprising. Hand-edited meanings are safe here
-        # too -- the only change is a full stop on a numbered sense line.
+        # Punctuation + escape repair pass: every sense's gloss ends with a full
+        # stop, and a meaning whose newlines arrived as literal `\n` gets them
+        # back as real line breaks (openrouter_agent.normalize_meaning). Both run
+        # over words already stored as well as new ones, so this one pass rewrites
+        # stored prose rather than adding a column. It is idempotent by
+        # construction, touches only rows that actually change, and deliberately
+        # does NOT bump `updatedAt`: a full stop is not an edit the user made, and
+        # re-sorting the grid over it would be surprising. Hand-edited meanings
+        # are safe -- the only changes are a full stop on a numbered sense line
+        # and newlines that were never really there.
         _cur.execute(
             "SELECT id, meaning FROM dictionary "
             "WHERE meaning IS NOT NULL AND TRIM(meaning) <> ''"
         )
-        _punctuated = 0
+        _rewritten = 0
         for _wid, _meaning in _cur.fetchall():
-            _fixed = openrouter_agent.ensure_gloss_periods(_meaning)
+            _fixed = openrouter_agent.normalize_meaning(_meaning)
             if _fixed != _meaning:
                 _cur.execute("UPDATE dictionary SET meaning = ? WHERE id = ?", (_fixed, _wid))
-                _punctuated += 1
-        if _punctuated:
-            print(f"MIGRATION: added a missing full stop to {_punctuated} meaning(s).")
+                _rewritten += 1
+        if _rewritten:
+            print(f"MIGRATION: normalised {_rewritten} meaning(s) "
+                  f"(full stops / literal newlines).")
         _conn.commit()
     except Exception as e:
         print(f"MIGRATION: dictionary column pass failed: {e}")
