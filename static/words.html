@@ -154,7 +154,6 @@
         border-radius: 4px;
         align-self: center;
         white-space: nowrap;
-        margin-left: auto;
     }
     #searchInput {
         padding: 7px 12px;
@@ -1360,19 +1359,55 @@
     .setup-preview-step { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
     .setup-preview-step .gen-preview-body { flex: 1 1 auto; min-height: 180px; }
 
+    /* The trailing cluster: the word count and every icon button, grouped so the
+       whole group is ONE flex item that can be pushed to the right edge. It used
+       to be six separate items relying on `#wordCount { margin-left: auto }`, and
+       that only works while they all share a line: two auto margins in one row
+       SPLIT the free space (a gap appears between two buttons), and on a wrapped
+       line the auto margin goes with whichever item happens to be on it, so the
+       view toggle ended up at the left of the wrapped line while Stories view --
+       where the cluster is alone -- had it hard right. One item with one auto
+       margin behaves the same on one line and on three.
+       `align-items` is left at the default stretch so the group keeps the row's
+       existing vertical behaviour: the icon buttons fill the line height exactly
+       as they did as direct children, and `#wordCount`'s `align-self: center`
+       still applies inside it. */
+    .toolbar-right {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        margin-left: auto;
+    }
     /* In Stories view, hide the word-mode controls but keep the view toggle. */
-    body.stories-view #sortControls > *:not(#viewToggleBtn) { display: none !important; }
+    body.stories-view #sortControls > *:not(.toolbar-right) { display: none !important; }
+    body.stories-view .toolbar-right > *:not(#viewToggleBtn) { display: none !important; }
     /* ...and the toggle keeps its slot instead of sliding to the far left when
        it is left alone. Hiding its siblings takes the toggle from "last item in
        the row" to "only item in the row", and a left-aligned flex row puts an
        only item at the left: the one control that survives a view switch was the
-       one control that moved when you switched. `margin-left: auto` pushes it
-       right in BOTH states -- as the last of many, and as the only one -- so the
-       click target is in the same place before and after.
-       No width rule: `fa-book` and `fa-book-open` are one glyph in the same font,
-       so the two states are already the same width, and a hard width here would
-       make this button a different size from the icon-only ones beside it. */
-    #viewToggleBtn { margin-left: auto; }
+       one control that moved when you switched.
+
+       SCOPED TO THE STORIES VIEW, which is the whole trick. In the Words view
+       this job is already done by `#wordCount { margin-left: auto }` (line ~157),
+       which pushes the whole trailing cluster -- count, pickers, volume, theme,
+       toggle -- to the right edge. Two auto margins in one row SPLIT the free
+       space instead of sharing the job, so an unconditional rule here put half
+       of it between the theme toggle and this button: a gap that was not there
+       before, in the view where the button already sat correctly. #wordCount is
+       hidden in the Stories view, so this rule takes over exactly when the
+       control doing the pushing disappears.
+
+       No width rule on the BUTTON: the icon-only buttons in this row are already
+       deliberately ragged (measured 37.6px mic, 40.8px theme, 42.4px toggle,
+       44px volume), so pinning one of them would be a new visual decision. */
+    /* ...but both of ITS states must occupy the same box. `fa-book` and
+       `fa-book-open` are different glyphs with different advance widths --
+       measured 11.20px vs 14.41px at this 12.8px font-size -- so the button grew
+       and shrank by 3.2px on every view switch. Pinning the ICON's box at the
+       width of the wider glyph (1.15em, just over the measured 1.126em, so
+       nothing is clipped) keeps the glyph centred and the button's edges, and
+       therefore its click target, identical in both states. */
+    #viewToggleBtn i { display: inline-block; width: 1.15em; text-align: center; }
   </style>
 </head>
 <body>
@@ -1406,32 +1441,38 @@
             <input type="text" id="newWordInput" placeholder="Add new word..." autocomplete="off">
             <button id="addWordBtn" onclick="addWord()">Add</button>
         </div>
-        <span id="wordCount"></span>
-        <!-- Both pickers are icon-only, like sortOrderBtn/volumeToggle/themeToggle:
-             the button's identity lives in its tooltip (engine/model + id), which
-             is updated by updateMeaningsModelButtonTitle / updateTtsToolbarTitle.
-             Keeping them text-free also keeps the row on one baseline, since
-             `button { padding: 8px 12px }` sizes an icon the same either way. -->
-        <button id="meaningsModelToolbarBtn" class="sort-btn" title="Meanings model: Default"
-                aria-label="Select meanings model"
-                onclick="openMeaningsModelModal()" style="display:none;">
-            <i class="fa-solid fa-robot"></i>
-        </button>
-        <button id="ttsVoiceToolbarBtn" class="sort-btn" title="Read-aloud voice"
-                aria-label="Select read-aloud voice">
-            <i class="fa-solid fa-microphone-lines"></i>
-        </button>
-        <button id="stopAudioBtn" class="sort-btn" title="Stop reading aloud" onclick="stopAudio()" style="display:none;"><i class="fa-solid fa-circle-stop"></i></button>
-        <div class="volume-control">
-            <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
-            <div id="volumePopup">
-                <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="1">
-                <span id="volumeLabel">100%</span>
+        <!-- The trailing cluster: one flex item, so `margin-left: auto` on the
+         GROUP pushes the whole thing to the right edge as a unit. The view
+         toggle lives at the end of it and therefore keeps the same position
+         in both views, including when this row wraps on a narrow viewport. -->
+        <div class="toolbar-right">
+            <span id="wordCount"></span>
+            <!-- Both pickers are icon-only, like sortOrderBtn/volumeToggle/themeToggle:
+                 the button's identity lives in its tooltip (engine/model + id), which
+                 is updated by updateMeaningsModelButtonTitle / updateTtsToolbarTitle.
+                 Keeping them text-free also keeps the row on one baseline, since
+                 `button { padding: 8px 12px }` sizes an icon the same either way. -->
+            <button id="meaningsModelToolbarBtn" class="sort-btn" title="Meanings model: Default"
+                    aria-label="Select meanings model"
+                    onclick="openMeaningsModelModal()" style="display:none;">
+                <i class="fa-solid fa-robot"></i>
+            </button>
+            <button id="ttsVoiceToolbarBtn" class="sort-btn" title="Read-aloud voice"
+                    aria-label="Select read-aloud voice">
+                <i class="fa-solid fa-microphone-lines"></i>
+            </button>
+            <button id="stopAudioBtn" class="sort-btn" title="Stop reading aloud" onclick="stopAudio()" style="display:none;"><i class="fa-solid fa-circle-stop"></i></button>
+            <div class="volume-control">
+                <button id="volumeToggle" class="sort-btn" title="Volume"><i class="fa-solid fa-volume-high"></i></button>
+                <div id="volumePopup">
+                    <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="1">
+                    <span id="volumeLabel">100%</span>
+                </div>
             </div>
+            <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
+            <button id="viewToggleBtn" class="sort-btn" title="Switch to Stories view"
+                    aria-label="Switch to Stories view"><i class="fa-solid fa-book-open"></i></button>
         </div>
-        <button id="themeToggle" class="sort-btn" title="Toggle dark/light mode"><i class="fa-solid fa-sun"></i></button>
-        <button id="viewToggleBtn" class="sort-btn" title="Switch to Stories view"
-                aria-label="Switch to Stories view"><i class="fa-solid fa-book-open"></i></button>
     </div>
 </div>
 
