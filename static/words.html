@@ -4069,10 +4069,18 @@ function renderFilterResults(data) {
     updateSelectToggleUI();
     return;
   }
-  // Every render auto-ticks the unlearnt words: practising what you don't know
-  // is the reason to mark anything at all. An INITIAL state, not a lock -- the
-  // checkbox stays live, and a word already selected stays selected whichever
-  // group it is in.
+  // Every render auto-ticks EVERY word the filter returned, so the count always
+  // equals the number of rows on screen. It used to tick only the unlearnt ones
+  // (on the theory that you should practise what you don't know), which made the
+  // list and the count disagree -- 377 rows above "Selected: 371", with nothing on
+  // screen to explain the six -- and made the Learnt/Unlearnt boxes look broken:
+  // un-ticking Learnt returns exactly the unlearnt set that was already ticked, so
+  // the list shrank by six rows and the count did not move at all.
+  //
+  // The Learnt/Unlearnt boxes are therefore pure filters on the POOL, not on the
+  // selection: any change re-runs the filter and the selection is rebuilt from the
+  // new results. This is an INITIAL state, not a lock -- the checkbox below stays
+  // live, and un-ticking a row drops that word from the story.
   //
   // There is deliberately no cap on how many get ticked. One was tried and
   // removed: with the range inputs gone there is no way to narrow the list
@@ -4085,11 +4093,9 @@ function renderFilterResults(data) {
     label.dataset.word = w.word;
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    // Auto-select the unlearnt words: practising what you don't know is the
-    // reason to mark anything at all. An INITIAL state, not a lock -- the
-    // checkbox below stays live, and a word already selected stays selected
-    // whichever group it is in.
-    cb.checked = selectedWords.has(w.word) || !w.learned;
+    // Everything the filter returned is offered by default; the row stays
+    // individually tickable below.
+    cb.checked = true;
     // The tick has to be pushed into the set HERE, because setting `.checked`
     // in script does NOT fire a change event -- the handler below never runs
     // for an auto-ticked box. Without this the boxes look selected while the
