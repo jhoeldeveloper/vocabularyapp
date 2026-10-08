@@ -770,21 +770,15 @@ REDDIT_STYLES = [
     "narrator answers proportionally and legally, without announcing it. "
     "Anticipation, then a modest and satisfying payoff. No downfall, no revenge "
     "story.",
-    "r/ProRevenge: first person, past tense, cold and patient. A long conflict with "
-    "a bully, scammer or manager, waited out rather than answered on the spot. The "
-    "response is planned, deliberate and a little underhanded, and the antagonist's "
-    "own behaviour finishes the job. The consequences are shown once they land.",
-    "r/BestofRedditorUpdates: first person, past tense, conversational. An "
-    "unresolved problem the narrator chases: they ask for advice, try something, "
-    "and each answer changes the picture. It resolves near the end and shows what "
-    "it cost.",
-    # Named for parents on purpose. An earlier draft said only someone
-    # unreasonable, which made this a duplicate of r/AmItheAsshole, while the
-    # subreddit's whole subject is a parent behaving as if the world owes them.
-    "r/entitledparents: first person, past tense, dry. A parent \u2014 or "
-    "grandparent \u2014 who behaves as though the world owes them, in an ordinary "
-    "setting like a meal or an errand. The narrator is tired, not furious, and "
-    "makes no speech about it. It ends quietly.",
+    # r/ProRevenge removed: r/PettyRevenge is the same move (dry, proportional
+    # revenge, delayed payoff) at a fifth of the scale, so two of four revenge
+    # entries were reaching for one story.
+    #
+    
+    # r/entitledparents removed: once r/MaliciousCompliance was cut, this was the
+    # last remaining "unreasonable authority figure in an ordinary setting" story,
+    # and r/AmItheAsshole already covers a person close behaving badly while the
+    # narrator is tired and nothing is resolved.
     "r/relationships: first person, past tense, warm and honest. A personal "
     "relationship problem the narrator wants advice about, told with the mixed "
     "feelings it actually has. No moral, no tidy lesson.",
@@ -795,25 +789,28 @@ REDDIT_STYLES = [
     "r/TalesFromYourServer: first person, past tense, exhausted and quick. A busy "
     "service where several problems overlap at once and the staff carry each other "
     "through. It ends in a small relief, a surprising tip, or one exhausted line.",
-    "r/AskReddit: first person, present tense, conversational. An anecdote "
-    "answering an implicit question: the answer comes first, the context follows "
-    "in the order it was remembered, small irrelevant details included. It stops "
-    "the way a retelling stops.",
+    
     "r/nosleep: first person, past tense, quiet dread. An ordinary routine with "
     "one detail that does not quite fit. The narrator knows only what they could "
     "know, and the strangeness is never explained. It ends unresolved, with the "
     "reader still uneasy.",
-    # r/nosleep, which is otherwise the same shape with a different mood.
-    "r/shortscarystories: third person, past tense, plain and close. Written horror "
-    "explanation. Few characters, little exposition, and a sharp turn near the "
-    "end.",
+    # r/shortscarystories was removed here: it was third person, and
+    # _DEFAULT_TEMPLATE mandates "first person, casual and conversational", so
+    # the style contradicted the prompt instead of flavouring it.
+    # r/AskReddit (present tense) and r/BestofRedditorUpdates (a serial
+    # "each update changes the picture" structure, with no room for a long word
+    # list) went at the same time for the same class of reason: they lost the
+    # measured word coverage, which is the one job a style has here.
     "r/HFY: close third, present tense, admiring but dry. An alien viewpoint on a "
     "situation where humans look outmatched, told in the alien's own terms. Human "
     "persistence, ingenuity or sacrifice changes what the aliens conclude. It ends "
     "on that changed opinion.",
-    "r/WritingPrompts: third person, past tense, literary. The words supplied are "
-    "the premise: build the situation that needs them all, let it complicate once, "
-    "and pay it off.",
+    # r/WritingPrompts removed: the last third-person style, and therefore the last
+    # entry contradicting _DEFAULT_TEMPLATE's "first person, casual and
+    # conversational". With r/HFY (close third) also still present, 10 styles
+    # remain and the only two that fight the template's POV are the deliberate
+    # exceptions left in -- a style's one job here is to flavour a fixed voice,
+    # not to override it.
 ]
 
 # ---------------------------------------------------------------------------
