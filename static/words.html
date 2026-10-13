@@ -1242,9 +1242,9 @@
     .stories-table td.col-id { left: 0; background: var(--bg-card); z-index: 2; }
     .stories-table td.col-date { left: 56px; background: var(--bg-card); z-index: 2; }
     /* Fixed right: Actions only */
-    .col-actions { width: 60px; min-width: 60px; }
+    .col-actions { width: 30px; min-width: 30px; }
     .stories-table th.col-actions { right: 0; z-index: 2; }
-    .stories-table td.col-actions { right: 0; background: var(--bg-card); z-index: 2; }
+    .stories-table td.col-actions { right: 0; background: var(--bg-card); z-index: 2; text-align: center; }
     /* Title column: elastic, truncates */
     .col-title { min-width: 220px; }
     .stories-table td.col-title {
@@ -1253,8 +1253,8 @@
         text-overflow: ellipsis;
     }
     /* Individual meta columns */
-    .col-chars { width: 80px; min-width: 80px; }
-    .col-tokens { width: 100px; min-width: 100px; }
+    .col-chars { width: 60px; min-width: 60px; }
+    .col-tokens { width: 110px; min-width: 110px; }
     .col-coverage { width: 90px; min-width: 90px; }
     .col-density { width: 90px; min-width: 90px; }
     .col-style { width: 100px; min-width: 100px; }
@@ -2721,6 +2721,20 @@ function storyTokenLabel(s) {
     }
     const est = estimateTokens(s.content || '');
     return est > 0 ? `≈${est.toLocaleString()} out (estimated)` : '';
+}
+
+// Compact token label for the table: ▲in|▼out (+reasoning)
+function storyTokenLabelCompact(s) {
+    const inTok = s.prompt_tokens || 0;
+    const outTok = s.completion_tokens || 0;
+    if (inTok || outTok) {
+        const reasoning = s.reasoning_tokens || 0;
+        const visible = Math.max(0, outTok - reasoning);
+        return `▲${inTok.toLocaleString()}▼${visible.toLocaleString()}`
+            + (reasoning > 0 ? ` (+${reasoning.toLocaleString()})` : '');
+    }
+    const est = estimateTokens(s.content || '');
+    return est > 0 ? `▼${est.toLocaleString()} (est)` : '—';
 }
 
 // Tooltip for the token pill, so the two figures are not mistaken for a total.
@@ -5612,17 +5626,17 @@ async function loadStories(wordId) {
     tdTitle.textContent = s.title || 'Untitled';
     tr.appendChild(tdTitle);
 
-    // Chars cell
+    // Chars cell (number only)
     const tdChars = document.createElement('td');
     tdChars.className = 'col-chars';
     const chars = countStoryChars(s.content);
-    tdChars.textContent = chars > 0 ? chars.toLocaleString() + ' chars' : '—';
+    tdChars.textContent = chars > 0 ? chars.toLocaleString() : '—';
     tr.appendChild(tdChars);
 
-    // Tokens cell
+    // Tokens cell (compact format)
     const tdTokens = document.createElement('td');
     tdTokens.className = 'col-tokens';
-    tdTokens.textContent = storyTokenLabel(s) || '—';
+    tdTokens.textContent = storyTokenLabelCompact(s);
     tdTokens.title = storyTokenTitle(s) || '';
     tr.appendChild(tdTokens);
 
