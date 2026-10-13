@@ -1234,25 +1234,17 @@
     .stories-table td {
         position: sticky;
     }
-    /* Fixed left: ID */
+    /* Fixed left: ID + Date (two columns) */
     .col-id { width: 56px; min-width: 56px; }
-    .stories-table th.col-id { left: 0; z-index: 2; }
-    .stories-table td.col-id { left: 0; background: var(--bg-card); z-index: 2; }
-    /* Fixed right: Status + Date + Actions (three columns) */
-    .col-status { width: 140px; min-width: 140px; }
     .col-date { width: 110px; min-width: 110px; }
-    .col-actions { width: 96px; min-width: 96px; }
-    .stories-table th.col-status { right: 206px; z-index: 2; }
-    .stories-table th.col-date { right: 96px; z-index: 2; }
+    .stories-table th.col-id { left: 0; z-index: 2; }
+    .stories-table th.col-date { left: 56px; z-index: 2; }
+    .stories-table td.col-id { left: 0; background: var(--bg-card); z-index: 2; }
+    .stories-table td.col-date { left: 56px; background: var(--bg-card); z-index: 2; }
+    /* Fixed right: Actions only */
+    .col-actions { width: 60px; min-width: 60px; }
     .stories-table th.col-actions { right: 0; z-index: 2; }
-    .stories-table td.col-status,
-    .stories-table td.col-date,
-    .stories-table td.col-actions {
-        background: var(--bg-card);
-    }
-    .stories-table td.col-status { right: 206px; z-index: 2; }
-    .stories-table td.col-date { right: 96px; z-index: 2; }
-    .stories-table td.col-actions { right: 0; z-index: 2; }
+    .stories-table td.col-actions { right: 0; background: var(--bg-card); z-index: 2; }
     /* Title column: elastic, truncates */
     .col-title { min-width: 220px; }
     .stories-table td.col-title {
@@ -1269,6 +1261,7 @@
     .col-model { width: 110px; min-width: 110px; }
     .col-cost { width: 80px; min-width: 80px; }
     .col-duration { width: 80px; min-width: 80px; }
+    .col-status { width: 140px; min-width: 140px; }
     /* Row states (generating/failed/truncated) */
     .stories-table tr.is-generating { opacity: 0.75; }
     .stories-table tr.is-failed { border-style: dashed; }
@@ -1281,9 +1274,29 @@
     .stories-table td.col-style,
     .stories-table td.col-model,
     .stories-table td.col-cost,
-    .stories-table td.col-duration {
+    .stories-table td.col-duration,
+    .stories-table td.col-status {
         text-align: center;
     }
+    /* Coverage/Density color classes on the cell itself */
+    .stories-table td.col-coverage.is-good,
+    .stories-table td.col-coverage.is-fine,
+    .stories-table td.col-coverage.is-warning,
+    .stories-table td.col-coverage.is-poor,
+    .stories-table td.col-density.is-good,
+    .stories-table td.col-density.is-fine,
+    .stories-table td.col-density.is-warning,
+    .stories-table td.col-density.is-poor {
+        font-weight: 600;
+    }
+    .stories-table td.col-coverage.is-good { color: var(--ok-text); background: var(--ok-bg); }
+    .stories-table td.col-coverage.is-fine { color: var(--ok-fine-text); background: var(--ok-fine-bg); }
+    .stories-table td.col-coverage.is-warning { color: var(--warn-text); background: var(--warn-bg); }
+    .stories-table td.col-coverage.is-poor { color: var(--poor-text); background: var(--poor-bg); }
+    .stories-table td.col-density.is-good { color: var(--ok-text); background: var(--ok-bg); }
+    .stories-table td.col-density.is-fine { color: var(--ok-fine-text); background: var(--ok-fine-bg); }
+    .stories-table td.col-density.is-warning { color: var(--warn-text); background: var(--warn-bg); }
+    .stories-table td.col-density.is-poor { color: var(--poor-text); background: var(--poor-bg); }
     /* Pagination */
     .stories-pagination {
         display: flex;
@@ -1843,6 +1856,7 @@
         <thead>
           <tr>
             <th class="col-id">ID</th>
+            <th class="col-date">Date</th>
             <th class="col-title">Title</th>
             <th class="col-chars">Chars</th>
             <th class="col-tokens">Tokens</th>
@@ -1853,8 +1867,7 @@
             <th class="col-cost">Cost</th>
             <th class="col-duration">Duration</th>
             <th class="col-status">Status</th>
-            <th class="col-date">Date</th>
-            <th class="col-actions">Actions</th>
+            <th class="col-actions" title="Actions"></th>
           </tr>
         </thead>
         <tbody id="storiesTableBody"></tbody>
@@ -5580,12 +5593,18 @@ async function loadStories(wordId) {
     const isTruncated = s.status === 'truncated';
     tr.className = (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : isTruncated ? ' is-truncated' : '');
 
-    // ID cell (fixed left)
+    // ID cell (fixed left - first)
     const tdId = document.createElement('td');
     tdId.className = 'col-id';
     tdId.textContent = `#${s.id}`;
     tdId.title = `Story id ${s.id}`;
     tr.appendChild(tdId);
+
+    // Date cell (fixed left - second)
+    const tdDate = document.createElement('td');
+    tdDate.className = 'col-date';
+    tdDate.textContent = formatDate(s.createdAt);
+    tr.appendChild(tdDate);
 
     // Title cell
     const tdTitle = document.createElement('td');
@@ -5607,22 +5626,22 @@ async function loadStories(wordId) {
     tdTokens.title = storyTokenTitle(s) || '';
     tr.appendChild(tdTokens);
 
-    // Coverage cell
+    // Coverage cell (with color class on the cell itself)
     const tdCoverage = document.createElement('td');
-    tdCoverage.className = 'col-coverage';
+    const covClass = storyCoverageClass(s) || '';
+    tdCoverage.className = 'col-coverage' + (covClass ? ' ' + covClass : '');
     const covLabel = storyCoverageLabel(s);
     tdCoverage.textContent = covLabel || '—';
     tdCoverage.title = storyCoverageTitle(s) || '';
-    tdCoverage.className = 'col-coverage ' + (storyCoverageClass(s) || '');
     tr.appendChild(tdCoverage);
 
-    // Density cell
+    // Density cell (with color class on the cell itself)
     const tdDensity = document.createElement('td');
-    tdDensity.className = 'col-density';
+    const densClass = storyDensityClass(s) || '';
+    tdDensity.className = 'col-density' + (densClass ? ' ' + densClass : '');
     const densLabel = storyDensityLabel(s);
     tdDensity.textContent = densLabel || '—';
     tdDensity.title = storyDensityTitle(s) || '';
-    tdDensity.className = 'col-density ' + (storyDensityClass(s) || '');
     tr.appendChild(tdDensity);
 
     // Style cell
@@ -5674,7 +5693,7 @@ async function loadStories(wordId) {
     if (dur) tdDuration.title = 'Wall-clock generation time. Not the length of the audio.';
     tr.appendChild(tdDuration);
 
-    // Status cell (fixed right - first of three)
+    // Status cell (scrollable, not fixed)
     const tdStatus = document.createElement('td');
     tdStatus.className = 'col-status';
     if (isGenerating) {
@@ -5696,13 +5715,7 @@ async function loadStories(wordId) {
     }
     tr.appendChild(tdStatus);
 
-    // Date cell (fixed right - second of three)
-    const tdDate = document.createElement('td');
-    tdDate.className = 'col-date';
-    tdDate.textContent = formatDate(s.createdAt);
-    tr.appendChild(tdDate);
-
-    // Actions cell (fixed right - third of three)
+    // Actions cell (fixed right)
     const tdActions = document.createElement('td');
     tdActions.className = 'col-actions';
     const actions = document.createElement('span');
