@@ -4141,7 +4141,7 @@ let storiesFilterLoaded = false;
 
 // Stories pagination state
 let storiesPage = 0;
-const STORIES_PAGE_SIZE = 25;
+let STORIES_PAGE_SIZE = 25;
 let storiesTotal = 0;
 let storiesCurrentWordId = null;
 
@@ -5776,10 +5776,27 @@ async function loadStories(wordId) {
 function renderStoriesPagination() {
   const pagination = document.getElementById('storiesPagination');
   const totalPages = Math.ceil(storiesTotal / STORIES_PAGE_SIZE);
-  if (totalPages <= 1) {
-    pagination.innerHTML = '';
-    return;
-  }
+  // Always show pagination so page size dropdown is available
+  
+  // Page size dropdown
+  const sizeSelect = document.createElement('select');
+  sizeSelect.className = 'sort-select';
+  sizeSelect.style.marginRight = '8px';
+  sizeSelect.style.padding = '4px 8px';
+  sizeSelect.style.fontSize = '0.8em';
+  [10, 20, 25, 50, 100].forEach(size => {
+    const opt = document.createElement('option');
+    opt.value = size;
+    opt.textContent = `${size} per page`;
+    if (size === STORIES_PAGE_SIZE) opt.selected = true;
+    sizeSelect.appendChild(opt);
+  });
+  sizeSelect.onchange = () => {
+    STORIES_PAGE_SIZE = parseInt(sizeSelect.value, 10);
+    storiesPage = 0;
+    loadStories(storiesCurrentWordId);
+  };
+
   const prevBtn = document.createElement('button');
   prevBtn.className = 'sort-btn';
   prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
@@ -5799,6 +5816,7 @@ function renderStoriesPagination() {
   info.textContent = `Page ${storiesPage + 1} of ${totalPages} (${storiesTotal} total)`;
   
   pagination.innerHTML = '';
+  pagination.appendChild(sizeSelect);
   pagination.appendChild(prevBtn);
   pagination.appendChild(info);
   pagination.appendChild(nextBtn);
