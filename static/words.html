@@ -1204,6 +1204,85 @@
     .story-list-meta-line.is-clickable { cursor: pointer; border-bottom: 1px dotted currentColor; }
     .story-list-meta-line.is-clickable:hover { filter: brightness(0.95); }
     .story-card { margin-bottom: 16px; }
+
+    /* --- Stories Table (horizontal scroll, sticky columns, pagination) --- */
+    .stories-table-wrap {
+        overflow-x: auto;
+        max-height: 60vh;
+        border: 1px solid var(--border-details);
+        border-radius: 8px;
+        background: var(--bg-card);
+    }
+    .stories-table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8em;
+    }
+    .stories-table th,
+    .stories-table td {
+        padding: 8px 12px;
+        border: 1px solid var(--border-details);
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    .stories-table th {
+        background: var(--bg-meta);
+        color: var(--text-heading);
+        position: sticky;
+        z-index: 1;
+    }
+    /* Fixed left: ID */
+    .col-id { width: 56px; min-width: 56px; }
+    .stories-table th.col-id { left: 0; z-index: 2; }
+    .stories-table td.col-id { left: 0; background: var(--bg-card); }
+    /* Fixed right: Date + Actions (two columns) */
+    .col-date { width: 110px; min-width: 110px; }
+    .col-actions { width: 96px; min-width: 96px; }
+    .stories-table th.col-date { right: 96px; z-index: 2; }
+    .stories-table th.col-actions { right: 0; z-index: 2; }
+    .stories-table td.col-date,
+    .stories-table td.col-actions {
+        background: var(--bg-card);
+    }
+    .stories-table td.col-date { right: 96px; }
+    .stories-table td.col-actions { right: 0; }
+    /* Title column: elastic, truncates */
+    .col-title { min-width: 220px; }
+    .stories-table td.col-title {
+        max-width: 360px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Status column */
+    .col-status { min-width: 160px; }
+    /* Meta column */
+    .col-meta { min-width: 300px; }
+    /* Row states (generating/failed/truncated) */
+    .stories-table tr.is-generating { opacity: 0.75; }
+    .stories-table tr.is-failed { border-style: dashed; }
+    .stories-table tr.is-truncated { border-style: dashed; border-color: var(--warn-border); }
+    /* Pills inside meta cell */
+    .story-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    .story-pills .story-list-meta-line { margin: 0; }
+    /* Pagination */
+    .stories-pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        font-size: 0.85em;
+        color: var(--text-meta);
+    }
+    .stories-pagination button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .stories-pagination .page-info {
+        min-width: 120px;
+        text-align: center;
+    }
     .story-card .word-details { display: block; }
 
     /* --- Prompt Lab: the editable story prompt --------------------------
@@ -1740,7 +1819,22 @@
 
   <div class="panel-section">
     <h3><i class="fa-solid fa-book"></i> Saved Stories</h3>
-    <div id="storiesList"></div>
+    <div class="stories-table-wrap" id="storiesTableWrap">
+      <table class="stories-table">
+        <thead>
+          <tr>
+            <th class="col-id">ID</th>
+            <th class="col-title">Title</th>
+            <th class="col-status">Status</th>
+            <th class="col-meta">Meta</th>
+            <th class="col-date">Date</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="storiesTableBody"></tbody>
+      </table>
+    </div>
+    <div class="stories-pagination" id="storiesPagination"></div>
   </div>
 </div>
 
@@ -3992,6 +4086,12 @@ let wordStoryCounts = {};
 // worked through.
 let storiesFilterLoaded = false;
 
+// Stories pagination state
+let storiesPage = 0;
+const STORIES_PAGE_SIZE = 25;
+let storiesTotal = 0;
+let storiesCurrentWordId = null;
+
 // The encounters box: numbers only, minimum 2, blank allowed.
 //
 // type="number" alone is not validation. It stops most letters, but the field
@@ -5422,104 +5522,119 @@ async function cancelStory(id) {
 }
 
 async function loadStories(wordId) {
-  let url = '/api/stories';
-  if (wordId) url += `?word_id=${wordId}`;
+  // Reset to first page when wordId changes (different filter)
+  if (wordId !== storiesCurrentWordId) {
+    storiesPage = 0;
+    storiesCurrentWordId = wordId;
+  }
+  const offset = storiesPage * STORIES_PAGE_SIZE;
+  let url = `/api/stories?limit=${STORIES_PAGE_SIZE}&offset=${offset}`;
+  if (wordId) url += `&word_id=${wordId}`;
   const res = await fetch(url);
-  const stories = await res.json();
-  const box = document.getElementById('storiesList');
-  box.innerHTML = '';
+  const data = await res.json();
+  const stories = data.stories || [];
+  storiesTotal = data.total || 0;
+
+  const tbody = document.getElementById('storiesTableBody');
+  tbody.innerHTML = '';
+  const wrap = document.getElementById('storiesTableWrap');
+  const pagination = document.getElementById('storiesPagination');
+
   if (!stories.length) {
-    box.innerHTML = '<p style="color:var(--text-meta);font-size:0.85em;">No stories yet. Use the generator above to create one.</p>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-meta);">No stories yet. Use the generator above to create one.</td></tr>';
+    pagination.innerHTML = '';
     return;
   }
+
   stories.forEach(s => {
-    const item = document.createElement('div');
-    item.dataset.id = s.id;
+    const tr = document.createElement('tr');
+    tr.dataset.id = s.id;
     const isGenerating = s.status === 'generating';
     const isFailed = s.status === 'failed';
-    // Cut off by the model's token limit: readable, and retryable (the story
-    // simply hit max_tokens, so a second run is the natural fix).
     const isTruncated = s.status === 'truncated';
-    item.className = 'story-list-item'
-      + (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : isTruncated ? ' is-truncated' : '');
-    const titleBox = document.createElement('span');
-    titleBox.className = 'story-list-title-box';
-    // The id sits on the SAME line as the title, not above it: the title box is
-    // a column flex, so appending the tag directly would have given it a row of
-    // its own and pushed every title down.
-    const titleRow = document.createElement('span');
-    titleRow.className = 'story-list-title-row';
-    // It is what the status line above quotes ("Story queued (#123)"), what the
-    // log lines and the request-log filename use, and what the prompt endpoint's
-    // URL takes -- so it belongs where it can be read off the row rather than
-    // only found by opening the story.
-    const idTag = document.createElement('span');
-    idTag.className = 'story-list-id';
-    idTag.textContent = `#${s.id}`;
-    idTag.title = `Story id ${s.id}`;
-    const title = document.createElement('span');
-    title.className = 'story-list-title';
-    title.textContent = s.title || 'Untitled';
-    titleRow.appendChild(idTag);
-    titleRow.appendChild(title);
-    titleBox.appendChild(titleRow);
-    if (isGenerating || isFailed) {
-      const statusLine = document.createElement('span');
-      statusLine.className = 'story-list-status-line';
-      if (isGenerating) {
-        const st = storyStreams.get(s.id);
-        const tokens = st ? estimateTokens(st.text) : 0;
-        statusLine.innerHTML = tokens > 0
-          ? `<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026 \u2248${tokens.toLocaleString()} tokens`
-          : '<i class="fa-solid fa-spinner fa-spin"></i> Generating\u2026';
-        statusLine.title = 'Click the story to watch it being written.';
-      } else {
-        const errText = s.error || 'Generation failed';
-        const warnIcon = document.createElement('i');
-        warnIcon.className = 'fa-solid fa-triangle-exclamation';
-        statusLine.appendChild(warnIcon);
-        statusLine.appendChild(document.createTextNode(' ' + errText));
-        statusLine.title = errText;
-      }
-      titleBox.appendChild(statusLine);
-    } else if (s.model || s.cost != null || s.duration_ms != null || countStoryChars(s.content) > 0
-               || s.prompt_tokens || s.completion_tokens || s.words_used != null || s.warnings
-               || s.prompt_preset) {
-      const metaBox = document.createElement('span');
-      metaBox.className = 'story-list-meta';
-      const add = (icon, text, cls) => {
-        const span = document.createElement('span');
-        span.className = 'story-list-meta-line' + (cls ? ' ' + cls : '');
-        if (icon) {
-          const i = document.createElement('i');
-          i.className = icon;
-          span.appendChild(i);
-        }
-        span.appendChild(document.createTextNode(' ' + text));
-        metaBox.appendChild(span);
-        return span;
-      };
-      applyStoryPills(s, add, { showCutOff: true, showDate: false });
-      titleBox.appendChild(metaBox);
+    tr.className = (isGenerating ? ' is-generating' : isFailed ? ' is-failed' : isTruncated ? ' is-truncated' : '');
+
+    // ID cell (fixed left)
+    const tdId = document.createElement('td');
+    tdId.className = 'col-id';
+    tdId.textContent = `#${s.id}`;
+    tdId.title = `Story id ${s.id}`;
+    tr.appendChild(tdId);
+
+    // Title cell
+    const tdTitle = document.createElement('td');
+    tdTitle.className = 'col-title';
+    tdTitle.textContent = s.title || 'Untitled';
+    tr.appendChild(tdTitle);
+
+    // Status cell
+    const tdStatus = document.createElement('td');
+    tdStatus.className = 'col-status';
+    if (isGenerating) {
+      const st = storyStreams.get(s.id);
+      const tokens = st ? estimateTokens(st.text) : 0;
+      tdStatus.innerHTML = tokens > 0
+        ? `<i class="fa-solid fa-spinner fa-spin"></i> Generating… ≈${tokens.toLocaleString()} tokens`
+        : '<i class="fa-solid fa-spinner fa-spin"></i> Generating…';
+      tdStatus.title = 'Click the story to watch it being written.';
+    } else if (isFailed) {
+      const errText = s.error || 'Generation failed';
+      tdStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${errText}`;
+      tdStatus.title = errText;
+    } else if (isTruncated) {
+      tdStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Cut off (token limit)`;
+      tdStatus.title = "This story hit the model's token limit, so the ending is missing.";
     }
-    const right = document.createElement('span');
-    right.className = 'story-list-right';
-    const date = document.createElement('span');
-    date.className = 'story-list-date';
-    date.textContent = formatDate(s.createdAt);
+    tr.appendChild(tdStatus);
+
+    // Meta cell (pills)
+    const tdMeta = document.createElement('td');
+    tdMeta.className = 'col-meta';
+    const pills = document.createElement('span');
+    pills.className = 'story-pills';
+    const add = (icon, text, cls) => {
+      const span = document.createElement('span');
+      span.className = 'story-list-meta-line' + (cls ? ' ' + cls : '');
+      if (icon) {
+        const i = document.createElement('i');
+        i.className = icon;
+        span.appendChild(i);
+      }
+      span.appendChild(document.createTextNode(' ' + text));
+      pills.appendChild(span);
+      return span;
+    };
+    applyStoryPills(s, add, { showCutOff: true, showDate: false });
+    tdMeta.appendChild(pills);
+    tr.appendChild(tdMeta);
+
+    // Date cell (fixed right - first of two)
+    const tdDate = document.createElement('td');
+    tdDate.className = 'col-date';
+    tdDate.textContent = formatDate(s.createdAt);
+    tr.appendChild(tdDate);
+
+    // Actions cell (fixed right - second of two)
+    const tdActions = document.createElement('td');
+    tdActions.className = 'col-actions';
+    const actions = document.createElement('span');
+    actions.style.display = 'inline-flex';
+    actions.style.gap = '6px';
+    
     const del = document.createElement('button');
     del.className = 'story-list-del';
     del.title = 'Delete story';
     del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     del.onclick = (e) => { e.stopPropagation(); deleteStory(s.id); };
-    right.appendChild(date);
+    actions.appendChild(del);
+
     if (isGenerating) {
       const cancel = document.createElement('button');
       cancel.className = 'story-list-cancel story-stop-icon';
       cancel.title = 'Stop generating';
       cancel.innerHTML = '<i class="fa-solid fa-stop"></i>';
       cancel.onclick = (e) => { e.stopPropagation(); cancelStory(s.id); };
-      right.appendChild(cancel);
+      actions.appendChild(cancel);
     }
     if (isFailed || isTruncated) {
       const retry = document.createElement('button');
@@ -5529,25 +5644,50 @@ async function loadStories(wordId) {
         : 'Retry generation';
       retry.innerHTML = '<i class="fa-solid fa-rotate-right"></i>';
       retry.onclick = (e) => { e.stopPropagation(); retryStory(s.id); };
-      right.appendChild(retry);
+      actions.appendChild(retry);
     }
-    right.appendChild(del);
-    item.appendChild(titleBox);
-    item.appendChild(right);
-    // Generating stories are openable too — the modal shows the live preview.
-    item.onclick = isFailed ? null : () => openStoryModal(s.id);
-    box.appendChild(item);
+    tdActions.appendChild(actions);
+    tr.appendChild(tdActions);
+
+    // Row click opens story (except failed)
+    tr.onclick = isFailed ? null : () => openStoryModal(s.id);
+    tr.style.cursor = isFailed ? 'default' : 'pointer';
+    tbody.appendChild(tr);
   });
+
+  renderStoriesPagination();
 }
 
-// The view toggle is icon-only: the label lives in the tooltip, like the
-// meanings-model and mic buttons in the same row. `toStories` describes where a
-// click GOES, not where you are, because that is what the icon and the tooltip
-// both mean -- and the two states are the same glyph width, so the button cannot
-// resize when the state changes.
-// One owner for all three (icon, title, aria-label): they were set separately in
-// four places, and a static title that never changed meant the only label the
-// button had left was the one that could be wrong.
+function renderStoriesPagination() {
+  const pagination = document.getElementById('storiesPagination');
+  const totalPages = Math.ceil(storiesTotal / STORIES_PAGE_SIZE);
+  if (totalPages <= 1) {
+    pagination.innerHTML = '';
+    return;
+  }
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'sort-btn';
+  prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+  prevBtn.title = 'Previous page';
+  prevBtn.disabled = storiesPage === 0;
+  prevBtn.onclick = () => { if (storiesPage > 0) { storiesPage--; loadStories(storiesCurrentWordId); } };
+  
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'sort-btn';
+  nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+  nextBtn.title = 'Next page';
+  nextBtn.disabled = storiesPage >= totalPages - 1;
+  nextBtn.onclick = () => { if (storiesPage < totalPages - 1) { storiesPage++; loadStories(storiesCurrentWordId); } };
+  
+  const info = document.createElement('span');
+  info.className = 'page-info';
+  info.textContent = `Page ${storiesPage + 1} of ${totalPages} (${storiesTotal} total)`;
+  
+  pagination.innerHTML = '';
+  pagination.appendChild(prevBtn);
+  pagination.appendChild(info);
+  pagination.appendChild(nextBtn);
+}
 function setViewToggle(toStories) {
   const btn = document.getElementById('viewToggleBtn');
   if (!btn) return;

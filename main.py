@@ -1897,22 +1897,40 @@ def _reasoning_label(raw):
 
 
 @app.get("/api/stories")
-def api_list_stories(word_id: Optional[int] = Query(None)):
+def api_list_stories(
+    word_id: Optional[int] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
     conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
+    # Total count for pagination
+    if word_id is not None:
+        cursor.execute(
+            "SELECT COUNT(*) FROM stories s JOIN story_words sw ON sw.story_id = s.id "
+            "WHERE sw.word_id = ?",
+            (word_id,),
+        )
+    else:
+        cursor.execute("SELECT COUNT(*) FROM stories")
+    total = cursor.fetchone()[0]
 
     if word_id is not None:
         cursor.execute(
             f"SELECT {_STORY_SELECT_PREFIXED} "
             "FROM stories s JOIN story_words sw ON sw.story_id = s.id "
-            "WHERE sw.word_id = ? ORDER BY s.createdAt DESC, s.id DESC",
-            (word_id,),
+            "WHERE sw.word_id = ? ORDER BY s.createdAt DESC, s.id DESC "
+            "LIMIT ? OFFSET ?",
+            (word_id, limit, offset),
         )
     else:
         cursor.execute(
             f"SELECT {_STORY_SELECT} "
-            "FROM stories ORDER BY createdAt DESC, id DESC"
+            "FROM stories ORDER BY createdAt DESC, id DESC "
+            "LIMIT ? OFFSET ?",
+            (limit, offset),
         )
     stories = [dict(row) for row in cursor.fetchall()]
 
@@ -1926,7 +1944,7 @@ def api_list_stories(word_id: Optional[int] = Query(None)):
         s["words"] = [dict(row) for row in cursor.fetchall()]
 
     conn.close()
-    return stories
+    return {"stories": stories, "total": total}
 
 
 @app.get("/api/stories/{story_id}")
