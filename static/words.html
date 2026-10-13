@@ -1208,7 +1208,6 @@
     /* --- Stories Table (horizontal scroll, sticky columns, pagination) --- */
     .stories-table-wrap {
         overflow-x: auto;
-        max-height: 60vh;
         border: 1px solid var(--border-details);
         border-radius: 8px;
         background: var(--bg-card);
@@ -1232,21 +1231,28 @@
         position: sticky;
         z-index: 1;
     }
+    .stories-table td {
+        position: sticky;
+    }
     /* Fixed left: ID */
     .col-id { width: 56px; min-width: 56px; }
     .stories-table th.col-id { left: 0; z-index: 2; }
-    .stories-table td.col-id { left: 0; background: var(--bg-card); }
-    /* Fixed right: Date + Actions (two columns) */
+    .stories-table td.col-id { left: 0; background: var(--bg-card); z-index: 2; }
+    /* Fixed right: Status + Date + Actions (three columns) */
+    .col-status { width: 140px; min-width: 140px; }
     .col-date { width: 110px; min-width: 110px; }
     .col-actions { width: 96px; min-width: 96px; }
+    .stories-table th.col-status { right: 206px; z-index: 2; }
     .stories-table th.col-date { right: 96px; z-index: 2; }
     .stories-table th.col-actions { right: 0; z-index: 2; }
+    .stories-table td.col-status,
     .stories-table td.col-date,
     .stories-table td.col-actions {
         background: var(--bg-card);
     }
-    .stories-table td.col-date { right: 96px; }
-    .stories-table td.col-actions { right: 0; }
+    .stories-table td.col-status { right: 206px; z-index: 2; }
+    .stories-table td.col-date { right: 96px; z-index: 2; }
+    .stories-table td.col-actions { right: 0; z-index: 2; }
     /* Title column: elastic, truncates */
     .col-title { min-width: 220px; }
     .stories-table td.col-title {
@@ -1254,17 +1260,30 @@
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    /* Status column */
-    .col-status { min-width: 160px; }
-    /* Meta column */
-    .col-meta { min-width: 300px; }
+    /* Individual meta columns */
+    .col-chars { width: 80px; min-width: 80px; }
+    .col-tokens { width: 100px; min-width: 100px; }
+    .col-coverage { width: 90px; min-width: 90px; }
+    .col-density { width: 90px; min-width: 90px; }
+    .col-style { width: 100px; min-width: 100px; }
+    .col-model { width: 110px; min-width: 110px; }
+    .col-cost { width: 80px; min-width: 80px; }
+    .col-duration { width: 80px; min-width: 80px; }
     /* Row states (generating/failed/truncated) */
     .stories-table tr.is-generating { opacity: 0.75; }
     .stories-table tr.is-failed { border-style: dashed; }
     .stories-table tr.is-truncated { border-style: dashed; border-color: var(--warn-border); }
-    /* Pills inside meta cell */
-    .story-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-    .story-pills .story-list-meta-line { margin: 0; }
+    /* Cell content alignment */
+    .stories-table td.col-chars,
+    .stories-table td.col-tokens,
+    .stories-table td.col-coverage,
+    .stories-table td.col-density,
+    .stories-table td.col-style,
+    .stories-table td.col-model,
+    .stories-table td.col-cost,
+    .stories-table td.col-duration {
+        text-align: center;
+    }
     /* Pagination */
     .stories-pagination {
         display: flex;
@@ -1825,8 +1844,15 @@
           <tr>
             <th class="col-id">ID</th>
             <th class="col-title">Title</th>
+            <th class="col-chars">Chars</th>
+            <th class="col-tokens">Tokens</th>
+            <th class="col-coverage">Coverage</th>
+            <th class="col-density">Density</th>
+            <th class="col-style">Style</th>
+            <th class="col-model">Model</th>
+            <th class="col-cost">Cost</th>
+            <th class="col-duration">Duration</th>
             <th class="col-status">Status</th>
-            <th class="col-meta">Meta</th>
             <th class="col-date">Date</th>
             <th class="col-actions">Actions</th>
           </tr>
@@ -5541,7 +5567,7 @@ async function loadStories(wordId) {
   const pagination = document.getElementById('storiesPagination');
 
   if (!stories.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-meta);">No stories yet. Use the generator above to create one.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="padding:24px;text-align:center;color:var(--text-meta);">No stories yet. Use the generator above to create one.</td></tr>';
     pagination.innerHTML = '';
     return;
   }
@@ -5567,7 +5593,88 @@ async function loadStories(wordId) {
     tdTitle.textContent = s.title || 'Untitled';
     tr.appendChild(tdTitle);
 
-    // Status cell
+    // Chars cell
+    const tdChars = document.createElement('td');
+    tdChars.className = 'col-chars';
+    const chars = countStoryChars(s.content);
+    tdChars.textContent = chars > 0 ? chars.toLocaleString() + ' chars' : '—';
+    tr.appendChild(tdChars);
+
+    // Tokens cell
+    const tdTokens = document.createElement('td');
+    tdTokens.className = 'col-tokens';
+    tdTokens.textContent = storyTokenLabel(s) || '—';
+    tdTokens.title = storyTokenTitle(s) || '';
+    tr.appendChild(tdTokens);
+
+    // Coverage cell
+    const tdCoverage = document.createElement('td');
+    tdCoverage.className = 'col-coverage';
+    const covLabel = storyCoverageLabel(s);
+    tdCoverage.textContent = covLabel || '—';
+    tdCoverage.title = storyCoverageTitle(s) || '';
+    tdCoverage.className = 'col-coverage ' + (storyCoverageClass(s) || '');
+    tr.appendChild(tdCoverage);
+
+    // Density cell
+    const tdDensity = document.createElement('td');
+    tdDensity.className = 'col-density';
+    const densLabel = storyDensityLabel(s);
+    tdDensity.textContent = densLabel || '—';
+    tdDensity.title = storyDensityTitle(s) || '';
+    tdDensity.className = 'col-density ' + (storyDensityClass(s) || '');
+    tr.appendChild(tdDensity);
+
+    // Style cell
+    const tdStyle = document.createElement('td');
+    tdStyle.className = 'col-style';
+    if (s.style) {
+      const sub = (s.style.split(':')[0] || '').trim() || s.style;
+      tdStyle.textContent = sub;
+      tdStyle.title = `Style: ${s.style}`;
+    } else {
+      tdStyle.textContent = '—';
+    }
+    tr.appendChild(tdStyle);
+
+    // Model cell
+    const tdModel = document.createElement('td');
+    tdModel.className = 'col-model';
+    if (s.model) {
+      const reasoning = s.reasoning_label ? ` (${s.reasoning_label})` : '';
+      tdModel.textContent = s.model.replace(/^.*\//, '') + reasoning;
+      tdModel.title = !s.reasoning_label
+        ? `Model: ${s.model}`
+        : s.reasoning_verified === false
+          ? `Model: ${s.model}  ·  reasoning requested: ${s.reasoning_label}\n(the effective level was not recorded for this story)`
+          : `Model: ${s.model}  ·  reasoning: ${s.reasoning_label}`;
+    } else {
+      tdModel.textContent = '—';
+    }
+    tr.appendChild(tdModel);
+
+    // Cost cell
+    const tdCost = document.createElement('td');
+    tdCost.className = 'col-cost';
+    if (s.cost != null) {
+      tdCost.textContent = s.cost > 0 ? `$${s.cost.toFixed(5)}` : 'free';
+      tdCost.title = s.cost > 0
+        ? 'Cost OpenRouter reported for this generation.'
+        : 'OpenRouter reported no cost for this generation.';
+    } else {
+      tdCost.textContent = '—';
+    }
+    tr.appendChild(tdCost);
+
+    // Duration cell
+    const tdDuration = document.createElement('td');
+    tdDuration.className = 'col-duration';
+    const dur = formatDuration(s.duration_ms);
+    tdDuration.textContent = dur || '—';
+    if (dur) tdDuration.title = 'Wall-clock generation time. Not the length of the audio.';
+    tr.appendChild(tdDuration);
+
+    // Status cell (fixed right - first of three)
     const tdStatus = document.createElement('td');
     tdStatus.className = 'col-status';
     if (isGenerating) {
@@ -5584,37 +5691,18 @@ async function loadStories(wordId) {
     } else if (isTruncated) {
       tdStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Cut off (token limit)`;
       tdStatus.title = "This story hit the model's token limit, so the ending is missing.";
+    } else {
+      tdStatus.textContent = 'Ready';
     }
     tr.appendChild(tdStatus);
 
-    // Meta cell (pills)
-    const tdMeta = document.createElement('td');
-    tdMeta.className = 'col-meta';
-    const pills = document.createElement('span');
-    pills.className = 'story-pills';
-    const add = (icon, text, cls) => {
-      const span = document.createElement('span');
-      span.className = 'story-list-meta-line' + (cls ? ' ' + cls : '');
-      if (icon) {
-        const i = document.createElement('i');
-        i.className = icon;
-        span.appendChild(i);
-      }
-      span.appendChild(document.createTextNode(' ' + text));
-      pills.appendChild(span);
-      return span;
-    };
-    applyStoryPills(s, add, { showCutOff: true, showDate: false });
-    tdMeta.appendChild(pills);
-    tr.appendChild(tdMeta);
-
-    // Date cell (fixed right - first of two)
+    // Date cell (fixed right - second of three)
     const tdDate = document.createElement('td');
     tdDate.className = 'col-date';
     tdDate.textContent = formatDate(s.createdAt);
     tr.appendChild(tdDate);
 
-    // Actions cell (fixed right - second of two)
+    // Actions cell (fixed right - third of three)
     const tdActions = document.createElement('td');
     tdActions.className = 'col-actions';
     const actions = document.createElement('span');
