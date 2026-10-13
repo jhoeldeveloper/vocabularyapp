@@ -1862,8 +1862,8 @@
             <th class="col-tokens">Tokens</th>
             <th class="col-coverage">Coverage</th>
             <th class="col-density">Density</th>
-            <th class="col-style">Style</th>
             <th class="col-model">Model</th>
+            <th class="col-style">Style</th>
             <th class="col-cost">Cost</th>
             <th class="col-duration">Duration</th>
             <th class="col-status">Status</th>
@@ -5658,18 +5658,6 @@ async function loadStories(wordId) {
     tdDensity.title = storyDensityTitle(s) || '';
     tr.appendChild(tdDensity);
 
-    // Style cell
-    const tdStyle = document.createElement('td');
-    tdStyle.className = 'col-style';
-    if (s.style) {
-      const sub = (s.style.split(':')[0] || '').trim() || s.style;
-      tdStyle.textContent = sub;
-      tdStyle.title = `Style: ${s.style}`;
-    } else {
-      tdStyle.textContent = '—';
-    }
-    tr.appendChild(tdStyle);
-
     // Model cell
     const tdModel = document.createElement('td');
     tdModel.className = 'col-model';
@@ -5685,6 +5673,18 @@ async function loadStories(wordId) {
       tdModel.textContent = '—';
     }
     tr.appendChild(tdModel);
+
+    // Style cell
+    const tdStyle = document.createElement('td');
+    tdStyle.className = 'col-style';
+    if (s.style) {
+      const sub = (s.style.split(':')[0] || '').trim() || s.style;
+      tdStyle.textContent = sub;
+      tdStyle.title = `Style: ${s.style}`;
+    } else {
+      tdStyle.textContent = '—';
+    }
+    tr.appendChild(tdStyle);
 
     // Cost cell
     const tdCost = document.createElement('td');
