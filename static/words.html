@@ -183,6 +183,20 @@
         cursor: pointer;
     }
     .sort-select:focus { border-color: var(--color-primary); }
+    #encountersFilter {
+        padding: 7px 8px;
+        border: 1px solid var(--border-input);
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-family: inherit;
+        background-color: var(--bg-card);
+        color: var(--text-primary);
+        outline: none;
+        width: 62px;
+        min-width: 62px;
+        text-align: center;
+    }
+    #encountersFilter:focus { border-color: var(--color-primary); }
     .add-word-group {
         display: flex;
         gap: 0;
@@ -1534,6 +1548,8 @@
             <option value="id">ID</option>
         </select>
         <button id="sortOrderBtn" class="sort-btn" title="Toggle ascending/descending"><i class="fa-solid fa-arrow-down-wide-short"></i></button>
+        <!-- Encounters filter: compact number input for minimum encounters -->
+        <input type="number" id="encountersFilter" placeholder="Enc." title="Minimum encounters" min="1" value="1">
         <!-- The SAME pair as the story filter, and deliberately INDEPENDENT of
              it: that one answers "which words go into the next story", this one
              answers "which words am I looking at". Sharing one control was
@@ -2632,9 +2648,13 @@ function applyGridFilters() {
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
   const learnt = document.getElementById('gridLearnt').checked;
   const unlearnt = document.getElementById('gridUnlearnt').checked;
+  const minEnc = parseInt(document.getElementById('encountersFilter').value, 10);
   let filtered = query
     ? allWords.filter(w => w.word.toLowerCase().includes(query))
     : allWords.slice();
+  if (!isNaN(minEnc)) {
+    filtered = filtered.filter(w => w.encounters >= minEnc);
+  }
   if (!learnt && !unlearnt) {
     // Both unticked means "show me neither", deliberately NOT the same as
     // leaving them alone -- an empty grid is the honest answer to that, and
@@ -6647,8 +6667,8 @@ document.addEventListener('DOMContentLoaded', () => {
         applyFilter();
     });
     updateFilterSortOrderBtn();
-    ['gridLearnt', 'gridUnlearnt'].forEach(id =>
-        document.getElementById(id).addEventListener('change', applyGridFilters));
+    ['gridLearnt', 'gridUnlearnt', 'encountersFilter'].forEach(id =>
+        document.getElementById(id).addEventListener('input', applyGridFilters));
     // Clamp the encounters box as soon as it settles, so an invalid value is
     // corrected where the user is looking rather than on the next click of Show.
     document.getElementById('filterMinEncounter').addEventListener('change', () => {
