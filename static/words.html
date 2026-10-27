@@ -155,14 +155,20 @@
         align-self: center;
         white-space: nowrap;
     }
+    .add-word-group {
+        display: flex;
+        gap: 0;
+    }
     #searchInput {
         padding: 7px 12px;
         border: 1px solid var(--border-input);
-        border-radius: 4px;
+        border-right: none;
+        border-radius: 4px 0 0 4px;
         font-size: 0.8em;
         font-family: inherit;
         outline: none;
         min-width: 200px;
+        flex: 1 1 auto;
         transition: border-color 0.15s;
         background-color: var(--bg-card);
         color: var(--text-primary);
@@ -197,27 +203,6 @@
         text-align: center;
     }
     #encountersFilter:focus { border-color: var(--color-primary); }
-    .add-word-group {
-        display: flex;
-        gap: 0;
-    }
-    #newWordInput {
-        padding: 7px 12px;
-        border: 1px solid var(--border-input);
-        border-right: none;
-        border-radius: 4px 0 0 4px;
-        font-size: 0.8em;
-        font-family: inherit;
-        outline: none;
-        min-width: 160px;
-        transition: border-color 0.15s;
-        background-color: var(--bg-card);
-        color: var(--text-primary);
-    }
-    #newWordInput:focus {
-        border-color: var(--color-success);
-        box-shadow: 0 0 0 2px var(--shadow-add);
-    }
     #addWordBtn {
         background: linear-gradient(#7c3aed, #7c3aed) padding-box,
                     linear-gradient(135deg, #06b6d4, #a855f7) border-box;
@@ -1539,7 +1524,10 @@
 
 <div class="controls-container">
     <div id="sortControls">
-        <input type="text" id="searchInput" placeholder="Search words..." autocomplete="off">
+        <div class="add-word-group" style="flex: 1 1 auto; min-width: 200px;">
+            <input type="text" id="searchInput" placeholder="Search words..." autocomplete="off">
+            <button id="addWordBtn" onclick="addWord()" title="Add word">Add</button>
+        </div>
         <select id="sortSelect" class="sort-select" title="Sort by">
             <option value="updatedAt">Updated</option>
             <option value="createdAt">Created</option>
@@ -1564,10 +1552,6 @@
           <label class="filter-learnt-opt"><input type="checkbox" id="gridLearnt" checked> Learnt</label>
           <label class="filter-learnt-opt"><input type="checkbox" id="gridUnlearnt" checked> Unlearnt</label>
         </span>
-        <div class="add-word-group">
-            <input type="text" id="newWordInput" placeholder="Add new word..." autocomplete="off">
-            <button id="addWordBtn" onclick="addWord()">Add</button>
-        </div>
         <!-- The trailing cluster: one flex item, so `margin-left: auto` on the
          GROUP pushes the whole thing to the right edge as a unit. The view
          toggle lives at the end of it and therefore keeps the same position
@@ -2075,7 +2059,7 @@ let allWords = [];
 let pendingAutoPlay = null;
 
 async function addWord() {
-  const input = document.getElementById('newWordInput');
+  const input = document.getElementById('searchInput');
   const btn = document.getElementById('addWordBtn');
   const word = input.value.trim();
   if (!word) return;
@@ -6466,7 +6450,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('searchInput').addEventListener('input', applySearch);
-    document.getElementById('newWordInput').addEventListener('keydown', e => { if (e.key === 'Enter') addWord(); });
+    document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') addWord(); });
 
     document.getElementById('closeStoryModalBtn').addEventListener('click', closeStoryModal);
     document.querySelectorAll('.modal-tab').forEach(t => t.onclick = () => {
