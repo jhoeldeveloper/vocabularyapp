@@ -32,4 +32,5 @@ logs/*
 .idea/
 
 .opencode/plans/kokoro-tts.md
+english_dictionary.db
 AGENTS.md
